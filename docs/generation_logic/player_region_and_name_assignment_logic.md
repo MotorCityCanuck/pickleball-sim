@@ -5,6 +5,12 @@ statistically believable North American player populations with
 realistic geographic concentration, demographic variation, and
 culturally appropriate naming patterns.
 
+This document is aligned to the ORM-first schema. SQLAlchemy models under
+`backend/app/models` are the schema source of truth. Name reference data
+is stored in the consolidated `first_names` and `last_names` tables. Do
+not recreate legacy split tables such as `usa_first_names`,
+`usa_last_names`, `canada_first_names`, or `canada_last_names`.
+
 # 1. Design Objectives
 
 - Generate geographically realistic player populations across North
@@ -40,9 +46,9 @@ culturally appropriate naming patterns.
 
 - Load regional population reference data.
 
-- Load census first-name datasets.
+- Load first-name reference datasets into `first_names`.
 
-- Load census last-name datasets.
+- Load last-name reference datasets into `last_names`.
 
 - Generate regional player distribution targets.
 
@@ -57,6 +63,29 @@ culturally appropriate naming patterns.
 - Persist completed player identity records.
 
 - Proceed to club assignment and social graph generation.
+
+# 3.1 Current ORM Tables
+
+The current implementation uses these schema objects for player identity
+and name generation:
+
+- `regions`
+
+- `first_names`
+
+- `last_names`
+
+- `players`
+
+- `player_registrations`
+
+- `monthly_batches`
+
+- `generation_runs`
+
+Reference-name loaders must write to `first_names` and `last_names`
+only. Player generation must persist final player identity values in
+`players` and month-specific intake records in `player_registrations`.
 
 # 4. Recommended Geographic Hierarchy
 
@@ -168,12 +197,88 @@ culturally appropriate naming patterns.
 
 - Frequency weighting
 
+# 13.1 USA First-Name Source Format
+
+USA first-name reference data will be loaded from roughly 50 state-level
+`.txt` files, one file per U.S. state. Each raw row has this comma-
+separated format:
+
+```text
+state,sex,birth_year,name,occurrences
+```
+
+Example:
+
+```text
+NE,F,1910,Mary,161
+```
+
+The loader maps raw fields to `first_names` as follows:
+
+- `country_code`: constant `US`
+
+- `state_province_code`: raw `state`
+
+- `birth_year`: raw `birth_year`
+
+- `gender`: raw `sex`
+
+- `first_name`: raw `name`
+
+- `frequency_count`: raw `occurrences`
+
+- `source_dataset`: stable source identifier for the imported dataset
+
+The raw `sex` value must be compatible with the current ORM constraint:
+`M` or `F`.
+
 # 14. Recommended First Name Selection Formula
 
 - P(name_i) = frequency_i / sum(all frequencies in cohort)
 
 - Where cohorts are segmented by birth year, gender, and optionally
   region.
+
+# 14.1 USA First-Name Normalization Rule
+
+For USA first names, `normalized_probability` is calculated during load
+from total name occurrences in each state, birth-year, and gender cohort:
+
+```text
+normalized_probability =
+  frequency_count /
+  sum(frequency_count for same country_code, state_province_code, birth_year, gender)
+```
+
+This means the probabilities for all names in a given
+`US + state_province_code + birth_year + gender` cohort should sum to
+approximately `1.0`, subject to `NUMERIC(12,8)` rounding.
+
+The current `first_names` lookup index supports this exact cohort:
+
+```text
+country_code, state_province_code, birth_year, gender
+```
+
+# 14.2 First-Name Lookup Fallback Order
+
+When assigning a first name to a player, use the most specific cohort
+available. The recommended fallback order is:
+
+- Exact country, state/province, birth year, and gender.
+
+- Same country, same state/province, nearest available birth year, and
+  same gender.
+
+- Same country, all available state/province cohorts for the exact birth
+  year and gender.
+
+- Same country, all available state/province cohorts for the nearest
+  available birth year and same gender.
+
+For the first USA implementation, the expected primary path is exact
+state, birth year, and gender. Canada fallback behavior will be defined
+after Canada first-name source data is finalized.
 
 # 15. Temporal Naming Realism
 
@@ -210,6 +315,10 @@ culturally appropriate naming patterns.
 - Regional surname weighting should influence probability selection.
 
 - Rare surnames should remain uncommon but still appear occasionally.
+
+Canada first-name handling and last-name loading/selection rules are not
+finalized in this version of the document. They will be defined after the
+raw Canada first-name and last-name source files are reviewed.
 
 # 18. Recommended Last Name Selection Model
 
@@ -252,39 +361,61 @@ culturally appropriate naming patterns.
 - Names, birthdate, gender, and home region should rarely change after
   generation.
 
-# 23. Recommended Database Tables
+# 23. Current Database Tables
 
-- region
+- `regions`
 
-- region_demographics
+- `first_names`
 
-- census_first_name
+- `last_names`
 
-- census_last_name
+- `players`
 
-- player
+- `player_registrations`
 
-- player_identity_generation_batch
+- `monthly_batches`
 
-- regional_population_target
+- `generation_runs`
 
-# 24. Recommended player Table Attributes
+Potential future analytical/reference tables such as region
+demographics or regional population targets must be introduced through
+ORM models first if they become necessary.
 
-- player_id
+# 24. Current `players` Identity Attributes
 
-- first_name
+- `id`
 
-- last_name
+- `external_player_key`
 
-- birthdate
+- `first_name`
 
-- gender
+- `last_name`
 
-- home_region_id
+- `gender`
 
-- country_code
+- `birth_date`
 
-- created_batch_id
+- `dominant_hand`
+
+- `home_region_id`
+
+- `registration_date`
+
+- `initial_skill_seed`
+
+- `player_status`
+
+- `generation_run_id`
+
+The month-specific intake link is stored in `player_registrations`:
+
+- `player_id`
+
+- `batch_id`
+
+- `registration_month`
+
+- `assigned_region_id`
 
 # 25. Validation Rules
 
