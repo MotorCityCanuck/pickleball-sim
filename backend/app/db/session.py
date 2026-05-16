@@ -2,26 +2,19 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import os
 from typing import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-
-DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/pickleball"
-
-
-def get_database_url() -> str:
-    """Return the configured database URL."""
-    return os.getenv("DATABASE_URL") or DEFAULT_DATABASE_URL
+from app.core.config import DEFAULT_DATABASE_URL, get_database_url, load_settings
 
 
 def create_database_engine(database_url: str | None = None, *, echo: bool | None = None) -> Engine:
     """Create a SQLAlchemy engine for the configured database."""
     if echo is None:
-        echo = os.getenv("DATABASE_ECHO", "").lower() in {"1", "true", "yes", "on"}
+        echo = load_settings().database_echo
 
     return create_engine(
         database_url or get_database_url(),
