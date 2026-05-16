@@ -30,6 +30,7 @@ class Match(Base, TimestampMixin):
     region = relationship("Region")
     batch = relationship("MonthlyBatch")
     match_teams = relationship("MatchTeam", back_populates="match")
+    games = relationship("MatchGame", back_populates="match")
     
     __table_args__ = (
         Index('idx_matches_date', 'match_date'),

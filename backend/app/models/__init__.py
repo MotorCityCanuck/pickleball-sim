@@ -13,6 +13,7 @@ from .teams import Team
 from .team_memberships import TeamMembership
 from .tournaments import Tournament
 from .matches import Match
+from .match_games import MatchGame
 from .match_teams import MatchTeam
 from .match_team_players import MatchTeamPlayer
 from .first_names import FirstName
@@ -39,6 +40,7 @@ __all__ = [
     'TeamMembership',
     'Tournament',
     'Match',
+    'MatchGame',
     'MatchTeam',
     'MatchTeamPlayer',
     'FirstName',

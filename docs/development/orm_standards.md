@@ -28,7 +28,7 @@ The project uses an ORM-first database strategy during active development.
 
 ## Current Live Model Scope
 
-The current live schema and ORM define 22 tables:
+The current live schema and ORM define 23 tables:
 
 1. `generation_runs`
 2. `regions`
@@ -43,15 +43,16 @@ The current live schema and ORM define 22 tables:
 11. `team_memberships`
 12. `tournaments`
 13. `matches`
-14. `match_teams`
-15. `match_team_players`
-16. `first_names`
-17. `last_names`
-18. `batch_runs`
-19. `uploaded_files`
-20. `export_runs`
-21. `validation_results`
-22. `job_status`
+14. `match_games`
+15. `match_teams`
+16. `match_team_players`
+17. `first_names`
+18. `last_names`
+19. `batch_runs`
+20. `uploaded_files`
+21. `export_runs`
+22. `validation_results`
+23. `job_status`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

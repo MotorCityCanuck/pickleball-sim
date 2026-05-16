@@ -58,7 +58,7 @@ def test_database_tables_match_expected_schema(engine):
     inspector = inspect(engine)
     tables = set(inspector.get_table_names(schema="public"))
 
-    assert len(tables) == 22
+    assert len(tables) == len(EXPECTED_TABLES)
     assert tables == EXPECTED_TABLES
 
 
@@ -190,9 +190,49 @@ def test_database_defaults_are_applied(engine):
                 {"player_id": player.id, "batch_id": batch.id, "region_id": region.id},
             ).one()
 
+            match = conn.execute(
+                text(
+                    """
+                    INSERT INTO matches (
+                        match_date,
+                        region_id,
+                        match_type,
+                        batch_id
+                    )
+                    VALUES (
+                        DATE '2024-01-02',
+                        :region_id,
+                        'recreational',
+                        :batch_id
+                    )
+                    RETURNING id
+                    """
+                ),
+                {"region_id": region.id, "batch_id": batch.id},
+            ).one()
+
+            game = conn.execute(
+                text(
+                    """
+                    INSERT INTO match_games (
+                        match_id,
+                        game_number,
+                        team_one_score,
+                        team_two_score,
+                        winning_team_number
+                    )
+                    VALUES (:match_id, 1, 11, 7, 1)
+                    RETURNING target_score, win_by
+                    """
+                ),
+                {"match_id": match.id},
+            ).one()
+
             assert generation_run.status == "pending"
             assert batch.batch_type == "future_increment"
             assert batch.processing_status == "pending"
+            assert game.target_score == 11
+            assert game.win_by == 2
             assert player.external_player_key is not None
             assert player.player_status == "ACTIVE"
             assert registration.registration_source == "synthetic"
@@ -234,6 +274,84 @@ def test_database_check_constraints_are_enforced(engine):
                         VALUES ('MX', 'MX', 1990, 'M', 'Probe', 1)
                         """
                     )
+                )
+        finally:
+            transaction.rollback()
+
+
+def test_database_match_game_constraints_are_enforced(engine):
+    with engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            generation_run = conn.execute(
+                text(
+                    """
+                    INSERT INTO generation_runs (generation_name, seed_value)
+                    VALUES ('match_game_constraint_probe', 456)
+                    RETURNING id
+                    """
+                )
+            ).one()
+            region = conn.execute(
+                text(
+                    """
+                    INSERT INTO regions (country_code, region_name)
+                    VALUES ('US', 'Match Game Constraint Probe Region')
+                    RETURNING id
+                    """
+                )
+            ).one()
+            batch = conn.execute(
+                text(
+                    """
+                    INSERT INTO monthly_batches (
+                        generation_run_id,
+                        batch_month,
+                        batch_sequence
+                    )
+                    VALUES (:generation_run_id, DATE '2024-02-01', 2)
+                    RETURNING id
+                    """
+                ),
+                {"generation_run_id": generation_run.id},
+            ).one()
+            match = conn.execute(
+                text(
+                    """
+                    INSERT INTO matches (
+                        match_date,
+                        region_id,
+                        match_type,
+                        batch_id
+                    )
+                    VALUES (
+                        DATE '2024-02-02',
+                        :region_id,
+                        'recreational',
+                        :batch_id
+                    )
+                    RETURNING id
+                    """
+                ),
+                {"region_id": region.id, "batch_id": batch.id},
+            ).one()
+
+            with pytest.raises(IntegrityError):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO match_games (
+                            match_id,
+                            game_number,
+                            team_one_score,
+                            team_two_score,
+                            winning_team_number,
+                            target_score
+                        )
+                        VALUES (:match_id, 1, 11, 7, 1, 13)
+                        """
+                    ),
+                    {"match_id": match.id},
                 )
         finally:
             transaction.rollback()

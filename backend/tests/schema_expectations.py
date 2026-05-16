@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "generation_runs",
     "job_status",
     "last_names",
+    "match_games",
     "match_team_players",
     "match_teams",
     "matches",
@@ -57,6 +58,8 @@ EXPECTED_INDEXES = {
     "idx_job_status_type",
     "idx_last_names_country",
     "idx_last_names_lookup",
+    "idx_match_games_match",
+    "idx_match_games_winner",
     "idx_match_team_players_player",
     "idx_match_team_players_team",
     "idx_match_teams_match",
@@ -107,6 +110,13 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "generation_runs": {"chk_generation_status"},
     "job_status": {"chk_job_status", "chk_percent_complete"},
     "last_names": {"chk_last_names_country", "chk_last_names_freq"},
+    "match_games": {
+        "chk_game_number",
+        "chk_game_scores_nonnegative",
+        "chk_game_target_score",
+        "chk_game_win_by",
+        "chk_game_winning_team",
+    },
     "match_team_players": {"chk_player_position"},
     "match_teams": {"chk_team_number"},
     "matches": {"chk_match_type"},
@@ -124,6 +134,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "clubs": {("region_id", "club_name")},
     "job_status": {("job_id",)},
+    "match_games": {("match_id", "game_number")},
     "match_team_players": {("match_team_id", "player_id")},
     "match_teams": {("match_id", "team_number")},
     "monthly_batches": {("generation_run_id", "batch_month")},
@@ -142,6 +153,7 @@ EXPECTED_FOREIGN_KEYS = {
     },
     "clubs": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
     "export_runs": {"batch_id->monthly_batches.id"},
+    "match_games": {"match_id->matches.id"},
     "match_team_players": {
         "match_team_id->match_teams.id",
         "player_id->players.id",
@@ -181,6 +193,10 @@ EXPECTED_SERVER_DEFAULTS = {
     "monthly_batches": {
         "batch_type": "'future_increment'",
         "processing_status": "'pending'",
+    },
+    "match_games": {
+        "target_score": "11",
+        "win_by": "2",
     },
     "player_registrations": {"registration_source": "'synthetic'"},
     "players": {

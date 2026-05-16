@@ -110,10 +110,10 @@ def test_all_models_import_and_mappers_configure():
 
 
 def test_expected_table_registry_matches_live_schema_scope():
-    """ORM registry should expose exactly the live 22-table schema."""
+    """ORM registry should expose exactly the expected live schema."""
     orm_tables = set(Base.metadata.tables)
 
-    assert len(orm_tables) == 22
+    assert len(orm_tables) == len(EXPECTED_TABLES)
     assert orm_tables == EXPECTED_TABLES
 
 
@@ -140,7 +140,7 @@ def test_expected_indexes_are_declared_with_stable_names():
         for index in table.indexes
     }
 
-    assert len(orm_indexes) == 59
+    assert len(orm_indexes) == len(EXPECTED_INDEXES)
     assert orm_indexes == EXPECTED_INDEXES
     assert not any(index_name.startswith("ix_") for index_name in orm_indexes)
 

@@ -2,8 +2,8 @@
 -- Pickleball Simulation Platform - Database Schema
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
--- Total Tables: 22
--- Explicit Indexes: 59
+-- Total Tables: 23
+-- Explicit Indexes: 61
 -- PostgreSQL 16+
 -- ============================================
 
@@ -376,6 +376,30 @@ CREATE TABLE validation_results (
 	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
 );
 
+CREATE TABLE match_games (
+	id BIGSERIAL NOT NULL, 
+	match_id BIGINT NOT NULL, 
+	game_number INTEGER NOT NULL, 
+	team_one_score INTEGER NOT NULL, 
+	team_two_score INTEGER NOT NULL, 
+	winning_team_number INTEGER NOT NULL, 
+	target_score INTEGER DEFAULT 11 NOT NULL, 
+	win_by INTEGER DEFAULT 2 NOT NULL, 
+	expected_team_one_score_share NUMERIC(8, 4), 
+	actual_team_one_score_share NUMERIC(8, 4), 
+	score_noise_factor NUMERIC(8, 3), 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_match_game_number UNIQUE (match_id, game_number), 
+	CONSTRAINT chk_game_number CHECK (game_number >= 1), 
+	CONSTRAINT chk_game_scores_nonnegative CHECK (team_one_score >= 0 AND team_two_score >= 0), 
+	CONSTRAINT chk_game_winning_team CHECK (winning_team_number IN (1, 2)), 
+	CONSTRAINT chk_game_target_score CHECK (target_score IN (11, 15, 21)), 
+	CONSTRAINT chk_game_win_by CHECK (win_by >= 1), 
+	FOREIGN KEY(match_id) REFERENCES matches (id)
+);
+
 CREATE TABLE match_teams (
 	id BIGSERIAL NOT NULL, 
 	match_id BIGINT NOT NULL, 
@@ -434,6 +458,8 @@ CREATE INDEX idx_job_status_status ON job_status (status);
 CREATE INDEX idx_job_status_type ON job_status (job_type);
 CREATE INDEX idx_last_names_country ON last_names (country_code);
 CREATE INDEX idx_last_names_lookup ON last_names (country_code, state_province_code);
+CREATE INDEX idx_match_games_match ON match_games (match_id);
+CREATE INDEX idx_match_games_winner ON match_games (winning_team_number);
 CREATE INDEX idx_match_team_players_player ON match_team_players (player_id);
 CREATE INDEX idx_match_team_players_team ON match_team_players (match_team_id);
 CREATE INDEX idx_match_teams_match ON match_teams (match_id);

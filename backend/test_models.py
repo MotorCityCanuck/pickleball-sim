@@ -43,7 +43,7 @@ def test_models_import_and_metadata_matches_expected_tables():
     """Models should import without a database and expose the live schema scope."""
     configure_mappers()
 
-    assert len(Base.metadata.tables) == 22
+    assert len(Base.metadata.tables) == len(EXPECTED_TABLES)
     assert set(Base.metadata.tables) == EXPECTED_TABLES
     assert FirstName.__tablename__ == "first_names"
     assert Match.__tablename__ == "matches"
