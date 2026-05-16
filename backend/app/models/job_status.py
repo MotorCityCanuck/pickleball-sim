@@ -1,9 +1,4 @@
-"""SQLAlchemy models for the Pickleball Simulation Platform.
-
-This module exports all database models for use with Alembic
-and the application.
-"""
-f"""Job status model."""
+"""Job status model."""
 from sqlalchemy import Column, BigInteger, String, Numeric, Text, DateTime, CheckConstraint
 from .base import Base, TimestampMixin
 
