@@ -105,7 +105,7 @@ Run the automated setup script:
 
 The complete schema DDL is in `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
 
-- [ ] Create `backend/schema.sql` with all 23 CREATE TABLE statements
+- [ ] Create `backend/schema.sql` with all 22 CREATE TABLE statements
 - [ ] Include all indexes from Section 12
 - [ ] Include all constraints (CHECK, UNIQUE, FK)
 
@@ -128,13 +128,13 @@ cat backend/schema.sql | docker exec -i pickleball-postgres psql -U postgres -d 
 docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim
 ```
 ```sql
-\dt                    -- List all tables (should see 23)
+\dt                    -- List all tables (should see 22)
 \d players             -- Describe players table
 \d+ players            -- Detailed view with constraints
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 \q
 ```
-- [ ] All 23 tables created
+- [ ] All 22 tables created
 - [ ] Constraints applied correctly
 - [ ] Indexes created
 - [ ] Foreign keys established
@@ -175,10 +175,8 @@ Based on `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
 
 ### Reference Data Models (Priority 5)
 
-- [ ] `backend/app/models/usa_first_names.py`
-- [ ] `backend/app/models/usa_last_names.py`
-- [ ] `backend/app/models/canada_first_names.py`
-- [ ] `backend/app/models/canada_last_names.py`
+- [ ] `backend/app/models/first_names.py`
+- [ ] `backend/app/models/last_names.py`
 
 ### Operational Models (Priority 6)
 
@@ -389,8 +387,8 @@ Phase 1 is complete when:
 - [ ] Python virtual environment created
 - [ ] All dependencies installed
 - [ ] `backend/schema.sql` created from database design doc
-- [ ] All 23 SQLAlchemy models created
-- [ ] Schema applied to database (all 23 tables exist)
+- [ ] All 22 SQLAlchemy models created
+- [ ] Schema applied to database (all 22 tables exist)
 - [ ] Database session management working
 - [ ] Configuration system working
 - [ ] Basic tests passing

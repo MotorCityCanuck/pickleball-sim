@@ -140,13 +140,9 @@ Operational entities:
 
 Reference entities:
 
-- usa_first_names
+- first_names
 
-- canada_first_names
-
-- usa_last_names
-
-- canada_last_names
+- last_names
 
 \-\--
 
@@ -448,9 +444,9 @@ Stores MSA/CMA/CA regional definitions.
 
 # 8. Name Generation Tables
 
-## 8.1 usa_first_names
+## 8.1 first_names
 
-Stores SSA/Census-style USA first names.
+Stores consolidated USA and Canada first-name frequency data.
 
 ### Purpose
 
@@ -460,7 +456,7 @@ Supports:
 
 - Gender-aligned generation
 
-- State-aware distributions
+- State/province-aware distributions
 
 - Frequency-weighted generation
 
@@ -472,7 +468,9 @@ Supports:
 
 \| id \| BIGSERIAL PK \|
 
-\| state_code \| VARCHAR(2) \|
+\| country_code \| VARCHAR(2) \|
+
+\| state_province_code \| VARCHAR(2) \|
 
 \| birth_year \| INTEGER \|
 
@@ -488,37 +486,9 @@ Supports:
 
 \| created_at \| TIMESTAMP \|
 
-\-\--
+## 8.2 last_names
 
-## 8.2 canada_first_names
-
-### Proposed Columns
-
-\| Column \| Type \|
-
-\|\-\--\|\-\--\|
-
-\| id \| BIGSERIAL PK \|
-
-\| province_code \| VARCHAR(2) \|
-
-\| birth_year \| INTEGER \|
-
-\| gender \| VARCHAR(1) \|
-
-\| first_name \| VARCHAR(100) \|
-
-\| frequency_count \| INTEGER \|
-
-\| normalized_probability \| NUMERIC(12,8) \|
-
-\| source_dataset \| VARCHAR(255) \|
-
-\| created_at \| TIMESTAMP \|
-
-\-\--
-
-## 8.3 usa_last_names
+Stores consolidated USA and Canada last-name frequency data.
 
 ### Proposed Columns
 
@@ -528,31 +498,9 @@ Supports:
 
 \| id \| BIGSERIAL PK \|
 
-\| state_code \| VARCHAR(2) \|
+\| country_code \| VARCHAR(2) \|
 
-\| last_name \| VARCHAR(100) \|
-
-\| frequency_count \| INTEGER \|
-
-\| normalized_probability \| NUMERIC(12,8) \|
-
-\| source_dataset \| VARCHAR(255) \|
-
-\| created_at \| TIMESTAMP \|
-
-\-\--
-
-## 8.4 canada_last_names
-
-### Proposed Columns
-
-\| Column \| Type \|
-
-\|\-\--\|\-\--\|
-
-\| id \| BIGSERIAL PK \|
-
-\| province_code \| VARCHAR(2) \|
+\| state_province_code \| VARCHAR(2) \|
 
 \| last_name \| VARCHAR(100) \|
 
@@ -898,13 +846,15 @@ UNIQUE (country_code, region_name)
 
 \-\--
 
-## 11.7 usa_first_names
+## 11.7 first_names
 
-CREATE TABLE usa_first_names (
+CREATE TABLE first_names (
 
 id BIGSERIAL PRIMARY KEY,
 
-state_code VARCHAR(2) NOT NULL,
+country_code VARCHAR(2) NOT NULL,
+
+state_province_code VARCHAR(2) NOT NULL,
 
 birth_year INTEGER NOT NULL,
 
@@ -920,21 +870,25 @@ source_dataset VARCHAR(255),
 
 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_usa_first_names_gender CHECK (gender IN ('M', 'F')),
+CONSTRAINT chk_first_names_gender CHECK (gender IN ('M', 'F')),
 
-CONSTRAINT chk_usa_first_names_freq CHECK (frequency_count > 0)
+CONSTRAINT chk_first_names_freq CHECK (frequency_count > 0),
+
+CONSTRAINT chk_first_names_country CHECK (country_code IN ('US', 'CA'))
 
 );
 
 \-\--
 
-## 11.8 usa_last_names
+## 11.8 last_names
 
-CREATE TABLE usa_last_names (
+CREATE TABLE last_names (
 
 id BIGSERIAL PRIMARY KEY,
 
-state_code VARCHAR(2) NOT NULL,
+country_code VARCHAR(2) NOT NULL,
+
+state_province_code VARCHAR(2) NOT NULL,
 
 last_name VARCHAR(100) NOT NULL,
 
@@ -946,67 +900,15 @@ source_dataset VARCHAR(255),
 
 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_usa_last_names_freq CHECK (frequency_count > 0)
+CONSTRAINT chk_last_names_freq CHECK (frequency_count > 0),
+
+CONSTRAINT chk_last_names_country CHECK (country_code IN ('US', 'CA'))
 
 );
 
 \-\--
 
-## 11.9 canada_first_names
-
-CREATE TABLE canada_first_names (
-
-id BIGSERIAL PRIMARY KEY,
-
-province_code VARCHAR(2) NOT NULL,
-
-birth_year INTEGER NOT NULL,
-
-gender VARCHAR(1) NOT NULL,
-
-first_name VARCHAR(100) NOT NULL,
-
-frequency_count INTEGER NOT NULL,
-
-normalized_probability NUMERIC(12,8),
-
-source_dataset VARCHAR(255),
-
-created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-CONSTRAINT chk_canada_first_names_gender CHECK (gender IN ('M', 'F')),
-
-CONSTRAINT chk_canada_first_names_freq CHECK (frequency_count > 0)
-
-);
-
-\-\--
-
-## 11.10 canada_last_names
-
-CREATE TABLE canada_last_names (
-
-id BIGSERIAL PRIMARY KEY,
-
-province_code VARCHAR(2) NOT NULL,
-
-last_name VARCHAR(100) NOT NULL,
-
-frequency_count INTEGER NOT NULL,
-
-normalized_probability NUMERIC(12,8),
-
-source_dataset VARCHAR(255),
-
-created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-CONSTRAINT chk_canada_last_names_freq CHECK (frequency_count > 0)
-
-);
-
-\-\--
-
-## 11.11 clubs
+## 11.9 clubs
 
 CREATE TABLE clubs (
 
@@ -1044,7 +946,7 @@ CONSTRAINT chk_court_counts CHECK (indoor_court_count >= 0 AND outdoor_court_cou
 
 \-\--
 
-## 11.12 club_memberships
+## 11.10 club_memberships
 
 CREATE TABLE club_memberships (
 
@@ -1074,7 +976,7 @@ CONSTRAINT chk_membership_dates CHECK (end_date IS NULL OR end_date >= start_dat
 
 \-\--
 
-## 11.13 teams
+## 11.11 teams
 
 CREATE TABLE teams (
 
@@ -1108,7 +1010,7 @@ CONSTRAINT chk_team_dates CHECK (dissolution_date IS NULL OR dissolution_date >=
 
 \-\--
 
-## 11.14 team_memberships
+## 11.12 team_memberships
 
 CREATE TABLE team_memberships (
 
@@ -1136,7 +1038,7 @@ UNIQUE (team_id, player_id, joined_date)
 
 \-\--
 
-## 11.15 monthly_batches
+## 11.13 monthly_batches
 
 CREATE TABLE monthly_batches (
 
@@ -1184,7 +1086,7 @@ CONSTRAINT chk_processing_status CHECK (processing_status IN ('pending', 'runnin
 
 \-\--
 
-## 11.16 generation_runs
+## 11.14 generation_runs
 
 CREATE TABLE generation_runs (
 
@@ -1214,7 +1116,7 @@ CONSTRAINT chk_generation_status CHECK (status IN ('pending', 'running', 'comple
 
 \-\--
 
-## 11.17 tournaments
+## 11.15 tournaments
 
 CREATE TABLE tournaments (
 
@@ -1246,7 +1148,7 @@ CONSTRAINT chk_tournament_dates CHECK (tournament_end_date >= tournament_start_d
 
 \-\--
 
-## 11.18 player_assessment_history
+## 11.16 player_assessment_history
 
 CREATE TABLE player_assessment_history (
 
@@ -1274,7 +1176,35 @@ CONSTRAINT chk_assessment_confidence CHECK (confidence_score >= 0 AND confidence
 
 \-\--
 
-## 11.19 batch_runs
+## 11.17 player_registrations
+
+CREATE TABLE player_registrations (
+
+id BIGSERIAL PRIMARY KEY,
+
+player_id BIGINT NOT NULL REFERENCES players(id),
+
+batch_id BIGINT NOT NULL REFERENCES monthly_batches(id),
+
+registration_month DATE NOT NULL,
+
+registration_source VARCHAR(50) NOT NULL DEFAULT 'synthetic',
+
+assigned_region_id BIGINT REFERENCES regions(id),
+
+initial_rating_value NUMERIC(8,3),
+
+initial_confidence_score NUMERIC(8,3),
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+UNIQUE (player_id, batch_id)
+
+);
+
+\-\--
+
+## 11.18 batch_runs
 
 CREATE TABLE batch_runs (
 
@@ -1300,7 +1230,7 @@ CONSTRAINT chk_run_status CHECK (run_status IN ('pending', 'running', 'completed
 
 \-\--
 
-## 11.20 uploaded_files
+## 11.19 uploaded_files
 
 CREATE TABLE uploaded_files (
 
@@ -1328,7 +1258,7 @@ CONSTRAINT chk_file_size CHECK (file_size_bytes >= 0)
 
 \-\--
 
-## 11.21 export_runs
+## 11.20 export_runs
 
 CREATE TABLE export_runs (
 
@@ -1358,7 +1288,7 @@ CONSTRAINT chk_export_format CHECK (export_format IN ('parquet', 'csv', 'json', 
 
 \-\--
 
-## 11.22 validation_results
+## 11.21 validation_results
 
 CREATE TABLE validation_results (
 
@@ -1392,7 +1322,7 @@ CONSTRAINT chk_severity CHECK (severity IN ('info', 'warning', 'error', 'blocker
 
 \-\--
 
-## 11.23 job_status
+## 11.22 job_status
 
 CREATE TABLE job_status (
 
@@ -1482,18 +1412,14 @@ CREATE INDEX idx_batch_runs_status ON batch_runs(run_status);
 
 ## Reference Data Indexes
 
--- usa_first_names indexes
-CREATE INDEX idx_usa_first_names_lookup ON usa_first_names(state_code, birth_year, gender);
-CREATE INDEX idx_usa_first_names_probability ON usa_first_names(normalized_probability);
+-- first_names indexes
+CREATE INDEX idx_first_names_lookup ON first_names(country_code, state_province_code, birth_year, gender);
+CREATE INDEX idx_first_names_probability ON first_names(normalized_probability);
+CREATE INDEX idx_first_names_country ON first_names(country_code);
 
--- canada_first_names indexes
-CREATE INDEX idx_canada_first_names_lookup ON canada_first_names(province_code, birth_year, gender);
-
--- usa_last_names indexes
-CREATE INDEX idx_usa_last_names_lookup ON usa_last_names(state_code);
-
--- canada_last_names indexes
-CREATE INDEX idx_canada_last_names_lookup ON canada_last_names(province_code);
+-- last_names indexes
+CREATE INDEX idx_last_names_lookup ON last_names(country_code, state_province_code);
+CREATE INDEX idx_last_names_country ON last_names(country_code);
 
 -- clubs indexes
 CREATE INDEX idx_clubs_region ON clubs(region_id);
@@ -1758,7 +1684,7 @@ Future schema support:
 - regions: Validated regional reference data
 - clubs: Generated club inventory
 - players: Core player identity
-- usa_first_names, usa_last_names, canada_first_names, canada_last_names: Normalized name frequency data
+- first_names, last_names: Consolidated normalized USA and Canada name frequency data
 - teams: Validated team formations
 - club_memberships: Validated membership assignments
 

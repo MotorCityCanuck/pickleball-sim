@@ -48,9 +48,9 @@ This index provides a hierarchical guide to all authoritative design documents f
 **File**: `database/Pickleball_Simulation_Database_Design_v3.md`  
 **Purpose**: Authoritative schema definition and data model  
 **Key Sections**:
-- Complete DDL for 23 tables
-- 48 indexes
-- 23 check constraints
+- Complete DDL for 22 tables
+- 59 indexes
+- 31 check constraints
 - 9 unique constraints
 - 35 validation rules
 - Parquet export strategy

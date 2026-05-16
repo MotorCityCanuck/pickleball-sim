@@ -13,7 +13,7 @@
 Alembic added unnecessary complexity for this project because:
 
 1. **This is a data generation platform**, not a SaaS app with evolving schemas
-2. **Schema is fully designed upfront** - all 23 tables documented in DDL
+2. **Schema is fully designed upfront** - all 22 tables documented in DDL
 3. **No incremental migrations needed** - students will drop/recreate databases
 4. **Alembic's value proposition doesn't apply**:
    - No production schema evolution
@@ -90,11 +90,11 @@ rm -rf alembic/versions/*.py
 Create `backend/schema.sql` with contents from `database/Pickleball_Simulation_Database_Design_v3.md` Section 11 and 12:
 
 ```sql
--- Section 11: All 23 CREATE TABLE statements
+-- Section 11: All 22 CREATE TABLE statements
 -- Section 12: All CREATE INDEX statements
 ```
 
-**Tables to include** (23 total):
+**Tables to include** (22 total):
 1. generation_runs
 2. regions
 3. monthly_batches
@@ -110,15 +110,13 @@ Create `backend/schema.sql` with contents from `database/Pickleball_Simulation_D
 13. match_teams
 14. match_team_players
 15. tournaments
-16. usa_first_names
-17. usa_last_names
-18. canada_first_names
-19. canada_last_names
-20. batch_runs
-21. uploaded_files
-22. export_runs
-23. validation_results
-24. job_status
+16. first_names
+17. last_names
+18. batch_runs
+19. uploaded_files
+20. export_runs
+21. validation_results
+22. job_status
 
 ### 2. Apply Schema to Database
 
@@ -138,7 +136,7 @@ docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim < backend/
 
 ```bash
 docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim << EOF
--- Should show 23 tables
+-- Should show 22 tables
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 
 -- List all tables
@@ -181,7 +179,7 @@ def test_database_schema_exists():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 23, f"Expected 23 tables, found {len(tables)}"
+    assert len(tables) == 22, f"Expected 22 tables, found {len(tables)}"
     assert 'players' in tables
     assert 'player_rating_history' in tables
     assert 'monthly_batches' in tables

@@ -130,8 +130,8 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 **Problem**: Tables mentioned but DDL not provided  
 **Resolution**: Complete DDL added for:
 
-- `canada_first_names`
-- `canada_last_names`
+- `first_names`
+- `last_names`
 - `clubs`
 - `club_memberships`
 - `teams`
@@ -145,7 +145,7 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 - `validation_results` (NEW)
 - `job_status` (NEW)
 
-**Total Tables**: 23 complete DDL statements with all constraints
+**Total Tables**: 22 complete DDL statements with all constraints
 
 ---
 

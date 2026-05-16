@@ -245,10 +245,11 @@ CREATE TABLE match_team_players (
     UNIQUE (match_team_id, player_id)
 );
 
--- 16. usa_first_names
-CREATE TABLE usa_first_names (
+-- 16. first_names (consolidated USA and Canada)
+CREATE TABLE first_names (
     id BIGSERIAL PRIMARY KEY,
-    state_code VARCHAR(2) NOT NULL,
+    country_code VARCHAR(2) NOT NULL,
+    state_province_code VARCHAR(2) NOT NULL,
     birth_year INTEGER NOT NULL,
     gender VARCHAR(1) NOT NULL,
     first_name VARCHAR(100) NOT NULL,
@@ -256,50 +257,26 @@ CREATE TABLE usa_first_names (
     normalized_probability NUMERIC(12,8),
     source_dataset VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_usa_first_names_gender CHECK (gender IN ('M', 'F')),
-    CONSTRAINT chk_usa_first_names_freq CHECK (frequency_count > 0)
+    CONSTRAINT chk_first_names_gender CHECK (gender IN ('M', 'F')),
+    CONSTRAINT chk_first_names_freq CHECK (frequency_count > 0),
+    CONSTRAINT chk_first_names_country CHECK (country_code IN ('US', 'CA'))
 );
 
--- 17. usa_last_names
-CREATE TABLE usa_last_names (
+-- 17. last_names (consolidated USA and Canada)
+CREATE TABLE last_names (
     id BIGSERIAL PRIMARY KEY,
-    state_code VARCHAR(2) NOT NULL,
+    country_code VARCHAR(2) NOT NULL,
+    state_province_code VARCHAR(2) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
     frequency_count INTEGER NOT NULL,
     normalized_probability NUMERIC(12,8),
     source_dataset VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_usa_last_names_freq CHECK (frequency_count > 0)
+    CONSTRAINT chk_last_names_freq CHECK (frequency_count > 0),
+    CONSTRAINT chk_last_names_country CHECK (country_code IN ('US', 'CA'))
 );
 
--- 18. canada_first_names
-CREATE TABLE canada_first_names (
-    id BIGSERIAL PRIMARY KEY,
-    province_code VARCHAR(2) NOT NULL,
-    birth_year INTEGER NOT NULL,
-    gender VARCHAR(1) NOT NULL,
-    first_name VARCHAR(100) NOT NULL,
-    frequency_count INTEGER NOT NULL,
-    normalized_probability NUMERIC(12,8),
-    source_dataset VARCHAR(255),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_canada_first_names_gender CHECK (gender IN ('M', 'F')),
-    CONSTRAINT chk_canada_first_names_freq CHECK (frequency_count > 0)
-);
-
--- 19. canada_last_names
-CREATE TABLE canada_last_names (
-    id BIGSERIAL PRIMARY KEY,
-    province_code VARCHAR(2) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    frequency_count INTEGER NOT NULL,
-    normalized_probability NUMERIC(12,8),
-    source_dataset VARCHAR(255),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_canada_last_names_freq CHECK (frequency_count > 0)
-);
-
--- 20. batch_runs
+-- 18. batch_runs
 CREATE TABLE batch_runs (
     id BIGSERIAL PRIMARY KEY,
     batch_id BIGINT NOT NULL REFERENCES monthly_batches(id),
@@ -312,7 +289,7 @@ CREATE TABLE batch_runs (
     CONSTRAINT chk_run_status CHECK (run_status IN ('pending', 'running', 'completed', 'failed'))
 );
 
--- 21. uploaded_files
+-- 19. uploaded_files
 CREATE TABLE uploaded_files (
     id BIGSERIAL PRIMARY KEY,
     original_filename VARCHAR(255) NOT NULL,
@@ -326,7 +303,7 @@ CREATE TABLE uploaded_files (
     CONSTRAINT chk_file_size CHECK (file_size_bytes >= 0)
 );
 
--- 22. export_runs
+-- 20. export_runs
 CREATE TABLE export_runs (
     id BIGSERIAL PRIMARY KEY,
     batch_id BIGINT REFERENCES monthly_batches(id),
@@ -341,7 +318,7 @@ CREATE TABLE export_runs (
     CONSTRAINT chk_export_format CHECK (export_format IN ('parquet', 'csv', 'json', 'sql'))
 );
 
--- 23. validation_results
+-- 21. validation_results
 CREATE TABLE validation_results (
     id BIGSERIAL PRIMARY KEY,
     batch_id BIGINT REFERENCES monthly_batches(id),
@@ -358,7 +335,7 @@ CREATE TABLE validation_results (
     CONSTRAINT chk_severity CHECK (severity IN ('info', 'warning', 'error', 'blocker'))
 );
 
--- 24. job_status
+-- 22. job_status
 CREATE TABLE job_status (
     id BIGSERIAL PRIMARY KEY,
     job_type VARCHAR(50) NOT NULL,
@@ -418,20 +395,18 @@ CREATE INDEX idx_monthly_batches_status ON monthly_batches(processing_status);
 CREATE INDEX idx_batch_runs_batch ON batch_runs(batch_id);
 CREATE INDEX idx_batch_runs_status ON batch_runs(run_status);
 
-CREATE INDEX idx_usa_first_names_lookup ON usa_first_names(state_code, birth_year, gender);
-CREATE INDEX idx_usa_first_names_probability ON usa_first_names(normalized_probability);
+CREATE INDEX idx_first_names_lookup ON first_names(country_code, state_province_code, birth_year, gender);
+CREATE INDEX idx_first_names_probability ON first_names(normalized_probability);
+CREATE INDEX idx_first_names_country ON first_names(country_code);
 
-CREATE INDEX idx_canada_first_names_lookup ON canada_first_names(province_code, birth_year, gender);
-
-CREATE INDEX idx_usa_last_names_lookup ON usa_last_names(state_code);
-
-CREATE INDEX idx_canada_last_names_lookup ON canada_last_names(province_code);
+CREATE INDEX idx_last_names_lookup ON last_names(country_code, state_province_code);
+CREATE INDEX idx_last_names_country ON last_names(country_code);
 
 CREATE INDEX idx_clubs_region ON clubs(region_id);
 CREATE INDEX idx_clubs_type ON clubs(club_type);
 CREATE INDEX idx_clubs_generation_run ON clubs(generation_run_id);
 
-CREATE INDEX idx_club_memberships_player ON club_membeDships(player_id);
+CREATE INDEX idx_club_memberships_player ON club_memberships(player_id);
 CREATE INDEX idx_club_memberships_club ON club_memberships(club_id);
 CREATE INDEX idx_club_memberships_dates ON club_memberships(start_date, end_date);
 CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_primary) WHERE is_primary = true;

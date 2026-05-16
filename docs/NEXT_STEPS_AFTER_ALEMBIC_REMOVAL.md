@@ -55,7 +55,7 @@ CREATE TABLE player_rating_history (...);
 CREATE TABLE player_assessment_history (...);
 CREATE TABLE player_registrations (...);
 
--- [... continue for all 23 tables ...]
+-- [... continue for all 22 tables ...]
 
 -- ============================================
 -- Indexes (Section 12)
@@ -80,7 +80,7 @@ docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "\dt"
 docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public';"
 ```
 
-**Expected output**: 23 tables
+**Expected output**: 22 tables
 
 ### Action 4: Fix Priority 2 Models (10 minutes)
 
@@ -168,11 +168,11 @@ def test_database_connection():
 
 
 def test_all_tables_exist():
-    """Verify all 23 tables were created."""
+    """Verify all 22 tables were created."""
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 23, f"Expected 23 tables, found {len(tables)}: {tables}"
+    assert len(tables) == 22, f"Expected 22 tables, found {len(tables)}: {tables}"
     
     # Check key tables
     expected_tables = [
@@ -180,7 +180,7 @@ def test_all_tables_exist():
         'players', 'player_rating_history', 'player_assessment_history', 'player_registrations',
         'clubs', 'club_memberships', 'teams', 'team_memberships',
         'matches', 'match_teams', 'match_team_players', 'tournaments',
-        'usa_first_names', 'usa_last_names', 'canada_first_names', 'canada_last_names',
+        'first_names', 'last_names',
         'batch_runs', 'uploaded_files', 'export_runs', 'validation_results', 'job_status'
     ]
     
@@ -235,7 +235,7 @@ pytest tests/test_database_setup.py -v
 - [ ] Create `backend/schema.sql` from database design doc
 - [ ] Drop and recreate database
 - [ ] Apply schema (`psql -f schema.sql`)
-- [ ] Verify 23 tables exist
+- [ ] Verify 22 tables exist
 - [ ] Test Priority 1+2 model imports
 - [ ] Create `backend/app/db/session.py`
 - [ ] Create `backend/app/db/__init__.py`
@@ -251,7 +251,7 @@ pytest tests/test_database_setup.py -v
 When complete, you should have:
 
 ✅ Clean architecture (no Alembic)  
-✅ 23 database tables created via DDL  
+✅ 22 database tables created via DDL  
 ✅ SQLAlchemy models that work with existing schema  
 ✅ Database session management  
 ✅ Passing tests  

@@ -32,7 +32,7 @@ pickleball-sim/
 │   │   │   ├── 📄 session.py                       # [TODO] SQLAlchemy session
 │   │   │   └── 📄 base.py                          # [TODO] Model registry
 │   │   │
-│   │   ├── 📂 models/                              # SQLAlchemy ORM models (23 total)
+│   │   ├── 📂 models/                              # SQLAlchemy ORM models (22 total)
 │   │   │   ├── 📄 __init__.py
 │   │   │   ├── 📄 base.py                          # [TODO] Base model + mixins
 │   │   │   ├── 📄 generation_runs.py               # [TODO] Generation control
@@ -50,10 +50,8 @@ pickleball-sim/
 │   │   │   ├── 📄 match_teams.py                   # [TODO] Match participants
 │   │   │   ├── 📄 match_team_players.py            # [TODO] Player participation
 │   │   │   ├── 📄 tournaments.py                   # [TODO] Tournament events
-│   │   │   ├── 📄 usa_first_names.py               # [TODO] Name frequency data
-│   │   │   ├── 📄 usa_last_names.py                # [TODO] Surname data
-│   │   │   ├── 📄 canada_first_names.py            # [TODO] Canadian names
-│   │   │   ├── 📄 canada_last_names.py             # [TODO] Canadian surnames
+│   │   │   ├── 📄 first_names.py                   # [TODO] Consolidated first-name frequency data
+│   │   │   ├── 📄 last_names.py                    # [TODO] Consolidated surname frequency data
 │   │   │   ├── 📄 batch_runs.py                    # [TODO] Batch execution
 │   │   │   ├── 📄 uploaded_files.py                # [TODO] File uploads
 │   │   │   ├── 📄 export_runs.py                   # [TODO] Export metadata
@@ -196,7 +194,7 @@ pickleball-sim/
 |-----------|---------|----------|--------|
 | `backend/app/core/` | Configuration and settings | 🔴 Critical | TODO |
 | `backend/app/db/` | Database session management | 🔴 Critical | TODO |
-| `backend/app/models/` | SQLAlchemy ORM models (23 tables) | 🔴 Critical | TODO |
+| `backend/app/models/` | SQLAlchemy ORM models (22 tables) | 🔴 Critical | TODO |
 | `backend/app/repositories/` | Data access layer | 🟠 High | TODO |
 | `backend/app/generators/` | Data generation modules | 🟠 High | TODO |
 | `backend/app/simulations/` | Match/score simulation | 🟠 High | TODO |
@@ -216,7 +214,7 @@ pickleball-sim/
 
 ### Phase 1: Foundation (Current) - Days 1-2
 1. ✅ Project structure created
-2. ⏭️ Database models (23 files)
+2. ⏭️ Database models (22 files)
 3. ⏭️ Alembic migrations
 4. ⏭️ Session management
 5. ⏭️ Configuration system
@@ -280,7 +278,7 @@ pickleball-sim/
    alembic init alembic
    ```
 
-4. Create all 23 SQLAlchemy models in `backend/app/models/`
+4. Create all 22 SQLAlchemy models in `backend/app/models/`
 
 5. Generate and apply first migration
 
