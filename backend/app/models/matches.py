@@ -23,10 +23,10 @@ class Match(Base, TimestampMixin):
     batch_id = Column(BigInteger, ForeignKey('monthly_batches.id'), nullable=False)
     
     # Relationships
-    tournament = relationship("Tournament", back_populates="matches")
+    tournament = relationship("Tournament")
     region = relationship("Region")
     batch = relationship("MonthlyBatch")
-    match_teams = relationship("MatchTeam", back_populates="match")
+    match_teams = relationship("MatchTeam")
     
     __table_args__ = (
         CheckConstraint(

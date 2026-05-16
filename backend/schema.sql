@@ -406,7 +406,7 @@ CREATE INDEX idx_batch_runs_status ON batch_runs(run_status);
 
 CREATE INDEX idx_first_names_lookup ON first_names(country_code, state_province_code, birth_year, gender);
 CREATE INDEX idx_first_names_probability ON first_names(normalized_probability);
-CREATE INDEX idx_first_names_country ON first_names(country_code);
+CREATE INDEX idx_first_names_coucdntry ON first_names(country_code);
 
 CREATE INDEX idx_last_names_lookup ON last_names(country_code, state_province_code);
 CREATE INDEX idx_last_names_country ON last_names(country_code);

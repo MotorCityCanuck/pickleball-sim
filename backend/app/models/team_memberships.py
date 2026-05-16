@@ -17,8 +17,8 @@ class TeamMembership(Base, TimestampMixin):
     left_date = Column(Date)
     
     # Relationships
-    team = relationship("Team", back_populates="memberships")
-    player = relationship("Player", back_populates="team_memberships")
+    team = relationship("Team")
+    player = relationship("Player")
     
     __table_args__ = (
         CheckConstraint('player_position IN (1, 2)', name='chk_position'),

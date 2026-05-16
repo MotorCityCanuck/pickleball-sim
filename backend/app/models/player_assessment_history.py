@@ -52,8 +52,8 @@ class PlayerAssessmentHistory(Base):
     )
     
     # Relationships
-    player = relationship("Player", back_populates="assessment_history")
-    batch = relationship("MonthlyBatch", back_populates="assessment_updates")
+    player = relationship("Player")
+    batch = relationship("MonthlyBatch")
     
     # Constraints
     __table_args__ = (

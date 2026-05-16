@@ -16,7 +16,7 @@ class MatchTeamPlayer(Base, TimestampMixin):
     player_rating_at_match = Column(Numeric(8, 3))
     
     # Relationships
-    match_team = relationship("MatchTeam", back_populates="players")
+    match_team = relationship("MatchTeam")
     player = relationship("Player")
     
     __table_args__ = (

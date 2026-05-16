@@ -24,7 +24,7 @@ class PlayerRatingHistory(Base, TimestampMixin):
     batch_id = Column(BigInteger, ForeignKey('monthly_batches.id'), nullable=False)
     
     # Relationships
-    player = relationship("Player", back_populates="rating_history")
+    player = relationship("Player")
     batch = relationship("MonthlyBatch")
     
     __table_args__ = (

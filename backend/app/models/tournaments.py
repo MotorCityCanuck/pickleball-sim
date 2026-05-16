@@ -22,7 +22,7 @@ class Tournament(Base, TimestampMixin):
     # Relationships
     region = relationship("Region")
     generation_run = relationship("GenerationRun")
-    matches = relationship("Match", back_populates="tournament")
+    matches = relationship("Match")
     
     __table_args__ = (
         CheckConstraint('tournament_end_date >= tournament_start_date', name='chk_tournament_dates'),

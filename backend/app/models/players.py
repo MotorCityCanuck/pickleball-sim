@@ -52,8 +52,8 @@ class Player(Base, TimestampMixin):
     )
     
     # Relationships
-    home_region = relationship("Region", back_populates="players")
-    generation_run = relationship("GenerationRun", back_populates="players")
+    home_region = relationship("Region")
+    generation_run = relationship("GenerationRun")
     rating_history = relationship(
         "PlayerRatingHistory",
         back_populates="player",
@@ -64,7 +64,7 @@ class Player(Base, TimestampMixin):
         back_populates="player",
         order_by="PlayerAssessmentHistory.assessment_date.desc()"
     )
-    registrations = relationship("PlayerRegistration", back_populates="player")
+    registrations = relationship("PlayerRegistration")
     
     # Constraints
     __table_args__ = (

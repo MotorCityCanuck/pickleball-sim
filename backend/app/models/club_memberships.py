@@ -19,8 +19,8 @@ class ClubMembership(Base, TimestampMixin):
     generation_run_id = Column(BigInteger, ForeignKey('generation_runs.id'))
     
     # Relationships
-    player = relationship("Player", back_populates="club_memberships")
-    club = relationship("Club", back_populates="memberships")
+    player = relationship("Player")
+    club = relationship("Club")
     generation_run = relationship("GenerationRun")
     
     __table_args__ = (
