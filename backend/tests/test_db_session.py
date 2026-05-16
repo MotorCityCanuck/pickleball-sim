@@ -50,6 +50,7 @@ def test_session_factory_is_configured():
     session = SessionLocal()
     try:
         assert session.autoflush is False
+        assert session.expire_on_commit is False
         assert session.bind is not None
         assert session.in_transaction() is False
     finally:
