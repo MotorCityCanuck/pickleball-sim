@@ -23,7 +23,7 @@ class Club(Base, TimestampMixin):
     # Relationships
     region = relationship("Region")
     generation_run = relationship("GenerationRun")
-    memberships = relationship("ClubMembership")
+    memberships = relationship("ClubMembership", back_populates="club")
     
     __table_args__ = (
         UniqueConstraint('region_id', 'club_name', name='uq_club_region_name'),

@@ -20,7 +20,7 @@ class ClubMembership(Base, TimestampMixin):
     
     # Relationships
     player = relationship("Player")
-    club = relationship("Club")
+    club = relationship("Club", back_populates="memberships")
     generation_run = relationship("GenerationRun")
     
     __table_args__ = (

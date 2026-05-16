@@ -55,7 +55,7 @@ class PlayerRegistration(Base):
     )
     
     # Relationships
-    player = relationship("Player")
+    player = relationship("Player", back_populates="registrations")
     batch = relationship("MonthlyBatch")
     assigned_region = relationship("Region")
     

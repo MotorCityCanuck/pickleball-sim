@@ -20,7 +20,7 @@ class Team(Base, TimestampMixin):
     
     # Relationships
     generation_run = relationship("GenerationRun")
-    memberships = relationship("TeamMembership")
+    memberships = relationship("TeamMembership", back_populates="team")
     
     __table_args__ = (
         CheckConstraint(

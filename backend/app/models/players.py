@@ -64,7 +64,7 @@ class Player(Base, TimestampMixin):
         back_populates="player",
         order_by="PlayerAssessmentHistory.assessment_date.desc()"
     )
-    registrations = relationship("PlayerRegistration")
+    registrations = relationship("PlayerRegistration", back_populates="player")
     
     # Constraints
     __table_args__ = (

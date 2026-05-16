@@ -17,7 +17,7 @@ class TeamMembership(Base, TimestampMixin):
     left_date = Column(Date)
     
     # Relationships
-    team = relationship("Team")
+    team = relationship("Team", back_populates="memberships")
     player = relationship("Player")
     
     __table_args__ = (

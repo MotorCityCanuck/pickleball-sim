@@ -17,8 +17,8 @@ class MatchTeam(Base, TimestampMixin):
     average_team_rating = Column(Numeric(8, 3))
     
     # Relationships
-    match = relationship("Match")
-    players = relationship("MatchTeamPlayer")
+    match = relationship("Match", back_populates="match_teams")
+    players = relationship("MatchTeamPlayer", back_populates="match_team")
     
     __table_args__ = (
         CheckConstraint('team_number IN (1, 2)', name='chk_team_number'),

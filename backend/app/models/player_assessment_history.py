@@ -52,7 +52,7 @@ class PlayerAssessmentHistory(Base):
     )
     
     # Relationships
-    player = relationship("Player")
+    player = relationship("Player", back_populates="assessment_history")
     batch = relationship("MonthlyBatch")
     
     # Constraints
