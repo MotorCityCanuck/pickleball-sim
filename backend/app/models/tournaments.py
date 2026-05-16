@@ -1,5 +1,8 @@
 """Tournaments model."""
-from sqlalchemy import Column, BigInteger, String, Date, Integer, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Date, Integer, ForeignKey, CheckConstraint,
+    Index
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -25,5 +28,7 @@ class Tournament(Base, TimestampMixin):
     matches = relationship("Match", back_populates="tournament")
     
     __table_args__ = (
+        Index('idx_tournaments_region', 'region_id'),
+        Index('idx_tournaments_start_date', 'tournament_start_date'),
         CheckConstraint('tournament_end_date >= tournament_start_date', name='chk_tournament_dates'),
     )

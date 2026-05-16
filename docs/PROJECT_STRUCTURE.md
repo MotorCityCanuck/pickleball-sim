@@ -117,10 +117,9 @@ pickleball-sim/
 │   │       ├── 📄 random_context.py                # [TODO] Seeded randomness
 │   │       └── 📄 module_result.py                 # [TODO] Standard return objects
 │   │
-│   ├── 📂 alembic/                                 # Database migrations
-│   │   ├── 📄 env.py                               # [TODO] Alembic environment
-│   │   ├── 📄 script.py.mako                       # Migration template
-│   │   └── 📂 versions/                            # Migration versions
+│   ├── 📂 scripts/                                 # ORM schema utilities
+│   │   ├── 📄 recreate_db_from_orm.py              # [TODO] Recreate dev DB
+│   │   └── 📄 export_schema_from_orm.py            # [TODO] Generate schema.sql
 │   │
 │   └── 📂 tests/                                   # Test suite
 │       ├── 📄 conftest.py                          # [TODO] Pytest fixtures
@@ -203,7 +202,7 @@ pickleball-sim/
 | `backend/app/exports/` | Parquet export logic | 🟡 Medium | TODO |
 | `backend/app/analytics/` | Derived computations | 🟡 Medium | TODO |
 | `backend/app/web/` | FastAPI control panel | 🟢 Low (Phase 5) | TODO |
-| `backend/alembic/` | Database migrations | 🔴 Critical | TODO |
+| `backend/scripts/` | ORM schema recreation/export utilities | 🔴 Critical | TODO |
 | `backend/tests/` | Test suite | 🟠 High | TODO |
 | `data/` | Data storage (git-ignored) | 🟠 High | ✅ Created |
 | `scripts/` | Utility scripts | 🟡 Medium | Partial |
@@ -215,7 +214,7 @@ pickleball-sim/
 ### Phase 1: Foundation (Current) - Days 1-2
 1. ✅ Project structure created
 2. ⏭️ Database models (22 files)
-3. ⏭️ Alembic migrations
+3. ⏭️ ORM schema recreation scripts
 4. ⏭️ Session management
 5. ⏭️ Configuration system
 
@@ -272,15 +271,14 @@ pickleball-sim/
    docker ps
    ```
 
-3. Initialize Alembic:
+3. Recreate the development database from ORM metadata:
    ```bash
-   cd backend
-   alembic init alembic
+   python backend/scripts/recreate_db_from_orm.py
    ```
 
 4. Create all 22 SQLAlchemy models in `backend/app/models/`
 
-5. Generate and apply first migration
+5. Generate reference SQL from ORM metadata
 
 ---
 

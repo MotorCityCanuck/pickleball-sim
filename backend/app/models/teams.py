@@ -1,5 +1,8 @@
 """Teams model."""
-from sqlalchemy import Column, BigInteger, String, Date, Numeric, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Date, Numeric, ForeignKey, CheckConstraint,
+    Index
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -23,6 +26,9 @@ class Team(Base, TimestampMixin):
     memberships = relationship("TeamMembership", back_populates="team")
     
     __table_args__ = (
+        Index('idx_teams_type', 'team_type'),
+        Index('idx_teams_status', 'team_status'),
+        Index('idx_teams_formation_date', 'formation_date'),
         CheckConstraint(
             "team_type IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')",
             name='chk_team_type'

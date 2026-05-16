@@ -346,24 +346,25 @@ SQLAlchemy is the primary ORM layer. SQLAlchemy provides model definitions, rela
 
 ## 9.3 Schema Management Strategy
 
-Database schema is managed through **direct DDL execution**.
+Database schema is managed through **SQLAlchemy ORM metadata** during active
+development.
 
-The complete schema is defined in `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
+The complete executable schema is defined by the ORM models in
+`backend/app/models`.
 
 Schema creation workflow:
 
 ```bash
-# Extract DDL from database design document
-# Apply directly to PostgreSQL
-psql -U postgres -d pickleball_sim -f backend/schema.sql
+# Recreate a local development database from ORM metadata
+python backend/scripts/recreate_db_from_orm.py
 ```
 
 Rules:
 
-- Single source of truth: DDL in database design document
-- Schema creation via direct SQL execution
-- SQLAlchemy models used for queries and data access only
-- Models should match DDL but are not the schema source
+- Single source of truth: SQLAlchemy ORM models
+- Schema creation via controlled ORM metadata scripts
+- `backend/schema.sql` is a generated/reference artifact
+- Generated SQL should match ORM metadata, not diverge from it
 - For development: Drop and recreate database as needed
 - For students: Reproducible one-command schema setup
 

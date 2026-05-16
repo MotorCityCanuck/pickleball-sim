@@ -53,7 +53,7 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 5. **Initialize database**
    ```bash
-   alembic upgrade head
+   python backend/scripts/recreate_db_from_orm.py
    ```
 
 ## Project Structure
@@ -74,7 +74,7 @@ pickleball-sim/
 │   │   ├── validation/        # Data quality validation
 │   │   ├── web/               # FastAPI web interface
 │   │   └── utils/             # Shared utilities
-│   ├── alembic/               # Database migrations
+│   ├── scripts/               # ORM schema recreation/export scripts
 │   ├── tests/                 # Test suite
 │   └── requirements.txt       # Python dependencies
 ├── data/                      # Data storage
@@ -108,7 +108,7 @@ pickleball-sim/
 
 - **Database**: PostgreSQL 16
 - **ORM**: SQLAlchemy 2.0
-- **Migrations**: Alembic
+- **Schema Management**: ORM-first development recreation
 - **Web Framework**: FastAPI (Phase 2)
 - **Data Processing**: Pandas, NumPy
 - **Export Format**: Parquet (PyArrow)
@@ -136,7 +136,7 @@ Configuration → Monthly Batch Processor
 - [x] Documentation review
 - [ ] Database schema implementation
 - [ ] SQLAlchemy models
-- [ ] Alembic migrations
+- [ ] ORM-driven database recreation scripts
 
 ### 🔄 Phase 2: Core Generation
 - [ ] Configuration system
@@ -218,17 +218,14 @@ pytest tests/integration/
 ## Database Management
 
 ```bash
-# Create new migration
-alembic revision --autogenerate -m "Description"
+# Recreate local development database from ORM metadata
+python backend/scripts/recreate_db_from_orm.py
 
-# Apply migrations
-alembic upgrade head
+# Export reference SQL from ORM metadata
+python backend/scripts/export_schema_from_orm.py
 
-# Rollback one version
-alembic downgrade -1
-
-# View migration history
-alembic history
+# Run offline ORM consistency checks
+python -m pytest backend/tests/test_orm_consistency.py -q
 
 # Connect to database
 docker exec -it pickleball_postgres psql -U postgres -d pickleball_sim

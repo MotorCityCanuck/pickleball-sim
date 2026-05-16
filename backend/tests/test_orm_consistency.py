@@ -1,6 +1,6 @@
 """Offline consistency checks for SQLAlchemy models.
 
-These tests verify that the ORM registry matches the DDL-first schema contract.
+These tests verify that the ORM registry matches the ORM-first schema contract.
 They do not connect to PostgreSQL and must not create database tables.
 """
 from pathlib import Path
@@ -126,6 +126,68 @@ EXPECTED_KEY_COLUMNS = {
     },
 }
 
+EXPECTED_INDEXES = {
+    "idx_assessment_batch",
+    "idx_assessment_player_date",
+    "idx_batch_runs_batch",
+    "idx_batch_runs_status",
+    "idx_club_memberships_club",
+    "idx_club_memberships_dates",
+    "idx_club_memberships_player",
+    "idx_club_memberships_primary",
+    "idx_clubs_generation_run",
+    "idx_clubs_region",
+    "idx_clubs_type",
+    "idx_export_runs_batch",
+    "idx_export_runs_created",
+    "idx_export_runs_type",
+    "idx_first_names_country",
+    "idx_first_names_lookup",
+    "idx_first_names_probability",
+    "idx_generation_runs_started",
+    "idx_generation_runs_status",
+    "idx_job_status_started",
+    "idx_job_status_status",
+    "idx_job_status_type",
+    "idx_last_names_country",
+    "idx_last_names_lookup",
+    "idx_match_team_players_player",
+    "idx_match_team_players_team",
+    "idx_match_teams_match",
+    "idx_matches_batch",
+    "idx_matches_date",
+    "idx_matches_region",
+    "idx_matches_tournament",
+    "idx_matches_type",
+    "idx_monthly_batches_generation_run",
+    "idx_monthly_batches_month",
+    "idx_monthly_batches_status",
+    "idx_player_registrations_batch",
+    "idx_player_registrations_month",
+    "idx_player_registrations_player",
+    "idx_players_generation_run",
+    "idx_players_region",
+    "idx_players_registration_date",
+    "idx_players_status",
+    "idx_rating_batch",
+    "idx_rating_date_type",
+    "idx_rating_player_date",
+    "idx_rating_value",
+    "idx_team_memberships_dates",
+    "idx_team_memberships_player",
+    "idx_team_memberships_team",
+    "idx_teams_formation_date",
+    "idx_teams_status",
+    "idx_teams_type",
+    "idx_tournaments_region",
+    "idx_tournaments_start_date",
+    "idx_uploaded_files_status",
+    "idx_uploaded_files_timestamp",
+    "idx_validation_results_batch",
+    "idx_validation_results_rule",
+    "idx_validation_results_severity",
+}
+
 
 def test_all_models_import_and_mappers_configure():
     """Model registry should import and relationships should configure."""
@@ -148,15 +210,28 @@ def test_stale_country_split_name_tables_are_absent():
 
 
 def test_key_table_columns_match_schema_contract():
-    """High-value table columns should match the DDL-first contract."""
+    """High-value table columns should match the ORM-first contract."""
     for table_name, expected_columns in EXPECTED_KEY_COLUMNS.items():
         orm_columns = set(Base.metadata.tables[table_name].columns.keys())
 
         assert orm_columns == expected_columns, table_name
 
 
+def test_expected_indexes_are_declared_with_stable_names():
+    """ORM metadata should define the expected schema indexes explicitly."""
+    orm_indexes = {
+        index.name
+        for table in Base.metadata.tables.values()
+        for index in table.indexes
+    }
+
+    assert len(orm_indexes) == 59
+    assert orm_indexes == EXPECTED_INDEXES
+    assert not any(index_name.startswith("ix_") for index_name in orm_indexes)
+
+
 def test_matches_winning_team_id_is_not_an_orm_foreign_key():
-    """The ORM should not add a FK that is absent from backend/schema.sql."""
+    """winning_team_id intentionally remains a plain integer for now."""
     column = Base.metadata.tables["matches"].columns["winning_team_id"]
 
     assert not column.foreign_keys

@@ -1,7 +1,6 @@
 """SQLAlchemy models for the Pickleball Simulation Platform.
 
-This module exports all database models for use with Alembic
-and the application.
+This module exports database models for ORM metadata and the application.
 """
 from .base import Base, TimestampMixin
 from .generation_runs import GenerationRun

@@ -3,7 +3,7 @@ PlayerRegistration model - tracks player intake by monthly batch.
 """
 from sqlalchemy import (
     BigInteger, Column, Date, String, Numeric, ForeignKey, UniqueConstraint,
-    DateTime
+    DateTime, Index
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import text
@@ -27,16 +27,14 @@ class PlayerRegistration(Base):
     player_id = Column(
         BigInteger,
         ForeignKey("players.id"),
-        nullable=False,
-        index=True
+        nullable=False
     )
     batch_id = Column(
         BigInteger,
         ForeignKey("monthly_batches.id"),
-        nullable=False,
-        index=True
+        nullable=False
     )
-    registration_month = Column(Date, nullable=False, index=True)
+    registration_month = Column(Date, nullable=False)
     registration_source = Column(
         String(50),
         nullable=False,
@@ -62,6 +60,9 @@ class PlayerRegistration(Base):
     # Constraints
     __table_args__ = (
         UniqueConstraint("player_id", "batch_id", name="uq_player_batch"),
+        Index("idx_player_registrations_batch", "batch_id"),
+        Index("idx_player_registrations_player", "player_id"),
+        Index("idx_player_registrations_month", "registration_month"),
     )
     
     def __repr__(self):

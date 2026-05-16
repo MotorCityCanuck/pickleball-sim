@@ -1,5 +1,7 @@
 """Export runs model."""
-from sqlalchemy import Column, BigInteger, String, Text, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Text, ForeignKey, CheckConstraint, Index
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -23,5 +25,8 @@ class ExportRun(Base, TimestampMixin):
     batch = relationship("MonthlyBatch")
     
     __table_args__ = (
+        Index('idx_export_runs_batch', 'batch_id'),
+        Index('idx_export_runs_type', 'export_type'),
+        Index('idx_export_runs_created', 'created_at'),
         CheckConstraint("export_format IN ('parquet', 'csv', 'json', 'sql')", name='chk_export_format'),
     )

@@ -1,5 +1,7 @@
 """Last names reference data model."""
-from sqlalchemy import Column, BigInteger, String, Integer, Numeric, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Numeric, CheckConstraint, Index
+)
 from .base import Base, TimestampMixin
 
 
@@ -17,6 +19,8 @@ class LastName(Base, TimestampMixin):
     source_dataset = Column(String(255))
     
     __table_args__ = (
+        Index('idx_last_names_lookup', 'country_code', 'state_province_code'),
+        Index('idx_last_names_country', 'country_code'),
         CheckConstraint('frequency_count > 0', name='chk_last_names_freq'),
         CheckConstraint("country_code IN ('US', 'CA')", name='chk_last_names_country'),
     )

@@ -1,5 +1,8 @@
 """Batch runs model."""
-from sqlalchemy import Column, BigInteger, String, DateTime, Text, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, DateTime, Text, ForeignKey, CheckConstraint,
+    Index
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -20,5 +23,7 @@ class BatchRun(Base, TimestampMixin):
     batch = relationship("MonthlyBatch")
     
     __table_args__ = (
+        Index('idx_batch_runs_batch', 'batch_id'),
+        Index('idx_batch_runs_status', 'run_status'),
         CheckConstraint("run_status IN ('pending', 'running', 'completed', 'failed')", name='chk_run_status'),
     )

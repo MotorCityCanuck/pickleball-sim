@@ -101,26 +101,26 @@ Run the automated setup script:
 
 ## ⏭️ STEP 3: DATABASE SCHEMA CREATION (NEXT)
 
-### Extract DDL from Database Design Document
+### Recreate Database from ORM Metadata
 
-The complete schema DDL is in `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
+The executable schema is defined by SQLAlchemy models in `backend/app/models`.
 
-- [ ] Create `backend/schema.sql` with all 22 CREATE TABLE statements
-- [ ] Include all indexes from Section 12
-- [ ] Include all constraints (CHECK, UNIQUE, FK)
+- [ ] Create `backend/scripts/recreate_db_from_orm.py`
+- [ ] Create `backend/scripts/export_schema_from_orm.py`
+- [ ] Ensure all indexes and constraints are declared in ORM models
 
 ### Apply Schema to Database
 
 ```bash
-# Method 1: Direct psql
-docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim < backend/schema.sql
+# Recreate local development database
+python backend/scripts/recreate_db_from_orm.py
 
-# Method 2: Via docker exec
-cat backend/schema.sql | docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim
+# Regenerate SQL reference file
+python backend/scripts/export_schema_from_orm.py
 ```
 
 - [ ] Schema applied successfully
-- [ ] No errors during execution
+- [ ] `backend/schema.sql` regenerated successfully
 
 ### Verify Database Schema
 
@@ -232,7 +232,7 @@ python -c "from app.db.session import get_db; from app.models import Player; pri
 - [ ] Models can query existing tables
 
 
-**Note**: SQLAlchemy models are used for queries only. Schema is managed via DDL in `schema.sql`.
+**Note**: SQLAlchemy models are the schema source of truth. `schema.sql` is a generated/reference artifact.
 
 
 
@@ -256,7 +256,7 @@ python -c "from app.db.session import get_db; from app.models import Player; pri
 ### Create Database Session Handler
 
 - [ ] `backend/app/db/session.py` - SQLAlchemy session management
-- [ ] `backend/app/db/base.py` - Import all models for Alembic
+- [ ] `backend/app/db/base.py` - Import all models for ORM metadata setup
 
 ### Test Database Connection
 
@@ -328,7 +328,7 @@ pytest backend/tests/test_db_connection.py
 
 **YOU ARE HERE** → Step 2: Environment Setup
 
-**NEXT STEP** → Step 3: Database Initialization (Alembic setup)
+**NEXT STEP** → Step 3: Database Initialization (ORM recreation setup)
 
 ---
 
@@ -386,7 +386,7 @@ Phase 1 is complete when:
 - [ ] PostgreSQL running via Docker
 - [ ] Python virtual environment created
 - [ ] All dependencies installed
-- [ ] `backend/schema.sql` created from database design doc
+- [ ] `backend/schema.sql` generated from ORM metadata
 - [ ] All 22 SQLAlchemy models created
 - [ ] Schema applied to database (all 22 tables exist)
 - [ ] Database session management working

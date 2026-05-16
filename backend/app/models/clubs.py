@@ -1,5 +1,8 @@
 """Clubs model."""
-from sqlalchemy import Column, BigInteger, String, Integer, Date, ForeignKey, CheckConstraint, UniqueConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Integer, Date, ForeignKey, CheckConstraint,
+    Index, UniqueConstraint
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -27,6 +30,9 @@ class Club(Base, TimestampMixin):
     
     __table_args__ = (
         UniqueConstraint('region_id', 'club_name', name='uq_club_region_name'),
+        Index('idx_clubs_region', 'region_id'),
+        Index('idx_clubs_type', 'club_type'),
+        Index('idx_clubs_generation_run', 'generation_run_id'),
         CheckConstraint(
             "club_type IN ('public_park', 'private_club', 'community_center', 'resort', 'university', 'municipal_recreation', 'dedicated_facility')",
             name='chk_club_type'

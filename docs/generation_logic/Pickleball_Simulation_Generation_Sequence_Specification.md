@@ -155,19 +155,17 @@ ranges, and freeze the effective configuration for the run.
 
 - Defaults and overrides are recorded.
 
-## 3. Prepare Schema and Migrations
+## 3. Prepare Schema
 
-**Purpose:** Apply required database migrations and confirm the schema
-version matches the application code.
+**Purpose:** Recreate or verify the development schema from ORM metadata and
+confirm the schema matches the application code.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Inputs**                          database URL; Alembic migration
-                                      metadata
+  **Inputs**                          database URL; SQLAlchemy ORM metadata
 
-  **Outputs**                         current schema; schema version
-                                      audit
+  **Outputs**                         current schema; schema audit
 
   **Must run after**                  Load and Validate Configuration
 

@@ -5,22 +5,26 @@ Platform. These standards apply to models under `backend/app/models`.
 
 ## Purpose
 
-The ORM layer exists for Python data access, relationship navigation, query
-composition, and application-level readability.
-
-The ORM layer is not the authoritative schema management mechanism.
+The ORM layer exists for schema definition, development database creation,
+Python data access, relationship navigation, query composition, and
+application-level readability.
 
 ## Schema Authority
 
-The project uses a DDL-first database strategy.
+The project uses an ORM-first database strategy during active development.
 
-- The authoritative executable schema is `backend/schema.sql`.
-- SQLAlchemy models must match the DDL.
-- SQLAlchemy models must not introduce schema behavior that is absent from the
-  DDL unless the DDL is updated first.
+- SQLAlchemy models under `backend/app/models` are the schema source of truth.
+- Development schema recreation should use the ORM metadata.
+- `backend/schema.sql` is a generated/reference artifact, not the hand-edited
+  source of truth.
+- Hand-written DDL must not introduce schema behavior that is absent from the
+  ORM unless the ORM is updated first.
 - Alembic migrations are not part of the current schema workflow.
-- Do not use `Base.metadata.create_all()` as a production schema creation path.
-- Any schema change must be made in DDL first, then reflected in the ORM.
+- Destructive development recreation with `Base.metadata.drop_all()` and
+  `Base.metadata.create_all()` is acceptable while the platform has no
+  persistent production data.
+- Add Alembic only if the project later needs non-destructive schema evolution
+  against retained data.
 
 ## Current Live Model Scope
 
@@ -106,7 +110,7 @@ server_default=text("CURRENT_TIMESTAMP")
 
 ## Column Standards
 
-Column definitions must match DDL for:
+Column definitions must define the intended PostgreSQL schema for:
 
 - Type
 - Length
@@ -122,7 +126,7 @@ Use PostgreSQL dialect types where the DDL requires them:
 - `UUID(as_uuid=True)` for UUID columns
 - `JSONB` for JSONB columns
 
-Numeric precision must be explicit where the DDL is explicit, for example:
+Numeric precision must be explicit for persisted numeric values, for example:
 
 ```python
 Numeric(8, 3)
@@ -153,17 +157,19 @@ server_default=text("ACTIVE")
 Python-side `default=` may be used for ORM object convenience, but it must not
 conflict with the DDL server default.
 
-## Constraint Standards
+## Index And Constraint Standards
 
-ORM constraints should mirror DDL constraints.
+ORM indexes and constraints should define the complete development schema.
 
 Use explicit names for:
 
+- `Index`
 - `CheckConstraint`
 - `UniqueConstraint`
 - Foreign key constraints when the DDL names them
 
-Prefer SQL string constraints when that most directly mirrors the DDL.
+Prefer SQL string check constraints when that most directly expresses the
+PostgreSQL rule.
 
 Example:
 
@@ -174,8 +180,8 @@ CheckConstraint(
 )
 ```
 
-Do not add ORM constraints that are absent from DDL unless the DDL is updated
-first.
+When a schema rule changes, update the ORM first. Regenerate reference SQL
+afterward.
 
 ## Relationship Standards
 
@@ -198,18 +204,19 @@ Recommended parent-child naming:
 
 ## Foreign Key Standards
 
-Foreign key columns must match DDL exactly.
+Foreign key columns must define the intended relational contract exactly.
 
 Required:
 
 - Use the correct target table and column.
 - Preserve nullability from DDL.
 - Preserve indexes where the ORM intentionally documents them.
-- Do not add application-level FK assumptions if the DDL does not enforce them.
+- Do not add application-level FK assumptions without also adding the ORM
+  foreign key.
 
-Known current example: `matches.winning_team_id` is a plain `BIGINT` in the DDL,
-not a foreign key. The ORM should not convert it into a `ForeignKey` unless the
-DDL is changed first.
+Known current example: `matches.winning_team_id` is a plain `BIGINT`, not a
+foreign key. The ORM should not convert it into a `ForeignKey` until the schema
+decision is intentionally changed.
 
 ## Historical Data Standards
 
@@ -252,8 +259,8 @@ The live reference-name design uses consolidated tables:
 
 Both include `country_code`.
 
-Do not add country-specific reference-name ORM models unless the live DDL is
-changed back to that design.
+Do not add country-specific reference-name ORM models unless the ORM schema is
+intentionally changed back to that design.
 
 ## Operational Table Standards
 
@@ -299,7 +306,8 @@ Metadata tests:
 - Import all models.
 - Assert the expected table count.
 - Assert expected table names.
-- Optionally compare ORM columns against parsed DDL.
+- Optionally compile ORM metadata to PostgreSQL SQL and compare against the
+  generated reference SQL.
 
 Database integration tests:
 
@@ -310,7 +318,7 @@ Database integration tests:
 
 ## Documentation Standards
 
-When ORM or DDL changes are made, update documentation that describes:
+When ORM schema changes are made, update documentation that describes:
 
 - Table count.
 - Table names.
@@ -325,21 +333,21 @@ instead of silently implementing against stale references.
 
 Before adding or changing an ORM model:
 
-- Confirm the intended table exists in `backend/schema.sql`.
 - Confirm whether the change is schema-level or ORM-only.
-- If schema-level, update DDL first.
 - Match column types, nullability, defaults, and constraints exactly.
+- Add required `Index` definitions for expected query paths.
 - Add or update relationships consistently on both sides.
 - Import the model in `backend/app/models/__init__.py`.
 - Run metadata import tests.
+- Recreate a development database from ORM metadata when the change affects
+  schema creation.
+- Regenerate `backend/schema.sql` when the schema is intentionally changed.
 - Run database integration tests only when a configured database is available.
 
 ## Current Open Decisions
 
 These items should be resolved before major implementation work:
 
-- Whether `backend/schema.sql` or the long database design document is the
-  practical day-to-day source of truth.
 - Whether `generation_parameters` is still required as a separate table, or
   whether `generation_runs.parameter_snapshot` fully replaces it.
 - Whether `matches.winning_team_id` should remain a plain integer or become a

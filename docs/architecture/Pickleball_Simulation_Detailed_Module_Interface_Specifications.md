@@ -85,7 +85,7 @@ explicit implementation boundaries.
 
 - app/config: configuration loading, validation, and defaults.
 
-- app/db: SQLAlchemy engine/session management, Alembic migrations,
+- app/db: SQLAlchemy engine/session management, ORM schema utilities,
   repository classes, and transaction utilities.
 
 - app/domain: pure domain calculations such as expected score, rating

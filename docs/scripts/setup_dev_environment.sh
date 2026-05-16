@@ -79,15 +79,14 @@ pip install --upgrade pip
 pip install -r requirements.txt
 echo "${GREEN}✓${NC} Python dependencies installed"
 
-# Step 6: Initialize Alembic (if not already done)
+# Step 6: Check ORM schema utilities
 echo ""
-echo "📋 Step 6: Checking Alembic configuration..."
-if [ ! -f "alembic.ini" ]; then
-    echo "${YELLOW}⚠️  Alembic not initialized yet${NC}"
-    echo "   Run: cd backend && alembic init alembic"
-    echo "   Then configure alembic/env.py as per documentation"
+echo "📋 Step 6: Checking ORM schema utilities..."
+if [ ! -f "scripts/recreate_db_from_orm.py" ]; then
+    echo "${YELLOW}⚠️  ORM recreation script not created yet${NC}"
+    echo "   Next implementation step: create backend/scripts/recreate_db_from_orm.py"
 else
-    echo "${GREEN}✓${NC} Alembic already configured"
+    echo "${GREEN}✓${NC} ORM recreation script found"
 fi
 
 # Step 7: Summary
@@ -99,14 +98,13 @@ echo "📝 Next steps:"
 echo "   1. Review and update .env file if needed"
 echo "   2. cd backend"
 echo "   3. source venv/bin/activate"
-if [ ! -f "backend/alembic.ini" ]; then
-    echo "   4. Initialize Alembic: alembic init alembic"
-    echo "   5. Configure alembic/env.py"
-    echo "   6. Create first migration: alembic revision --autogenerate -m 'Initial schema'"
-    echo "   7. Apply migration: alembic upgrade head"
+if [ ! -f "backend/scripts/recreate_db_from_orm.py" ]; then
+    echo "   4. Create backend/scripts/recreate_db_from_orm.py"
+    echo "   5. Create backend/scripts/export_schema_from_orm.py"
+    echo "   6. Run ORM consistency tests"
 else
-    echo "   4. Create migration: alembic revision --autogenerate -m 'Description'"
-    echo "   5. Apply migration: alembic upgrade head"
+    echo "   4. Recreate database: python scripts/recreate_db_from_orm.py"
+    echo "   5. Export reference SQL: python scripts/export_schema_from_orm.py"
 fi
 echo ""
 echo "📚 Documentation:"

@@ -10,7 +10,7 @@ All generated data (matches, ratings, assessments) must link to a batch.
 from datetime import datetime
 from sqlalchemy import (
     BigInteger, Column, String, Date, Integer, DateTime,
-    ForeignKey, CheckConstraint, UniqueConstraint, Text
+    ForeignKey, CheckConstraint, Index, UniqueConstraint, Text
 )
 from sqlalchemy.orm import relationship
 
@@ -40,7 +40,7 @@ class MonthlyBatch(Base, TimestampMixin):
         String(30),
         nullable=False,
         default='future_increment',
-        server_default=text('future_increment')
+        server_default=text("'future_increment'")
     )
     active_player_count_start = Column(Integer)
     new_player_count = Column(Integer)
@@ -52,7 +52,7 @@ class MonthlyBatch(Base, TimestampMixin):
         String(30),
         nullable=False,
         default='pending',
-        server_default=text('pending')
+        server_default=text("'pending'")
     )
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
@@ -65,6 +65,9 @@ class MonthlyBatch(Base, TimestampMixin):
             'batch_month',
             name='uq_batch_generation_month'
         ),
+        Index('idx_monthly_batches_generation_run', 'generation_run_id'),
+        Index('idx_monthly_batches_month', 'batch_month'),
+        Index('idx_monthly_batches_status', 'processing_status'),
         CheckConstraint(
             batch_type.in_(['historical_initial', 'future_increment']),
             name='chk_batch_type'

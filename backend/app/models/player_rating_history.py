@@ -1,5 +1,8 @@
 """Player rating history model."""
-from sqlalchemy import Column, BigInteger, Date, String, Numeric, Integer, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, Date, String, Numeric, Integer, ForeignKey,
+    CheckConstraint, Index
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -28,6 +31,10 @@ class PlayerRatingHistory(Base, TimestampMixin):
     batch = relationship("MonthlyBatch")
     
     __table_args__ = (
+        Index('idx_rating_player_date', 'player_id', rating_date.desc()),
+        Index('idx_rating_batch', 'batch_id'),
+        Index('idx_rating_date_type', 'rating_date', 'rating_type'),
+        Index('idx_rating_value', 'rating_value'),
         CheckConstraint('rating_value >= 0 AND rating_value <= 5000', name='chk_rating_value'),
         CheckConstraint('confidence_score >= 0 AND confidence_score <= 1', name='chk_confidence_score'),
     )

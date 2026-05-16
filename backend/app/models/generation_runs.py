@@ -7,7 +7,7 @@ serves as the parent for all monthly batches.
 """
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger, Column, String, DateTime, CheckConstraint, Text
+    BigInteger, Column, String, DateTime, CheckConstraint, Index, Text
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -39,7 +39,7 @@ class GenerationRun(Base, TimestampMixin):
         String(30),
         nullable=False,
         default='pending',
-        server_default=text('pending')
+        server_default=text("'pending'")
     )
     
     # Constraints
@@ -48,6 +48,8 @@ class GenerationRun(Base, TimestampMixin):
             status.in_(['pending', 'running', 'completed', 'failed', 'cancelled']),
             name='chk_generation_status'
         ),
+        Index('idx_generation_runs_status', 'status'),
+        Index('idx_generation_runs_started', 'started_at'),
     )
     
     def __repr__(self) -> str:

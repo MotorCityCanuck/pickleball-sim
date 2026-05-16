@@ -1,5 +1,8 @@
 """Match teams model."""
-from sqlalchemy import Column, BigInteger, Integer, Numeric, ForeignKey, CheckConstraint, UniqueConstraint
+from sqlalchemy import (
+    Column, BigInteger, Integer, Numeric, ForeignKey, CheckConstraint, Index,
+    UniqueConstraint
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -21,6 +24,7 @@ class MatchTeam(Base, TimestampMixin):
     players = relationship("MatchTeamPlayer", back_populates="match_team")
     
     __table_args__ = (
+        Index('idx_match_teams_match', 'match_id'),
         CheckConstraint('team_number IN (1, 2)', name='chk_team_number'),
         UniqueConstraint('match_id', 'team_number', name='uq_match_team_number'),
     )

@@ -1,5 +1,8 @@
 """Club memberships model."""
-from sqlalchemy import Column, BigInteger, String, Date, Boolean, ForeignKey, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Date, Boolean, ForeignKey, CheckConstraint,
+    Index, text
+)
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
@@ -24,5 +27,14 @@ class ClubMembership(Base, TimestampMixin):
     generation_run = relationship("GenerationRun")
     
     __table_args__ = (
+        Index('idx_club_memberships_player', 'player_id'),
+        Index('idx_club_memberships_club', 'club_id'),
+        Index('idx_club_memberships_dates', 'start_date', 'end_date'),
+        Index(
+            'idx_club_memberships_primary',
+            'player_id',
+            'is_primary',
+            postgresql_where=text('is_primary = true')
+        ),
         CheckConstraint('end_date IS NULL OR end_date >= start_date', name='chk_membership_dates'),
     )

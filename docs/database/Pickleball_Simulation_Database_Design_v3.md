@@ -41,11 +41,13 @@ Primary database platform:
 
 ORM:
 
-- SQLAlchemy (for queries and data access only)
+- SQLAlchemy (schema definition, development schema creation, queries, and
+  data access)
 
 Schema Management:
 
-- Direct DDL execution (schema defined in Section 11)
+- ORM-first development workflow. SQL reference files are generated from ORM
+  metadata and should not be edited independently.
 
 \-\--
 

@@ -541,8 +541,8 @@ docker-compose up -d
 # Database connection
 psql -h localhost -U postgres -d pickleball_sim
 
-# Run migrations
-alembic upgrade head
+# Recreate development database from ORM metadata
+python backend/scripts/recreate_db_from_orm.py
 
 # Run generation
 python -m app.batch_processing.monthly_batch_processor --batch-month 2024-01

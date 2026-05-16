@@ -879,7 +879,7 @@ Recommended technologies:
 
 - SQLAlchemy
 
-- Alembic
+- ORM schema recreation utilities
 
 - Pandas
 

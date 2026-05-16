@@ -1,5 +1,5 @@
 """Uploaded files model."""
-from sqlalchemy import Column, BigInteger, String, DateTime, CheckConstraint, text
+from sqlalchemy import Column, BigInteger, String, DateTime, CheckConstraint, Index, text
 from .base import Base, TimestampMixin
 
 
@@ -17,5 +17,7 @@ class UploadedFile(Base, TimestampMixin):
     validation_status = Column(String(30))
     
     __table_args__ = (
+        Index('idx_uploaded_files_timestamp', 'upload_timestamp'),
+        Index('idx_uploaded_files_status', 'validation_status'),
         CheckConstraint('file_size_bytes >= 0', name='chk_file_size'),
     )

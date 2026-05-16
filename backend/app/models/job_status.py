@@ -1,5 +1,7 @@
 """Job status model."""
-from sqlalchemy import Column, BigInteger, String, Numeric, Text, DateTime, CheckConstraint
+from sqlalchemy import (
+    Column, BigInteger, String, Numeric, Text, DateTime, CheckConstraint, Index
+)
 from .base import Base, TimestampMixin
 
 
@@ -20,6 +22,9 @@ class JobStatus(Base, TimestampMixin):
     error_message = Column(Text)
     
     __table_args__ = (
+        Index('idx_job_status_type', 'job_type'),
+        Index('idx_job_status_status', 'status'),
+        Index('idx_job_status_started', 'started_at'),
         CheckConstraint("status IN ('pending', 'running', 'completed', 'failed', 'cancelled')", name='chk_job_status'),
         CheckConstraint('percent_complete >= 0 AND percent_complete <= 100', name='chk_percent_complete'),
     )

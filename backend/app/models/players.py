@@ -2,7 +2,8 @@
 Player model - core player identity and static attributes.
 """
 from sqlalchemy import (
-    BigInteger, Column, Date, String, Numeric, CheckConstraint, ForeignKey
+    BigInteger, Column, Date, String, Numeric, CheckConstraint, ForeignKey,
+    Index
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -35,8 +36,7 @@ class Player(Base, TimestampMixin):
     dominant_hand = Column(String(10))
     home_region_id = Column(
         BigInteger,
-        ForeignKey("regions.id"),
-        index=True
+        ForeignKey("regions.id")
     )
     registration_date = Column(Date, nullable=False)
     initial_skill_seed = Column(Numeric(8, 4))
@@ -47,8 +47,7 @@ class Player(Base, TimestampMixin):
     )
     generation_run_id = Column(
         BigInteger,
-        ForeignKey("generation_runs.id"),
-        index=True
+        ForeignKey("generation_runs.id")
     )
     
     # Relationships
@@ -68,6 +67,10 @@ class Player(Base, TimestampMixin):
     
     # Constraints
     __table_args__ = (
+        Index("idx_players_region", "home_region_id"),
+        Index("idx_players_status", "player_status"),
+        Index("idx_players_registration_date", "registration_date"),
+        Index("idx_players_generation_run", "generation_run_id"),
         CheckConstraint(
             "birth_date < CURRENT_DATE",
             name="chk_player_birth_date"
