@@ -14,7 +14,7 @@ import sys
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -103,3 +103,137 @@ def test_pgcrypto_extension_is_available(engine):
         ).scalar_one()
 
     assert installed is True
+
+
+def test_database_defaults_are_applied(engine):
+    with engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            generation_run = conn.execute(
+                text(
+                    """
+                    INSERT INTO generation_runs (generation_name, seed_value)
+                    VALUES ('default_probe', 123)
+                    RETURNING id, status
+                    """
+                )
+            ).one()
+
+            region = conn.execute(
+                text(
+                    """
+                    INSERT INTO regions (country_code, region_name)
+                    VALUES ('US', 'Default Probe Region')
+                    RETURNING id
+                    """
+                )
+            ).one()
+
+            batch = conn.execute(
+                text(
+                    """
+                    INSERT INTO monthly_batches (
+                        generation_run_id,
+                        batch_month,
+                        batch_sequence
+                    )
+                    VALUES (:generation_run_id, DATE '2024-01-01', 1)
+                    RETURNING id, batch_type, processing_status
+                    """
+                ),
+                {"generation_run_id": generation_run.id},
+            ).one()
+
+            player = conn.execute(
+                text(
+                    """
+                    INSERT INTO players (
+                        first_name,
+                        last_name,
+                        birth_date,
+                        home_region_id,
+                        registration_date,
+                        generation_run_id
+                    )
+                    VALUES (
+                        'Default',
+                        'Probe',
+                        DATE '1990-01-01',
+                        :region_id,
+                        DATE '2024-01-01',
+                        :generation_run_id
+                    )
+                    RETURNING id, external_player_key, player_status
+                    """
+                ),
+                {"region_id": region.id, "generation_run_id": generation_run.id},
+            ).one()
+
+            registration = conn.execute(
+                text(
+                    """
+                    INSERT INTO player_registrations (
+                        player_id,
+                        batch_id,
+                        registration_month,
+                        assigned_region_id
+                    )
+                    VALUES (
+                        :player_id,
+                        :batch_id,
+                        DATE '2024-01-01',
+                        :region_id
+                    )
+                    RETURNING registration_source
+                    """
+                ),
+                {"player_id": player.id, "batch_id": batch.id, "region_id": region.id},
+            ).one()
+
+            assert generation_run.status == "pending"
+            assert batch.batch_type == "future_increment"
+            assert batch.processing_status == "pending"
+            assert player.external_player_key is not None
+            assert player.player_status == "ACTIVE"
+            assert registration.registration_source == "synthetic"
+        finally:
+            transaction.rollback()
+
+
+def test_database_defaults_probe_rolls_back(engine):
+    with engine.connect() as conn:
+        count = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM generation_runs
+                WHERE generation_name = 'default_probe'
+                """
+            )
+        ).scalar_one()
+
+    assert count == 0
+
+
+def test_database_check_constraints_are_enforced(engine):
+    with engine.connect() as conn:
+        transaction = conn.begin()
+        try:
+            with pytest.raises(IntegrityError):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO first_names (
+                            country_code,
+                            state_province_code,
+                            birth_year,
+                            gender,
+                            first_name,
+                            frequency_count
+                        )
+                        VALUES ('MX', 'MX', 1990, 'M', 'Probe', 1)
+                        """
+                    )
+                )
+        finally:
+            transaction.rollback()

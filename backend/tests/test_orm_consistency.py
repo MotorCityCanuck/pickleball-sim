@@ -15,10 +15,15 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.models import Base  # noqa: E402
 from schema_expectations import (  # noqa: E402
+    EXPECTED_CHECK_CONSTRAINTS,
+    EXPECTED_FOREIGN_KEYS,
     EXPECTED_INDEXES,
+    EXPECTED_SERVER_DEFAULTS,
     EXPECTED_TABLES,
+    EXPECTED_UNIQUE_CONSTRAINTS,
     STALE_SPLIT_NAME_TABLES,
 )
+from sqlalchemy import CheckConstraint, UniqueConstraint  # noqa: E402
 
 
 EXPECTED_KEY_COLUMNS = {
@@ -138,6 +143,62 @@ def test_expected_indexes_are_declared_with_stable_names():
     assert len(orm_indexes) == 59
     assert orm_indexes == EXPECTED_INDEXES
     assert not any(index_name.startswith("ix_") for index_name in orm_indexes)
+
+
+def test_expected_check_constraints_are_declared():
+    """ORM metadata should include the expected named check constraints."""
+    actual = {
+        table_name: {
+            constraint.name
+            for constraint in table.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        for table_name, table in Base.metadata.tables.items()
+    }
+
+    for table_name, expected_constraints in EXPECTED_CHECK_CONSTRAINTS.items():
+        assert actual[table_name] == expected_constraints, table_name
+
+
+def test_expected_unique_constraints_are_declared():
+    """ORM metadata should include expected unique constraints."""
+    actual = {}
+    for table_name, table in Base.metadata.tables.items():
+        unique_constraints = set()
+        for constraint in table.constraints:
+            if isinstance(constraint, UniqueConstraint):
+                unique_constraints.add(tuple(column.name for column in constraint.columns))
+        actual[table_name] = unique_constraints
+
+    for table_name, expected_constraints in EXPECTED_UNIQUE_CONSTRAINTS.items():
+        assert actual[table_name] == expected_constraints, table_name
+
+
+def test_expected_foreign_keys_are_declared():
+    """ORM metadata should include expected foreign keys."""
+    actual = {
+        table_name: {
+            f"{foreign_key.parent.name}->{foreign_key.column.table.name}.{foreign_key.column.name}"
+            for foreign_key in table.foreign_keys
+        }
+        for table_name, table in Base.metadata.tables.items()
+    }
+
+    for table_name, expected_foreign_keys in EXPECTED_FOREIGN_KEYS.items():
+        assert actual[table_name] == expected_foreign_keys, table_name
+
+
+def test_important_server_defaults_are_declared():
+    """High-value database defaults should stay stable."""
+    for table_name, expected_defaults in EXPECTED_SERVER_DEFAULTS.items():
+        table = Base.metadata.tables[table_name]
+        actual_defaults = {
+            column.name: str(column.server_default.arg)
+            for column in table.columns
+            if column.name in expected_defaults and column.server_default is not None
+        }
+
+        assert actual_defaults == expected_defaults, table_name
 
 
 def test_matches_winning_team_id_is_not_an_orm_foreign_key():

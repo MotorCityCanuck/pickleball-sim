@@ -93,3 +93,99 @@ EXPECTED_INDEXES = {
     "idx_validation_results_rule",
     "idx_validation_results_severity",
 }
+
+EXPECTED_CHECK_CONSTRAINTS = {
+    "batch_runs": {"chk_run_status"},
+    "club_memberships": {"chk_membership_dates"},
+    "clubs": {"chk_club_type", "chk_court_counts"},
+    "export_runs": {"chk_export_format"},
+    "first_names": {
+        "chk_first_names_country",
+        "chk_first_names_freq",
+        "chk_first_names_gender",
+    },
+    "generation_runs": {"chk_generation_status"},
+    "job_status": {"chk_job_status", "chk_percent_complete"},
+    "last_names": {"chk_last_names_country", "chk_last_names_freq"},
+    "match_team_players": {"chk_player_position"},
+    "match_teams": {"chk_team_number"},
+    "matches": {"chk_match_type"},
+    "monthly_batches": {"chk_batch_type", "chk_processing_status"},
+    "player_assessment_history": {"chk_assessment_confidence"},
+    "player_rating_history": {"chk_confidence_score", "chk_rating_value"},
+    "players": {"chk_player_birth_date", "chk_player_status"},
+    "team_memberships": {"chk_membership_dates", "chk_position"},
+    "teams": {"chk_team_dates", "chk_team_status", "chk_team_type"},
+    "tournaments": {"chk_tournament_dates"},
+    "uploaded_files": {"chk_file_size"},
+    "validation_results": {"chk_severity"},
+}
+
+EXPECTED_UNIQUE_CONSTRAINTS = {
+    "clubs": {("region_id", "club_name")},
+    "job_status": {("job_id",)},
+    "match_team_players": {("match_team_id", "player_id")},
+    "match_teams": {("match_id", "team_number")},
+    "monthly_batches": {("generation_run_id", "batch_month")},
+    "player_registrations": {("player_id", "batch_id")},
+    "players": {("external_player_key",)},
+    "regions": {("country_code", "region_name")},
+    "team_memberships": {("team_id", "player_id", "joined_date")},
+}
+
+EXPECTED_FOREIGN_KEYS = {
+    "batch_runs": {"batch_id->monthly_batches.id"},
+    "club_memberships": {
+        "club_id->clubs.id",
+        "generation_run_id->generation_runs.id",
+        "player_id->players.id",
+    },
+    "clubs": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
+    "export_runs": {"batch_id->monthly_batches.id"},
+    "match_team_players": {
+        "match_team_id->match_teams.id",
+        "player_id->players.id",
+    },
+    "match_teams": {"match_id->matches.id"},
+    "matches": {
+        "batch_id->monthly_batches.id",
+        "region_id->regions.id",
+        "tournament_id->tournaments.id",
+    },
+    "monthly_batches": {"generation_run_id->generation_runs.id"},
+    "player_assessment_history": {
+        "batch_id->monthly_batches.id",
+        "player_id->players.id",
+    },
+    "player_rating_history": {
+        "batch_id->monthly_batches.id",
+        "player_id->players.id",
+    },
+    "player_registrations": {
+        "assigned_region_id->regions.id",
+        "batch_id->monthly_batches.id",
+        "player_id->players.id",
+    },
+    "players": {
+        "generation_run_id->generation_runs.id",
+        "home_region_id->regions.id",
+    },
+    "team_memberships": {"player_id->players.id", "team_id->teams.id"},
+    "teams": {"generation_run_id->generation_runs.id"},
+    "tournaments": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
+    "validation_results": {"batch_id->monthly_batches.id"},
+}
+
+EXPECTED_SERVER_DEFAULTS = {
+    "generation_runs": {"status": "'pending'"},
+    "monthly_batches": {
+        "batch_type": "'future_increment'",
+        "processing_status": "'pending'",
+    },
+    "player_registrations": {"registration_source": "'synthetic'"},
+    "players": {
+        "external_player_key": "gen_random_uuid()",
+        "player_status": "'ACTIVE'",
+    },
+    "regions": {"competitiveness_multiplier": "1.0"},
+}
