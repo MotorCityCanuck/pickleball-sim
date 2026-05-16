@@ -1,0 +1,65 @@
+country,state_province_code,state_province_name,club_count
+US,AL,Alabama,49
+US,AK,Alaska,4
+US,AZ,Arizona,113
+US,AR,Arkansas,30
+US,CA,California,429
+US,CO,Colorado,65
+US,CT,Connecticut,34
+US,DE,Delaware,10
+US,DC,District of Columbia,6
+US,FL,Florida,389
+US,GA,Georgia,121
+US,HI,Hawaii,13
+US,ID,Idaho,21
+US,IL,Illinois,119
+US,IN,Indiana,66
+US,IA,Iowa,31
+US,KS,Kansas,28
+US,KY,Kentucky,43
+US,LA,Louisiana,44
+US,ME,Maine,13
+US,MD,Maryland,59
+US,MA,Massachusetts,67
+US,MI,Michigan,96
+US,MN,Minnesota,54
+US,MS,Mississippi,28
+US,MO,Missouri,59
+US,MT,Montana,9
+US,NE,Nebraska,19
+US,NV,Nevada,38
+US,NH,New Hampshire,13
+US,NJ,New Jersey,89
+US,NM,New Mexico,20
+US,NY,New York,187
+US,NC,North Carolina,129
+US,ND,North Dakota,6
+US,OH,Ohio,113
+US,OK,Oklahoma,38
+US,OR,Oregon,40
+US,PA,Pennsylvania,124
+US,RI,Rhode Island,10
+US,SC,South Carolina,70
+US,SD,South Dakota,7
+US,TN,Tennessee,78
+US,TX,Texas,335
+US,UT,Utah,36
+US,VT,Vermont,5
+US,VA,Virginia,83
+US,WA,Washington,74
+US,WV,West Virginia,17
+US,WI,Wisconsin,56
+US,WY,Wyoming,4
+CA,AB,Alberta,48
+CA,BC,British Columbia,62
+CA,MB,Manitoba,14
+CA,NB,New Brunswick,8
+CA,NL,Newfoundland and Labrador,5
+CA,NS,Nova Scotia,12
+CA,NT,Northwest Territories,1
+CA,NU,Nunavut,1
+CA,ON,Ontario,159
+CA,PE,Prince Edward Island,2
+CA,QC,Quebec,85
+CA,SK,Saskatchewan,11
+CA,YT,Yukon,1

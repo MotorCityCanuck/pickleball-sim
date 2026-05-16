@@ -1,0 +1,109 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+.continue/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Application Data - Exclude entire data directory except .gitkeep files
+data/*
+!data/.gitkeep
+!data/input/
+data/input/*
+!data/input/.gitkeep
+!data/output/
+data/output/*
+!data/output/.gitkeep
+!data/uploads/
+data/uploads/*
+!data/uploads/.gitkeep
+!data/parquet/
+data/parquet/*
+!data/parquet/.gitkeep
+!data/parquet/historical/
+data/parquet/historical/*
+!data/parquet/historical/.gitkeep
+!data/parquet/monthly/
+data/parquet/monthly/*
+!data/parquet/monthly/.gitkeep
+!data/parquet/reference/
+data/parquet/reference/*
+!data/parquet/reference/.gitkeep
+!data/parquet/metadata/
+data/parquet/metadata/*
+!data/parquet/metadata/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env.local
+.env.*.local
+
+# Docker
+.dockerignore
+
+# Alembic
+alembic/versions/*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Parquet temporary files
+*.parquet.tmp
+*.parquet.crc

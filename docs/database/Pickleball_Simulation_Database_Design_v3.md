@@ -41,11 +41,11 @@ Primary database platform:
 
 ORM:
 
-- SQLAlchemy
+- SQLAlchemy (for queries and data access only)
 
-Migration framework:
+Schema Management:
 
-- Alembic
+- Direct DDL execution (schema defined in Section 11)
 
 \-\--
 

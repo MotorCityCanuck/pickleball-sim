@@ -93,8 +93,7 @@ Examples of generated data may include users, players, teams, matches, transacti
 | Progress Updates | Server-Sent Events or HTMX polling | Long-running job status |
 | Backend Runtime | Python | Primary runtime |
 | Database | PostgreSQL | Relational persistence |
-| ORM | SQLAlchemy | Database abstraction |
-| Migrations | Alembic | Schema versioning |
+| ORM | SQLAlchemy | Database queries and data access |
 | Data Generation | Faker + custom generators | Synthetic data creation |
 | Data Processing | Pandas | Data manipulation |
 | Parquet Export | PyArrow or fastparquet | Parquet file generation |
@@ -164,7 +163,7 @@ project-root/
 │   │   │   └── forms.py
 │   │   ├── utils/
 │   │   └── main.py
-│   ├── alembic/
+│   ├── schema.sql
 │   ├── tests/
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -345,23 +344,28 @@ The database supports generated entity persistence, historical simulations, mont
 
 SQLAlchemy is the primary ORM layer. SQLAlchemy provides model definitions, relationships, query abstraction, transaction management, and schema consistency.
 
-## 9.3 Migration Strategy
+## 9.3 Schema Management Strategy
 
-Alembic must be used for all schema changes.
+Database schema is managed through **direct DDL execution**.
+
+The complete schema is defined in `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
+
+Schema creation workflow:
+
+```bash
+# Extract DDL from database design document
+# Apply directly to PostgreSQL
+psql -U postgres -d pickleball_sim -f backend/schema.sql
+```
 
 Rules:
 
-- no manual schema changes
-- all modifications require migrations
-- migrations must be version controlled
-- migrations must be reproducible
-
-Commands:
-
-```bash
-alembic revision --autogenerate -m "description"
-alembic upgrade head
-```
+- Single source of truth: DDL in database design document
+- Schema creation via direct SQL execution
+- SQLAlchemy models used for queries and data access only
+- Models should match DDL but are not the schema source
+- For development: Drop and recreate database as needed
+- For students: Reproducible one-command schema setup
 
 ## 9.4 Core Operational Tables
 
@@ -839,6 +843,7 @@ backend/app/analytics/
 backend/app/exports/
 backend/app/web/
 backend/app/db/
+backend/schema.sql
 backend/tests/
 docker-compose.yml
 Dockerfile
