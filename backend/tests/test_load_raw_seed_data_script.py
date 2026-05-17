@@ -1,0 +1,28 @@
+"""Tests for raw seed ingestion CLI helpers."""
+from pathlib import Path
+import sys
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+SCRIPTS_DIR = BACKEND_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from load_raw_seed_data import _parse_args  # noqa: E402
+
+
+def test_parse_args_accepts_metro_dataset_and_input_path():
+    args = _parse_args(
+        [
+            "--dataset",
+            "metro_areas_us",
+            "--input-path",
+            "data/raw/metro_areas",
+        ]
+    )
+
+    assert args.dataset == "metro_areas_us"
+    assert args.input_path == Path("data/raw/metro_areas")
