@@ -2,7 +2,10 @@
 
 from .base import RawSeedLoadResult
 from .metro_areas import RawSeedIngestor
-from .pickleball_clubs import PickleballClubDistributionIngestor
+from .pickleball_clubs import (
+    PickleballClubDistributionIngestor,
+    PickleballClubNameIngestor,
+)
 
 
 def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
@@ -19,6 +22,12 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
             input_path=input_path,
             session=session,
         )
+    if dataset_type == "pickleball_club_names":
+        return PickleballClubNameIngestor().load_dataset(
+            dataset_type,
+            input_path=input_path,
+            session=session,
+        )
 
     supported = ", ".join(
         sorted(
@@ -26,6 +35,7 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
                 "metro_areas_us",
                 "metro_areas_ca",
                 "pickleball_club_distributions",
+                "pickleball_club_names",
             }
         )
     )
@@ -36,6 +46,7 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
 __all__ = [
     "RawSeedIngestor",
     "PickleballClubDistributionIngestor",
+    "PickleballClubNameIngestor",
     "RawSeedLoadResult",
     "load_raw_seed_dataset",
 ]

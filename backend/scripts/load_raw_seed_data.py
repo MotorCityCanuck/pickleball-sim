@@ -18,6 +18,7 @@ SUPPORTED_DATASETS = {
     "metro_areas_ca",
     "metro_areas_us",
     "pickleball_club_distributions",
+    "pickleball_club_names",
 }
 
 

@@ -40,3 +40,17 @@ def test_parse_args_accepts_club_distribution_dataset():
 
     assert args.dataset == "pickleball_club_distributions"
     assert args.input_path == Path("data/raw/pickleball_clubs/distributions")
+
+
+def test_parse_args_accepts_club_name_dataset():
+    args = _parse_args(
+        [
+            "--dataset",
+            "pickleball_club_names",
+            "--input-path",
+            "data/raw/pickleball_clubs/names",
+        ]
+    )
+
+    assert args.dataset == "pickleball_club_names"
+    assert args.input_path == Path("data/raw/pickleball_clubs/names")
