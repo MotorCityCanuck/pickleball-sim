@@ -54,3 +54,31 @@ def test_parse_args_accepts_club_name_dataset():
 
     assert args.dataset == "pickleball_club_names"
     assert args.input_path == Path("data/raw/pickleball_clubs/names")
+
+
+def test_parse_args_accepts_last_name_dataset():
+    args = _parse_args(
+        [
+            "--dataset",
+            "last_names_us",
+            "--input-path",
+            "data/raw/last_names",
+        ]
+    )
+
+    assert args.dataset == "last_names_us"
+    assert args.input_path == Path("data/raw/last_names")
+
+
+def test_parse_args_accepts_state_prov_bias_dataset():
+    args = _parse_args(
+        [
+            "--dataset",
+            "state_prov_biases_us",
+            "--input-path",
+            "data/raw/last_names/state_prov_biases",
+        ]
+    )
+
+    assert args.dataset == "state_prov_biases_us"
+    assert args.input_path == Path("data/raw/last_names/state_prov_biases")

@@ -1,11 +1,13 @@
 """Raw seed-data ingestion helpers."""
 
 from .base import RawSeedLoadResult
+from .last_names import LastNameIngestor
 from .metro_areas import RawSeedIngestor
 from .pickleball_clubs import (
     PickleballClubDistributionIngestor,
     PickleballClubNameIngestor,
 )
+from .state_prov_biases import StateProvBiasIngestor
 
 
 def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
@@ -28,6 +30,18 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
             input_path=input_path,
             session=session,
         )
+    if dataset_type in {"last_names_us", "last_names_ca"}:
+        return LastNameIngestor().load_dataset(
+            dataset_type,
+            input_path=input_path,
+            session=session,
+        )
+    if dataset_type in {"state_prov_biases_us", "state_prov_biases_ca"}:
+        return StateProvBiasIngestor().load_dataset(
+            dataset_type,
+            input_path=input_path,
+            session=session,
+        )
 
     supported = ", ".join(
         sorted(
@@ -36,6 +50,10 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
                 "metro_areas_ca",
                 "pickleball_club_distributions",
                 "pickleball_club_names",
+                "last_names_us",
+                "last_names_ca",
+                "state_prov_biases_us",
+                "state_prov_biases_ca",
             }
         )
     )
@@ -45,8 +63,10 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
 
 __all__ = [
     "RawSeedIngestor",
+    "LastNameIngestor",
     "PickleballClubDistributionIngestor",
     "PickleballClubNameIngestor",
+    "StateProvBiasIngestor",
     "RawSeedLoadResult",
     "load_raw_seed_dataset",
 ]
