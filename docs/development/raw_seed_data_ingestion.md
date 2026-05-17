@@ -745,6 +745,11 @@ Recommended first-pass behavior:
 4. Preserve club type and size tier where compatible with production
    `clubs`.
 
+5. Derive production-only club attributes deterministically from staged
+   `club_type`, `size_tier`, and `club_seed`:
+   `competitiveness_level`, `member_capacity`, `founding_date`,
+   `indoor_court_count`, and `outdoor_court_count`.
+
 Replacement behavior:
 
 - Club normalization replaces all production `clubs` for both countries
