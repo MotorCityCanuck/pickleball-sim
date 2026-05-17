@@ -32,31 +32,40 @@ pickleball-sim/
 │   │   │   ├── 📄 session.py                       # [TODO] SQLAlchemy session
 │   │   │   └── 📄 base.py                          # [TODO] Model registry
 │   │   │
-│   │   ├── 📂 models/                              # SQLAlchemy ORM models (22 total)
+│   │   ├── 📂 models/                              # SQLAlchemy ORM models (33 total)
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 base.py                          # [TODO] Base model + mixins
-│   │   │   ├── 📄 generation_runs.py               # [TODO] Generation control
-│   │   │   ├── 📄 monthly_batches.py               # [TODO] Batch metadata
-│   │   │   ├── 📄 regions.py                       # [TODO] Geographic regions
-│   │   │   ├── 📄 players.py                       # [TODO] Player identity
-│   │   │   ├── 📄 player_rating_history.py         # [TODO] Rating time-series
-│   │   │   ├── 📄 player_assessment_history.py     # [TODO] Assessment metrics
-│   │   │   ├── 📄 player_registrations.py          # [TODO] New player intake
-│   │   │   ├── 📄 clubs.py                         # [TODO] Club entities
-│   │   │   ├── 📄 club_memberships.py              # [TODO] Player-club links
-│   │   │   ├── 📄 teams.py                         # [TODO] Persistent teams
-│   │   │   ├── 📄 team_memberships.py              # [TODO] Team rosters
-│   │   │   ├── 📄 matches.py                       # [TODO] Match metadata
-│   │   │   ├── 📄 match_teams.py                   # [TODO] Match participants
-│   │   │   ├── 📄 match_team_players.py            # [TODO] Player participation
-│   │   │   ├── 📄 tournaments.py                   # [TODO] Tournament events
-│   │   │   ├── 📄 first_names.py                   # [TODO] Consolidated first-name frequency data
-│   │   │   ├── 📄 last_names.py                    # [TODO] Consolidated surname frequency data
-│   │   │   ├── 📄 batch_runs.py                    # [TODO] Batch execution
-│   │   │   ├── 📄 uploaded_files.py                # [TODO] File uploads
-│   │   │   ├── 📄 export_runs.py                   # [TODO] Export metadata
-│   │   │   ├── 📄 validation_results.py            # [TODO] Validation logs
-│   │   │   └── 📄 job_status.py                    # [TODO] Job tracking
+│   │   │   ├── 📄 base.py                          # Base model + mixins
+│   │   │   ├── 📄 generation_runs.py               # Generation control
+│   │   │   ├── 📄 monthly_batches.py               # Batch metadata
+│   │   │   ├── 📄 regions.py                       # Geographic regions
+│   │   │   ├── 📄 players.py                       # Player identity
+│   │   │   ├── 📄 player_rating_history.py         # Rating time-series
+│   │   │   ├── 📄 player_assessment_history.py     # Assessment metrics
+│   │   │   ├── 📄 player_registrations.py          # New player intake
+│   │   │   ├── 📄 clubs.py                         # Club entities
+│   │   │   ├── 📄 club_memberships.py              # Player-club links
+│   │   │   ├── 📄 teams.py                         # Persistent teams
+│   │   │   ├── 📄 team_memberships.py              # Team rosters
+│   │   │   ├── 📄 matches.py                       # Match metadata
+│   │   │   ├── 📄 match_games.py                   # Match games and scores
+│   │   │   ├── 📄 match_teams.py                   # Match participants
+│   │   │   ├── 📄 match_team_players.py            # Player participation
+│   │   │   ├── 📄 tournaments.py                   # Tournament events
+│   │   │   ├── 📄 first_names.py                   # Consolidated first-name frequency data
+│   │   │   ├── 📄 last_names.py                    # Consolidated surname frequency data
+│   │   │   ├── 📄 batch_runs.py                    # Batch execution
+│   │   │   ├── 📄 uploaded_files.py                # File uploads
+│   │   │   ├── 📄 export_runs.py                   # Export metadata
+│   │   │   ├── 📄 validation_results.py            # Validation logs
+│   │   │   ├── 📄 job_status.py                    # Job tracking
+│   │   │   ├── 📄 raw_seed_load_runs.py            # Raw seed load tracking
+│   │   │   ├── 📄 raw_seed_load_errors.py          # Raw seed load errors
+│   │   │   ├── 📄 raw_metro_areas.py               # Raw metro-area staging
+│   │   │   ├── 📄 raw_pickleball_club_names.py     # Raw club-name staging
+│   │   │   ├── 📄 raw_pickleball_club_distributions.py # Raw club-count staging
+│   │   │   ├── 📄 raw_first_names.py               # Raw first-name staging
+│   │   │   ├── 📄 raw_last_names.py                # Raw surname staging
+│   │   │   └── 📄 raw_state_prov_biases.py         # Raw surname bias staging
 │   │   │
 │   │   ├── 📂 repositories/                        # Data access layer
 │   │   │   ├── 📄 __init__.py
@@ -152,8 +161,8 @@ pickleball-sim/
 │
 ├── 📂 scripts/                                     # Utility scripts
 │   ├── 📄 setup_dev_environment.sh                 # Automated setup
-│   ├── 📄 load_reference_regions.py                # [TODO] Load regions
-│   └── 📄 load_reference_names.py                  # [TODO] Load name data
+│   ├── 📄 load_raw_seed_data.py                    # Load raw seed staging tables
+│   └── 📄 normalize_seed_data.py                   # Promote raw seed data to production tables
 │
 ├── 📂 docs/                                        # Additional documentation
 │   └── (Created during design review)
@@ -193,7 +202,7 @@ pickleball-sim/
 |-----------|---------|----------|--------|
 | `backend/app/core/` | Configuration and settings | 🔴 Critical | TODO |
 | `backend/app/db/` | Database session management | 🔴 Critical | TODO |
-| `backend/app/models/` | SQLAlchemy ORM models (31 tables) | 🔴 Critical | TODO |
+| `backend/app/models/` | SQLAlchemy ORM models (33 tables) | 🔴 Critical | TODO |
 | `backend/app/repositories/` | Data access layer | 🟠 High | TODO |
 | `backend/app/generators/` | Data generation modules | 🟠 High | TODO |
 | `backend/app/simulations/` | Match/score simulation | 🟠 High | TODO |
@@ -276,7 +285,7 @@ pickleball-sim/
    python backend/scripts/recreate_db_from_orm.py
    ```
 
-4. Maintain all 31 SQLAlchemy models in `backend/app/models/`
+4. Maintain all 33 SQLAlchemy models in `backend/app/models/`
 
 5. Generate reference SQL from ORM metadata
 

@@ -80,6 +80,13 @@ def orchestrator():
             simulation_version="orchestrator-test",
             default_seed_value=2468,
             initial_historical_months=3,
+            config_payload={
+                "simulation": {
+                    "simulation_version": "orchestrator-test",
+                    "master_seed": 2468,
+                    "historical_batch_count": 3,
+                }
+            },
         )
     )
 
@@ -98,6 +105,13 @@ def test_create_initial_generation_plan_creates_run_and_batches(
     assert plan.generation_run.generation_name == "initial setup"
     assert plan.generation_run.seed_value == 2468
     assert plan.generation_run.simulation_version == "orchestrator-test"
+    assert plan.generation_run.parameter_snapshot == {
+        "simulation": {
+            "simulation_version": "orchestrator-test",
+            "master_seed": 2468,
+            "historical_batch_count": 3,
+        }
+    }
     assert plan.generation_run.status == "pending"
     assert [batch.batch_month for batch in plan.monthly_batches] == [
         date(2026, 1, 1),

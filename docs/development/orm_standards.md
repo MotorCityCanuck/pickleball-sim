@@ -28,8 +28,8 @@ The project uses an ORM-first database strategy during active development.
 
 ## Current Live Model Scope
 
-The current live schema and ORM define 31 tables: 23 core platform tables plus
-8 raw seed-data staging tables.
+The current live schema and ORM define 33 tables: 23 core platform tables,
+8 raw seed-data staging tables, and 2 configuration repository tables.
 
 1. `generation_runs`
 2. `regions`
@@ -62,6 +62,8 @@ The current live schema and ORM define 31 tables: 23 core platform tables plus
 29. `raw_first_names`
 30. `raw_last_names`
 31. `raw_state_prov_biases`
+32. `configuration_profiles`
+33. `configuration_profile_versions`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

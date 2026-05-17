@@ -40,9 +40,12 @@ explicit implementation boundaries.
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **SimulationConfig**                Typed configuration object loaded
-                                      from YAML/JSON or database
-                                      configuration tables. Contains
+  **SimulationConfig**                Typed configuration object resolved
+                                      from defaults, database-backed
+                                      configuration profile versions,
+                                      YAML/JSON imports, environment
+                                      variables, UI overrides, and command
+                                      arguments. Contains
                                       generation scale, regional
                                       weighting, club distribution,
                                       rating ranges, noise settings,
@@ -110,23 +113,29 @@ explicit implementation boundaries.
 
 ## configuration_loader
 
-**Purpose:** Loads configuration from files and/or database records,
-applies defaults, validates ranges, and exposes an immutable
-SimulationConfig to all downstream modules.
+**Purpose:** Loads configuration from `configuration_profile_versions`
+JSONB payloads and optional file or runtime overrides, applies defaults,
+validates ranges, and exposes an immutable SimulationConfig to all downstream
+modules.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Primary inputs**                  config_file_path; environment_name;
-                                      optional override dictionary
+  **Primary inputs**                  configuration_profile_id or version
+                                      id; optional config_file_path;
+                                      environment_name; optional override
+                                      dictionary
 
   **Primary outputs**                 SimulationConfig; configuration
-                                      validation report
+                                      validation report; frozen
+                                      generation_runs.parameter_snapshot
 
   **Dependencies**                    None
 
-  **Configuration keys**              master_seed; monthly_growth_rate;
-                                      rating_noise_factor; weekend_bias;
+  **Configuration keys**              master_seed;
+                                      monthly_player_growth_rate;
+                                      rating_noise_std_dev;
+                                      weekend_concentration_bias;
                                       games_per_match
   -----------------------------------------------------------------------
 
@@ -139,6 +148,9 @@ SimulationConfig to all downstream modules.
 
 - Expose both effective configuration and source configuration for audit
   comparison.
+
+- Persist the resolved effective configuration to
+  `generation_runs.parameter_snapshot` before downstream generation starts.
 
 ### Failure Handling and Logging
 
@@ -359,7 +371,8 @@ and stable demographic attributes.
                                       name_assignment_engine
 
   **Configuration keys**              player_count; age_min; age_max;
-                                      gender_weights; monthly_growth_rate
+                                      gender_weights;
+                                      monthly_player_growth_rate
   -----------------------------------------------------------------------
 
 ### Required Behavior
@@ -501,8 +514,9 @@ optional experience proxies.
                                       regional_distribution_engine
 
   **Configuration keys**              initial_rating_mean;
-                                      initial_rating_sd; rating_min;
-                                      rating_max; initial_confidence
+                                      initial_rating_std_dev; rating_min;
+                                      rating_max;
+                                      initial_confidence_score
   -----------------------------------------------------------------------
 
 ### Required Behavior
@@ -597,8 +611,9 @@ constraints, and controlled noise.
   **Dependencies**                    team_assignment_engine
 
   **Configuration keys**              matches_per_team_per_month;
-                                      weekend_bias; holiday_bias;
-                                      weekday_noise; match_type_weights
+                                      weekend_concentration_bias;
+                                      holiday_bias; weekday_noise;
+                                      match_type_weights
   -----------------------------------------------------------------------
 
 ### Required Behavior
@@ -729,7 +744,7 @@ and noise controls.
 
   **Dependencies**                    game_generation_engine
 
-  **Configuration keys**              k_factor_base; rating_noise_factor;
+  **Configuration keys**              k_factor_base; rating_noise_std_dev;
                                       confidence_weight; rating_decay
   -----------------------------------------------------------------------
 
@@ -912,9 +927,10 @@ metadata.
   **Dependencies**                    validation_engine
 
   **Configuration keys**              export_directory;
-                                      partition_strategy;
-                                      compression_codec;
-                                      include_instructor_only_tables
+                                      export_partition_strategy;
+                                      export_compression_codec;
+                                      export_included_table_groups;
+                                      export_included_tables
   -----------------------------------------------------------------------
 
 ### Required Behavior

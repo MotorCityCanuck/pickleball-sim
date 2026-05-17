@@ -4,6 +4,8 @@ EXPECTED_TABLES = {
     "batch_runs",
     "club_memberships",
     "clubs",
+    "configuration_profile_versions",
+    "configuration_profiles",
     "export_runs",
     "first_names",
     "generation_runs",
@@ -53,6 +55,10 @@ EXPECTED_INDEXES = {
     "idx_clubs_generation_run",
     "idx_clubs_region",
     "idx_clubs_type",
+    "idx_configuration_profiles_active",
+    "idx_configuration_versions_profile",
+    "idx_configuration_versions_schema",
+    "idx_configuration_versions_status",
     "idx_export_runs_batch",
     "idx_export_runs_created",
     "idx_export_runs_type",
@@ -130,6 +136,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "batch_runs": {"chk_run_status"},
     "club_memberships": {"chk_membership_dates"},
     "clubs": {"chk_club_type", "chk_court_counts"},
+    "configuration_profile_versions": {
+        "chk_configuration_validation_status",
+        "chk_configuration_version_number",
+    },
     "export_runs": {"chk_export_format"},
     "first_names": {
         "chk_first_names_country",
@@ -186,6 +196,8 @@ EXPECTED_CHECK_CONSTRAINTS = {
 
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "clubs": {("region_id", "club_name")},
+    "configuration_profile_versions": {("profile_id", "version_number")},
+    "configuration_profiles": {("profile_name",)},
     "job_status": {("job_id",)},
     "match_games": {("match_id", "game_number")},
     "match_team_players": {("match_team_id", "player_id")},
@@ -209,6 +221,9 @@ EXPECTED_FOREIGN_KEYS = {
         "player_id->players.id",
     },
     "clubs": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
+    "configuration_profile_versions": {
+        "profile_id->configuration_profiles.id",
+    },
     "export_runs": {"batch_id->monthly_batches.id"},
     "match_games": {"match_id->matches.id"},
     "match_team_players": {
@@ -256,6 +271,8 @@ EXPECTED_FOREIGN_KEYS = {
 
 EXPECTED_SERVER_DEFAULTS = {
     "generation_runs": {"status": "'pending'"},
+    "configuration_profile_versions": {"validation_status": "'pending'"},
+    "configuration_profiles": {"is_active": "true"},
     "monthly_batches": {
         "batch_type": "'future_increment'",
         "processing_status": "'pending'",

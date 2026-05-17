@@ -7,7 +7,7 @@ Provides:
 - Common utilities
 """
 from datetime import datetime
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, text
 from sqlalchemy.orm import DeclarativeBase, declared_attr
 
 
@@ -28,14 +28,11 @@ class TimestampMixin:
     created_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        server_default='CURRENT_TIMESTAMP'
+        server_default=text('CURRENT_TIMESTAMP')
     )
     
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        server_default='CURRENT_TIMESTAMP'
+        server_default=text('CURRENT_TIMESTAMP')
     )

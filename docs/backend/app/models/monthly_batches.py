@@ -10,10 +10,11 @@ All generated data (matches, ratings, assessments) must link to a batch.
 from datetime import datetime
 from sqlalchemy import (
     BigInteger, Column, String, Date, Integer, DateTime,
-    ForeignKey, CheckConstraint, UniqueConstraint, Text
+    ForeignKey, CheckConstraint, Index, UniqueConstraint, Text
 )
 from sqlalchemy.orm import relationship
 
+from sqlalchemy import text
 from .base import Base, TimestampMixin
 
 
@@ -39,7 +40,7 @@ class MonthlyBatch(Base, TimestampMixin):
         String(30),
         nullable=False,
         default='future_increment',
-        server_default='future_increment'
+        server_default=text("'future_increment'")
     )
     active_player_count_start = Column(Integer)
     new_player_count = Column(Integer)
@@ -51,48 +52,11 @@ class MonthlyBatch(Base, TimestampMixin):
         String(30),
         nullable=False,
         default='pending',
-        server_default='pending'
+        server_default=text("'pending'")
     )
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     error_message = Column(Text)
-    
-    # Relationships
-    generation_run = relationship(
-        'GenerationRun',
-        back_populates='monthly_batches'
-    )
-    player_registrations = relationship(
-        'PlayerRegistration',
-        back_populates='batch',
-        cascade='all, delete-orphan'
-    )
-    matches = relationship(
-        'Match',
-        back_populates='batch'
-    )
-    rating_updates = relationship(
-        'PlayerRatingHistory',
-        back_populates='batch'
-    )
-    assessment_updates = relationship(
-        'PlayerAssessmentHistory',
-        back_populates='batch'
-    )
-    batch_runs = relationship(
-        'BatchRun',
-        back_populates='batch',
-        cascade='all, delete-orphan'
-    )
-    export_runs = relationship(
-        'ExportRun',
-        back_populates='batch'
-    )
-    validation_results = relationship(
-        'ValidationResult',
-        back_populates='batch',
-        cascade='all, delete-orphan'
-    )
     
     # Constraints
     __table_args__ = (
@@ -101,6 +65,9 @@ class MonthlyBatch(Base, TimestampMixin):
             'batch_month',
             name='uq_batch_generation_month'
         ),
+        Index('idx_monthly_batches_generation_run', 'generation_run_id'),
+        Index('idx_monthly_batches_month', 'batch_month'),
+        Index('idx_monthly_batches_status', 'processing_status'),
         CheckConstraint(
             batch_type.in_(['historical_initial', 'future_increment']),
             name='chk_batch_type'

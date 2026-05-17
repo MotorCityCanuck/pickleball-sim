@@ -51,7 +51,7 @@ fi
 # Step 3: Start PostgreSQL
 echo ""
 echo "📋 Step 3: Starting PostgreSQL via Docker..."
-if docker ps | grep -q pickleball_postgres; then
+if docker ps | grep -q pickleball-postgres; then
     echo "${YELLOW}ℹ️  PostgreSQL already running${NC}"
 else
     docker-compose up -d postgres

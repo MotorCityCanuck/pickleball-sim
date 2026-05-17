@@ -3,7 +3,7 @@ PlayerAssessmentHistory model - historical player assessment metrics.
 """
 from sqlalchemy import (
     BigInteger, Column, Date, Integer, String, Numeric, CheckConstraint, ForeignKey,
-    DateTime
+    DateTime, Index
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import text
@@ -31,10 +31,9 @@ class PlayerAssessmentHistory(Base):
     player_id = Column(
         BigInteger,
         ForeignKey("players.id"),
-        nullable=False,
-        index=True
+        nullable=False
     )
-    assessment_date = Column(Date, nullable=False, index=True)
+    assessment_date = Column(Date, nullable=False)
     assessment_type = Column(String(100), nullable=False)
     assessment_value = Column(Numeric(8, 3))
     confidence_score = Column(Numeric(8, 3))
@@ -42,11 +41,8 @@ class PlayerAssessmentHistory(Base):
     batch_id = Column(
         BigInteger,
         ForeignKey("monthly_batches.id"),
-        nullable=False,
-        index=True
+        nullable=False
     )
-    
-    # Single timestamp column
     created_at = Column(
         DateTime,
         nullable=False,
@@ -55,10 +51,16 @@ class PlayerAssessmentHistory(Base):
     
     # Relationships
     player = relationship("Player", back_populates="assessment_history")
-    batch = relationship("MonthlyBatch", back_populates="assessment_updates")
+    batch = relationship("MonthlyBatch")
     
     # Constraints
     __table_args__ = (
+        Index(
+            "idx_assessment_player_date",
+            "player_id",
+            assessment_date.desc()
+        ),
+        Index("idx_assessment_batch", "batch_id"),
         CheckConstraint(
             "confidence_score >= 0 AND confidence_score <= 1",
             name="chk_assessment_confidence"

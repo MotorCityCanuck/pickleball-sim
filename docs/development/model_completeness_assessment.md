@@ -5,8 +5,9 @@ generation-design documents.
 
 ## Current ORM Scope
 
-The live ORM now defines 31 tables: 23 core platform tables plus 8 raw
-seed-data staging tables. Before the `match_games` assessment, the live ORM
+The live ORM now defines 33 tables: 23 core platform tables, 8 raw seed-data
+staging tables, and 2 configuration repository tables. Before the
+`match_games` assessment, the live ORM
 defined these 22 core tables:
 
 1. `generation_runs`
@@ -77,6 +78,8 @@ The following documented concepts already have ORM coverage:
   `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`,
   `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`,
   `raw_state_prov_biases`
+- configuration repository storage: `configuration_profiles`,
+  `configuration_profile_versions`
 
 ## Deferred Optional Gaps
 
@@ -92,9 +95,10 @@ should not be implemented before `match_games`:
   semantics first.
 - `partnership_stats`: likely a derived analytics table or materialized view,
   not an immediate core ORM table.
-- configuration tables: current docs treat run configuration as serialized
-  parameter snapshots on `generation_runs`; normalized configuration tables can
-  wait until the configuration API stabilizes.
+- typed configuration API models: current persistence uses versioned JSONB
+  configuration profiles plus frozen `generation_runs.parameter_snapshot`;
+  typed loader/service code should be added when generation orchestration is
+  implemented.
 
 ## Completed Follow-Up
 

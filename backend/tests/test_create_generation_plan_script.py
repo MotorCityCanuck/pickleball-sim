@@ -66,6 +66,10 @@ def test_parse_args_accepts_required_cli_options():
             "99",
             "--historical-months",
             "6",
+            "--configuration-profile",
+            "default",
+            "--configuration-version",
+            "1",
             "--parameter-json",
             '{"source": "test"}',
         ]
@@ -75,6 +79,8 @@ def test_parse_args_accepts_required_cli_options():
     assert args.first_batch_month == date(2026, 1, 1)
     assert args.seed_value == 99
     assert args.historical_months == 6
+    assert args.configuration_profile == "default"
+    assert args.configuration_version == 1
     assert args.parameter_json == {"source": "test"}
 
 

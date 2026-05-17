@@ -21,11 +21,17 @@ def test_parse_args_accepts_metro_areas_with_replace_flag():
             "--dataset",
             "metro_areas",
             "--replace-production",
+            "--configuration-profile",
+            "default",
+            "--configuration-version",
+            "1",
         ]
     )
 
     assert args.dataset == "metro_areas"
     assert args.replace_production is True
+    assert args.configuration_profile == "default"
+    assert args.configuration_version == 1
 
 
 def test_parse_args_defaults_replace_flag_to_false():
@@ -41,7 +47,9 @@ def test_parse_args_defaults_replace_flag_to_false():
 
 
 def test_supported_datasets_are_exposed_by_normalization_package():
-    assert SUPPORTED_DATASETS == frozenset({"first_names", "metro_areas"})
+    assert SUPPORTED_DATASETS == frozenset(
+        {"first_names", "last_names", "metro_areas", "pickleball_clubs"}
+    )
 
 
 def test_rejects_unsupported_normalization_dataset():

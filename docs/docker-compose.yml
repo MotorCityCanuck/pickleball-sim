@@ -3,11 +3,11 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16
-    container_name: pickleball_postgres
+    container_name: pickleball-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: pickleball_sim
+      POSTGRES_DB: pickleball
     ports:
       - "5432:5432"
     volumes:
@@ -30,7 +30,7 @@ services:
   #   ports:
   #     - "8000:8000"
   #   environment:
-  #     DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pickleball_sim
+  #     DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pickleball
   #   depends_on:
   #     postgres:
   #       condition: service_healthy

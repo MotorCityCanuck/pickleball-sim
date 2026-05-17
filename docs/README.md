@@ -8,7 +8,7 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 ### Key Features
 
-- 🏓 **250,000+ synthetic players** across North America
+- 🏓 **50,000 default synthetic players** across North America
 - 📊 **10M+ historical matches** with realistic scoring
 - 📅 **Monthly batch processing** for incremental data releases
 - 🎯 **Rating system** with confidence and volatility tracking
@@ -100,7 +100,8 @@ pickleball-sim/
 2. **[Master Document Index](docs_MASTER_DOCUMENT_INDEX.md)** - Complete navigation
 3. **[Database Design](database/Pickleball_Simulation_Database_Design_v3.md)** - Schema specification
 4. **[Configuration Parameters](generation_logic/configuration_parameters_specification.md)** - All parameters
-5. **[Design Review Summary](docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
+5. **[Configuration Payload Architecture](architecture/configuration_payload_architecture.md)** - JSONB payload shape
+6. **[Design Review Summary](docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
 
 ## Architecture
 
@@ -177,12 +178,13 @@ Configuration → Monthly Batch Processor
 
 ## Database Schema
 
-31 ORM-backed tables organized into layers:
+33 ORM-backed tables organized into layers:
 
 - **Bronze**: Raw ingestion and staging (`uploaded_files`, `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases`)
 - **Silver**: Validated entities (`players`, `clubs`, `teams`, `regions`)
 - **Gold**: Analytics-ready (`player_rating_history`, `matches`, `match_games`, `monthly_batches`)
 - **Operational**: Platform metadata (`generation_runs`, `validation_results`, `job_status`)
+- **Configuration Repository**: Versioned generation settings (`configuration_profiles`, `configuration_profile_versions`)
 
 See [Database Design](database/Pickleball_Simulation_Database_Design_v3.md) for complete DDL.
 
@@ -228,7 +230,7 @@ python backend/scripts/export_schema_from_orm.py
 python -m pytest backend/tests/test_orm_consistency.py -q
 
 # Connect to database
-docker exec -it pickleball_postgres psql -U postgres -d pickleball_sim
+docker exec -it pickleball-postgres psql -U postgres -d pickleball
 ```
 
 ## Contributing

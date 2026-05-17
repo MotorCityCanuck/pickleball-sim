@@ -1,0 +1,40 @@
+"""Club memberships model."""
+from sqlalchemy import (
+    Column, BigInteger, String, Date, Boolean, ForeignKey, CheckConstraint,
+    Index, text
+)
+from sqlalchemy.orm import relationship
+from .base import Base, TimestampMixin
+
+
+class ClubMembership(Base, TimestampMixin):
+    """Player memberships at clubs."""
+    
+    __tablename__ = 'club_memberships'
+    
+    id = Column(BigInteger, primary_key=True)
+    player_id = Column(BigInteger, ForeignKey('players.id'), nullable=False)
+    club_id = Column(BigInteger, ForeignKey('clubs.id'), nullable=False)
+    membership_type = Column(String(50), default='member')
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date)
+    is_primary = Column(Boolean, default=True)
+    generation_run_id = Column(BigInteger, ForeignKey('generation_runs.id'))
+    
+    # Relationships
+    player = relationship("Player")
+    club = relationship("Club", back_populates="memberships")
+    generation_run = relationship("GenerationRun")
+    
+    __table_args__ = (
+        Index('idx_club_memberships_player', 'player_id'),
+        Index('idx_club_memberships_club', 'club_id'),
+        Index('idx_club_memberships_dates', 'start_date', 'end_date'),
+        Index(
+            'idx_club_memberships_primary',
+            'player_id',
+            'is_primary',
+            postgresql_where=text('is_primary = true')
+        ),
+        CheckConstraint('end_date IS NULL OR end_date >= start_date', name='chk_membership_dates'),
+    )

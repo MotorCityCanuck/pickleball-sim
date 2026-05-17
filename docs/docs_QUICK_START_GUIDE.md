@@ -10,7 +10,7 @@
 
 ## Welcome!
 
-You're about to work on a large-scale synthetic pickleball analytics simulation platform designed for graduate-level data science education. This platform generates realistic historical data spanning 250,000+ players, 10M+ matches, and includes sophisticated rating systems, team dynamics, and monthly batch processing.
+You're about to work on a large-scale synthetic pickleball analytics simulation platform designed for graduate-level data science education. This platform generates realistic historical data spanning 50,000 default players, 10M+ matches, and includes sophisticated rating systems, team dynamics, and monthly batch processing.
 
 **This guide will get you oriented in 15 minutes.**
 
@@ -22,7 +22,7 @@ You're about to work on a large-scale synthetic pickleball analytics simulation 
 
 This platform:
 - Generates **synthetic pickleball data** for analytics education
-- Creates **250,000 players** across North America
+- Creates **50,000 players** across North America
 - Simulates **12 months of historical match data**
 - Processes **monthly batch increments** for future data releases
 - Exports **Parquet datasets** for student analytics projects
@@ -72,7 +72,7 @@ Graduate students will:
               │
 ┌─────────────▼───────────────────────┐
 │   PostgreSQL Database               │
-│   - 31 ORM-backed tables            │
+│   - 33 ORM-backed tables            │
 │   - Historical rating tracking      │
 │   - Monthly batch metadata          │
 └─────────────┬───────────────────────┘
@@ -277,7 +277,7 @@ players (many) ──> team_memberships (many) ──> teams (many)
 ```yaml
 # Global
 master_seed: 42                          # Reproducibility
-target_total_players: 250000             # Population size
+target_total_players: 50000             # Population size
 historical_batch_count: 12               # Initial history
 
 # Player Growth
@@ -539,7 +539,7 @@ You now know:
 docker-compose up -d
 
 # Database connection
-psql -h localhost -U postgres -d pickleball_sim
+psql -h localhost -U postgres -d pickleball
 
 # Recreate development database from ORM metadata
 python backend/scripts/recreate_db_from_orm.py

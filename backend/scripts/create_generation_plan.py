@@ -70,13 +70,25 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         help=(
             "Number of initial historical monthly batches. Defaults to "
-            "SIMULATION_INITIAL_HISTORICAL_MONTHS."
+            "the resolved configuration payload."
         ),
+    )
+    parser.add_argument(
+        "--configuration-profile",
+        help="Configuration profile name. Defaults to SIMULATION_CONFIG_PROFILE or default.",
+    )
+    parser.add_argument(
+        "--configuration-version",
+        type=int,
+        help="Optional configuration profile version. Defaults to latest valid version.",
     )
     parser.add_argument(
         "--parameter-json",
         type=_parse_parameter_snapshot,
-        help="Optional JSON object stored in generation_runs.parameter_snapshot.",
+        help=(
+            "Optional JSON object stored in generation_runs.parameter_snapshot. "
+            "When omitted, the resolved configuration profile payload is used."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -89,6 +101,8 @@ def create_generation_plan(args: argparse.Namespace) -> InitialGenerationPlan:
         seed_value=args.seed_value,
         parameter_snapshot=args.parameter_json,
         historical_months=args.historical_months,
+        configuration_profile_name=args.configuration_profile,
+        configuration_version=args.configuration_version,
     )
 
 

@@ -14,8 +14,8 @@
 - Alembic is not part of the active schema workflow.
 - `backend/schema.sql` is generated from ORM metadata and must not be edited by
   hand.
-- The live ORM currently defines 31 tables: 23 core platform tables plus 8 raw
-  seed-data staging tables.
+- The live ORM currently defines 33 tables: 23 core platform tables, 8 raw
+  seed-data staging tables, and 2 configuration repository tables.
 - Consistency expectations live in `backend/tests/schema_expectations.py`.
 - Use `../.venv/bin/python -m pytest -q` from `backend/` for the normal test
   suite.
@@ -105,19 +105,19 @@ CREATE INDEX idx_players_region ON players(home_region_id);
 
 ```bash
 # Drop and recreate database
-docker exec -it pickleball-postgres psql -U postgres -c "DROP DATABASE IF EXISTS pickleball_sim;"
-docker exec -it pickleball-postgres psql -U postgres -c "CREATE DATABASE pickleball_sim;"
+docker exec -it pickleball-postgres psql -U postgres -c "DROP DATABASE IF EXISTS pickleball;"
+docker exec -it pickleball-postgres psql -U postgres -c "CREATE DATABASE pickleball;"
 
 # Apply schema
-docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim < backend/schema.sql
+docker exec -i pickleball-postgres psql -U postgres -d pickleball < backend/schema.sql
 
 # Verify
-docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "\dt"
-docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public';"
+docker exec -it pickleball-postgres psql -U postgres -d pickleball -c "\dt"
+docker exec -it pickleball-postgres psql -U postgres -d pickleball -c "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public';"
 ```
 
 **Historical expected output**: 22 tables at the time of this checklist.
-Current ORM-backed schema expectation: 31 tables.
+Current ORM-backed schema expectation: 33 tables.
 
 ### Action 4: Fix Priority 2 Models (10 minutes)
 
@@ -209,7 +209,7 @@ def test_all_tables_exist():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 31, f"Expected 31 tables, found {len(tables)}: {tables}"
+    assert len(tables) == 33, f"Expected 33 tables, found {len(tables)}: {tables}"
     
     # Check key tables
     expected_tables = [
@@ -272,7 +272,7 @@ pytest tests/test_database_setup.py -v
 - [ ] Create `backend/schema.sql` from database design doc
 - [ ] Drop and recreate database
 - [ ] Apply schema (`psql -f schema.sql`)
-- [ ] Verify 31 tables exist
+- [ ] Verify 33 tables exist
 - [ ] Test Priority 1+2 model imports
 - [ ] Create `backend/app/db/session.py`
 - [ ] Create `backend/app/db/__init__.py`
@@ -288,11 +288,11 @@ pytest tests/test_database_setup.py -v
 When complete, you should have:
 
 ✅ Clean architecture (no Alembic)  
-✅ 22 database tables created via DDL  
+✅ 33 database tables created via ORM metadata  
 ✅ SQLAlchemy models that work with existing schema  
 ✅ Database session management  
 ✅ Passing tests  
-✅ Ready to build Priority 3+ models (Clubs, Teams, Matches)  
+✅ Core, reference, and raw seed-data models implemented  
 ✅ Foundation for data generation logic  
 
 ---

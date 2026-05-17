@@ -76,7 +76,7 @@ class Player(Base, TimestampMixin):
             name="chk_player_birth_date"
         ),
         CheckConstraint(
-            "player_status IN ('ACTIVE', 'INACTIVE', 'RETIRED')",
+            "player_status IN ('ACTIVE', 'INJURED', 'INACTIVE', 'RETIRED')",
             name="chk_player_status"
         ),
     )

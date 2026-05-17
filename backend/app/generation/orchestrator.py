@@ -7,7 +7,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core import SimulationSettings, load_settings
+from app.core import (
+    SimulationSettings,
+    get_configuration_payload,
+    load_settings,
+    settings_from_payload,
+)
 from app.db.session import session_scope
 from app.models import GenerationRun, MonthlyBatch
 
@@ -41,14 +46,11 @@ class GenerationOrchestrator:
         seed_value: int | None = None,
         parameter_snapshot: dict[str, Any] | None = None,
         historical_months: int | None = None,
+        configuration_profile_name: str | None = None,
+        configuration_version: int | None = None,
         session: Session | None = None,
     ) -> InitialGenerationPlan:
         """Create a generation run and its initial historical batch records."""
-        if historical_months is None:
-            historical_months = self.settings.initial_historical_months
-        if historical_months < 1:
-            raise ValueError("historical_months must be at least 1.")
-
         if session is not None:
             return self._create_initial_generation_plan(
                 generation_name,
@@ -56,6 +58,8 @@ class GenerationOrchestrator:
                 seed_value=seed_value,
                 parameter_snapshot=parameter_snapshot,
                 historical_months=historical_months,
+                configuration_profile_name=configuration_profile_name,
+                configuration_version=configuration_version,
                 session=session,
             )
 
@@ -66,6 +70,8 @@ class GenerationOrchestrator:
                 seed_value=seed_value,
                 parameter_snapshot=parameter_snapshot,
                 historical_months=historical_months,
+                configuration_profile_name=configuration_profile_name,
+                configuration_version=configuration_version,
                 session=active_session,
             )
 
@@ -76,13 +82,29 @@ class GenerationOrchestrator:
         *,
         seed_value: int | None,
         parameter_snapshot: dict[str, Any] | None,
-        historical_months: int,
+        historical_months: int | None,
+        configuration_profile_name: str | None,
+        configuration_version: int | None,
         session: Session,
     ) -> InitialGenerationPlan:
+        effective_settings = self._resolve_settings(
+            session,
+            parameter_snapshot=parameter_snapshot,
+            configuration_profile_name=configuration_profile_name,
+            configuration_version=configuration_version,
+        )
+        if parameter_snapshot is None:
+            parameter_snapshot = effective_settings.config_payload
+        if historical_months is None:
+            historical_months = effective_settings.initial_historical_months
+        if historical_months < 1:
+            raise ValueError("historical_months must be at least 1.")
+
         generation_run = self.control_plane.create_generation_run(
             generation_name,
             seed_value=seed_value,
             parameter_snapshot=parameter_snapshot,
+            settings=effective_settings,
             session=session,
         )
 
@@ -101,6 +123,39 @@ class GenerationOrchestrator:
         return InitialGenerationPlan(
             generation_run=generation_run,
             monthly_batches=monthly_batches,
+        )
+
+    def _resolve_settings(
+        self,
+        session: Session,
+        *,
+        parameter_snapshot: dict[str, Any] | None,
+        configuration_profile_name: str | None,
+        configuration_version: int | None,
+    ) -> SimulationSettings:
+        if parameter_snapshot is not None:
+            return settings_from_payload(
+                parameter_snapshot,
+                profile_name=configuration_profile_name
+                or self.settings.configuration_profile_name,
+                profile_version=configuration_version
+                or self.settings.configuration_profile_version,
+            )
+
+        if self.settings.config_payload is not None:
+            return self.settings
+
+        profile_name = configuration_profile_name or self.settings.configuration_profile_name
+        version_number = configuration_version or self.settings.configuration_profile_version
+        payload = get_configuration_payload(
+            session,
+            profile_name=profile_name,
+            version_number=version_number,
+        )
+        return settings_from_payload(
+            payload,
+            profile_name=profile_name,
+            profile_version=version_number,
         )
 
 

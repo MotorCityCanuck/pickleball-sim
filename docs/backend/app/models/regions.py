@@ -1,3 +1,4 @@
+from sqlalchemy import text
 """
 Region model - Stores MSA/CMA/CA regional definitions.
 
@@ -28,7 +29,7 @@ class Region(Base, TimestampMixin):
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     country_code = Column(String(10), nullable=False)
-    region_type = Column(String(20))  # MSA, CMA, CA
+    region_type = Column(String(20))
     region_name = Column(String(255), nullable=False)
     state_province_code = Column(String(10))
     population = Column(BigInteger)
@@ -36,29 +37,10 @@ class Region(Base, TimestampMixin):
     competitiveness_multiplier = Column(
         Numeric(8, 4),
         default=1.0,
-        server_default='1.0'
+        server_default=text('1.0')
     )
     latitude = Column(Numeric(10, 6))
     longitude = Column(Numeric(10, 6))
-    
-    # Relationships
-    players = relationship(
-        'Player',
-        back_populates='home_region',
-        foreign_keys='Player.home_region_id'
-    )
-    clubs = relationship(
-        'Club',
-        back_populates='region'
-    )
-    matches = relationship(
-        'Match',
-        back_populates='region'
-    )
-    tournaments = relationship(
-        'Tournament',
-        back_populates='region'
-    )
     
     # Constraints
     __table_args__ = (

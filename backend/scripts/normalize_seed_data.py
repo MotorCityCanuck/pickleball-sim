@@ -12,6 +12,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.seed_data_normalize import SUPPORTED_DATASETS, normalize_seed_dataset  # noqa: E402
+from app.core import get_configuration_payload  # noqa: E402
+from app.db.session import session_scope  # noqa: E402
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -29,15 +31,33 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Required to replace production reference rows for the dataset scope.",
     )
+    parser.add_argument(
+        "--configuration-profile",
+        default="default",
+        help="Configuration profile name used for configurable normalization values.",
+    )
+    parser.add_argument(
+        "--configuration-version",
+        type=int,
+        help="Optional configuration profile version. Defaults to latest valid version.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
-    result = normalize_seed_dataset(
-        args.dataset,
-        replace_production=args.replace_production,
-    )
+    with session_scope() as session:
+        config_payload = get_configuration_payload(
+            session,
+            profile_name=args.configuration_profile,
+            version_number=args.configuration_version,
+        )
+        result = normalize_seed_dataset(
+            args.dataset,
+            replace_production=args.replace_production,
+            config_payload=config_payload,
+            session=session,
+        )
 
     print(f"dataset={result.dataset}")
     print(f"status={result.status}")

@@ -28,7 +28,7 @@
 | `master_seed` | INTEGER | (required) | > 0 | - | Master random seed for reproducibility |
 | `simulation_version` | STRING | "1.0" | semantic version | - | Platform version identifier |
 | `simulation_name` | STRING | (required) | max 255 chars | - | Human-readable simulation name |
-| `target_total_players` | INTEGER | 250000 | 1000-10000000 | players | Total player population target |
+| `target_total_players` | INTEGER | 50000 | 1000-10000000 | players | Total player population target |
 | `historical_batch_count` | INTEGER | 12 | 1-36 | months | Number of historical months to generate |
 | `generation_run_mode` | ENUM | "full" | full, historical_only, incremental | - | Execution mode |
 
@@ -254,7 +254,7 @@ simulation:
   master_seed: 42
   simulation_name: "NAPA_Olympic_Analytics_v1"
   simulation_version: "1.0"
-  target_total_players: 250000
+  target_total_players: 50000
   historical_batch_count: 12
 
 player_generation:
@@ -316,7 +316,7 @@ export:
   "simulation": {
     "master_seed": 42,
     "simulation_name": "NAPA_Olympic_Analytics_v1",
-    "target_total_players": 250000
+    "target_total_players": 50000
   },
   "player_generation": {
     "monthly_player_growth_rate": 0.02,

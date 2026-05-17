@@ -31,6 +31,8 @@ The schema supports:
 
 - Operational job tracking
 
+- Versioned generation configuration profiles
+
 - Parquet export metadata
 
 - Validation and reproducibility workflows
@@ -118,6 +120,10 @@ Primary entities:
 
 - clubs
 
+- configuration_profiles
+
+- configuration_profile_versions
+
 - club_memberships
 
 - teams
@@ -145,6 +151,24 @@ Reference entities:
 - first_names
 
 - last_names
+
+Raw seed-data staging entities:
+
+- raw_seed_load_runs
+
+- raw_seed_load_errors
+
+- raw_metro_areas
+
+- raw_pickleball_club_names
+
+- raw_pickleball_club_distributions
+
+- raw_first_names
+
+- raw_last_names
+
+- raw_state_prov_biases
 
 \-\--
 
@@ -188,7 +212,7 @@ Stores the master player record.
 
 \| initial_skill_seed \| NUMERIC(8,4) \| Initial hidden skill value \|
 
-\| player_status \| VARCHAR(30) \| Active/Inactive/Retired \|
+\| player_status \| VARCHAR(30) \| Active/Injured/Inactive/Retired \|
 
 \| created_at \| TIMESTAMP \| Insert timestamp \|
 
@@ -596,7 +620,57 @@ Stores consolidated USA and Canada last-name frequency data.
 
 \-\--
 
-## 10.2 uploaded_files
+## 10.2 configuration_profiles
+
+### Proposed Columns
+
+\| Column \| Type \|
+
+\|\-\--\|\-\--\|
+
+\| id \| BIGSERIAL PK \|
+
+\| profile_name \| VARCHAR(255) UNIQUE NOT NULL \|
+
+\| description \| TEXT \|
+
+\| is_active \| BOOLEAN DEFAULT true \|
+
+\| created_at \| TIMESTAMP \|
+
+\| updated_at \| TIMESTAMP \|
+
+\-\--
+
+## 10.3 configuration_profile_versions
+
+### Proposed Columns
+
+\| Column \| Type \|
+
+\|\-\--\|\-\--\|
+
+\| id \| BIGSERIAL PK \|
+
+\| profile_id \| BIGINT FK to configuration_profiles \|
+
+\| version_number \| INTEGER \|
+
+\| config_schema_version \| VARCHAR(50) \|
+
+\| config_payload \| JSONB \|
+
+\| created_by \| VARCHAR(255) \|
+
+\| validation_status \| VARCHAR(30) DEFAULT 'pending' \|
+
+\| created_at \| TIMESTAMP \|
+
+\| updated_at \| TIMESTAMP \|
+
+\-\--
+
+## 10.4 uploaded_files
 
 ### Proposed Columns
 
@@ -622,7 +696,7 @@ Stores consolidated USA and Canada last-name frequency data.
 
 \-\--
 
-## 10.3 export_runs
+## 10.5 export_runs
 
 ### Proposed Columns
 
@@ -682,13 +756,67 @@ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 CONSTRAINT chk_player_birth_date CHECK (birth_date < CURRENT_DATE),
 
-CONSTRAINT chk_player_status CHECK (player_status IN ('ACTIVE', 'INACTIVE', 'RETIRED'))
+CONSTRAINT chk_player_status CHECK (player_status IN ('ACTIVE', 'INJURED', 'INACTIVE', 'RETIRED'))
 
 );
 
 \-\--
 
-## 11.2 player_rating_history
+## 11.2 configuration_profiles
+
+CREATE TABLE configuration_profiles (
+
+id BIGSERIAL PRIMARY KEY,
+
+profile_name VARCHAR(255) NOT NULL,
+
+description TEXT,
+
+is_active BOOLEAN DEFAULT true NOT NULL,
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+CONSTRAINT uq_configuration_profile_name UNIQUE (profile_name)
+
+);
+
+\-\--
+
+## 11.3 configuration_profile_versions
+
+CREATE TABLE configuration_profile_versions (
+
+id BIGSERIAL PRIMARY KEY,
+
+profile_id BIGINT NOT NULL REFERENCES configuration_profiles(id),
+
+version_number INTEGER NOT NULL,
+
+config_schema_version VARCHAR(50) NOT NULL,
+
+config_payload JSONB NOT NULL,
+
+created_by VARCHAR(255),
+
+validation_status VARCHAR(30) DEFAULT 'pending' NOT NULL,
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+CONSTRAINT uq_configuration_profile_version UNIQUE (profile_id, version_number),
+
+CONSTRAINT chk_configuration_version_number CHECK (version_number > 0),
+
+CONSTRAINT chk_configuration_validation_status CHECK (validation_status IN ('pending', 'valid', 'invalid'))
+
+);
+
+\-\--
+
+## 11.4 player_rating_history
 
 CREATE TABLE player_rating_history (
 
@@ -944,11 +1072,17 @@ last_name VARCHAR(100) NOT NULL,
 
 frequency_count INTEGER NOT NULL,
 
+bias_multiplier NUMERIC(10,4),
+
+adjusted_frequency_count NUMERIC(18,4),
+
 normalized_probability NUMERIC(12,8),
 
 source_dataset VARCHAR(255),
 
 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 CONSTRAINT chk_last_names_freq CHECK (frequency_count > 0),
 
@@ -1417,6 +1551,12 @@ CREATE INDEX idx_players_region ON players(home_region_id);
 CREATE INDEX idx_players_status ON players(player_status);
 CREATE INDEX idx_players_registration_date ON players(registration_date);
 CREATE INDEX idx_players_generation_run ON players(generation_run_id);
+
+-- configuration profile indexes
+CREATE INDEX idx_configuration_profiles_active ON configuration_profiles(is_active);
+CREATE INDEX idx_configuration_versions_profile ON configuration_profile_versions(profile_id);
+CREATE INDEX idx_configuration_versions_schema ON configuration_profile_versions(config_schema_version);
+CREATE INDEX idx_configuration_versions_status ON configuration_profile_versions(validation_status);
 
 -- player_rating_history indexes
 CREATE INDEX idx_rating_player_date ON player_rating_history(player_id, rating_date DESC);

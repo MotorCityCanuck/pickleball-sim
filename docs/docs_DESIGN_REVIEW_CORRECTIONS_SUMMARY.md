@@ -91,7 +91,7 @@ UNIQUE (player_id, batch_id)
 
 ```sql
 -- Example constraints added
-CONSTRAINT chk_player_status CHECK (player_status IN ('ACTIVE', 'INACTIVE', 'RETIRED'))
+CONSTRAINT chk_player_status CHECK (player_status IN ('ACTIVE', 'INJURED', 'INACTIVE', 'RETIRED'))
 CONSTRAINT chk_rating_value CHECK (rating_value >= 0 AND rating_value <= 5000)
 CONSTRAINT chk_confidence_score CHECK (confidence_score >= 0 AND confidence_score <= 1)
 CONSTRAINT chk_match_type CHECK (match_type IN ('recreational', 'league', 'ladder', 'tournament', 'challenge', 'clinic', 'open_play'))
@@ -145,7 +145,8 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 - `validation_results` (NEW)
 - `job_status` (NEW)
 
-**Total Tables**: 22 complete DDL statements with all constraints
+**Total Tables**: 33 ORM-backed tables: 23 core platform tables, 8
+raw seed-data staging and tracking tables, and 2 configuration repository tables
 
 ---
 
@@ -160,6 +161,7 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 | `weekend_bias`, `weekend_bias_multiplier` | `weekend_concentration_bias` | DECIMAL | 1.75 |
 | `competitiveness_multiplier`, `regional_multiplier` | `competitiveness_multiplier_default` | DECIMAL | 1.0 |
 | `rating_noise_factor` | `rating_noise_std_dev` | DECIMAL | 75.0 |
+| `include_instructor_only_tables` | `export_included_table_groups` / `export_included_tables` | ARRAY | ["student_core", "reference"] |
 | `noise_std_dev` (ambiguous) | `[parameter]_noise_std_dev` (with units) | - | - |
 
 **Document Created**: `generation_logic/configuration_parameters_specification.md`  

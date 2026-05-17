@@ -49,7 +49,7 @@ This index provides a hierarchical guide to all authoritative design documents f
 **Purpose**: Authoritative schema definition and data model  
 **Key Sections**:
 - Complete DDL for the core schema, with ORM-generated reference SQL covering
-  31 live tables
+  33 live tables
 - 82 explicit ORM indexes in the generated reference SQL
 - 51 check constraints in the live ORM expectations
 - 12 unique constraints in the live ORM expectations
@@ -80,6 +80,14 @@ This index provides a hierarchical guide to all authoritative design documents f
 - Deprecated parameter mappings
 
 **When to Reference**: Configuration loading, parameter validation, default values
+
+### 1.4 Configuration Payload Architecture
+**File**: `architecture/configuration_payload_architecture.md`  
+**Purpose**: Canonical JSONB payload grouped by domain, including export table
+allow-lists and naming rules.
+
+**When to Reference**: Configuration profile storage, web UI configuration
+editing, payload validation, and run snapshot creation.
 
 **📋 Key Parameter Categories**:
 - Global simulation parameters

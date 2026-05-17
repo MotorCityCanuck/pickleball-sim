@@ -33,15 +33,17 @@ class GenerationControlPlane:
         *,
         seed_value: int | None = None,
         parameter_snapshot: dict[str, Any] | None = None,
+        settings: SimulationSettings | None = None,
         session: Session | None = None,
     ) -> GenerationRun:
         with self._session_context(session) as active_session:
+            effective_settings = settings or self.settings
             generation_run = GenerationRun(
                 generation_name=generation_name,
                 seed_value=seed_value
                 if seed_value is not None
-                else self.settings.default_seed_value,
-                simulation_version=self.settings.simulation_version,
+                else effective_settings.default_seed_value,
+                simulation_version=effective_settings.simulation_version,
                 parameter_snapshot=parameter_snapshot,
                 status="pending",
             )

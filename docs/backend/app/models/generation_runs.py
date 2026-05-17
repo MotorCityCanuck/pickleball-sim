@@ -1,3 +1,4 @@
+from sqlalchemy import text
 """
 GenerationRun model - Represents a complete simulation scenario.
 
@@ -6,7 +7,7 @@ serves as the parent for all monthly batches.
 """
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger, Column, String, DateTime, CheckConstraint, Text
+    BigInteger, Column, String, DateTime, CheckConstraint, Index, Text
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -31,29 +32,14 @@ class GenerationRun(Base, TimestampMixin):
     generation_name = Column(String(255), nullable=False)
     seed_value = Column(BigInteger, nullable=False)
     simulation_version = Column(String(100))
-    parameter_snapshot = Column(JSONB)  # Full configuration as JSON
+    parameter_snapshot = Column(JSONB)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     status = Column(
         String(30),
         nullable=False,
         default='pending',
-        server_default='pending'
-    )
-    
-    # Relationships
-    monthly_batches = relationship(
-        'MonthlyBatch',
-        back_populates='generation_run',
-        cascade='all, delete-orphan'
-    )
-    players = relationship(
-        'Player',
-        back_populates='generation_run'
-    )
-    clubs = relationship(
-        'Club',
-        back_populates='generation_run'
+        server_default=text("'pending'")
     )
     
     # Constraints
@@ -62,6 +48,8 @@ class GenerationRun(Base, TimestampMixin):
             status.in_(['pending', 'running', 'completed', 'failed', 'cancelled']),
             name='chk_generation_status'
         ),
+        Index('idx_generation_runs_status', 'status'),
+        Index('idx_generation_runs_started', 'started_at'),
     )
     
     def __repr__(self) -> str:

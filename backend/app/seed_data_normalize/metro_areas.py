@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import RawMetroArea, Region
+from app.models import RawMetroArea, RawPickleballClubDistribution, Region
 
 from .base import SeedNormalizeResult, run_in_transaction
 
@@ -47,6 +47,9 @@ class MetroAreaNormalizer:
             )
 
             metro_areas = aggregate_raw_metro_areas(raw_rows)
+            metro_areas.extend(
+                fallback_regions_from_club_distributions(active_session, metro_areas)
+            )
             regions = [
                 Region(
                     country_code=metro_area.country_code,
@@ -80,7 +83,7 @@ class AggregatedMetroArea:
     state_province_code: str
     metro_area_name: str
     region_type: str
-    population: int
+    population: int | None
     selection_probability: Decimal
 
 
@@ -125,3 +128,42 @@ def infer_region_type(row: RawMetroArea) -> str:
             return "CA"
 
     return "metro"
+
+
+def fallback_regions_from_club_distributions(
+    session: Session,
+    metro_areas: list[AggregatedMetroArea],
+) -> list[AggregatedMetroArea]:
+    """Create fallback regions for positive club scopes absent from metro data."""
+    existing_scopes = {
+        (metro_area.country_code, metro_area.state_province_code)
+        for metro_area in metro_areas
+    }
+    fallback_regions: list[AggregatedMetroArea] = []
+
+    distributions = session.scalars(
+        select(RawPickleballClubDistribution)
+        .where(RawPickleballClubDistribution.target_club_count > 0)
+        .order_by(
+            RawPickleballClubDistribution.country_code,
+            RawPickleballClubDistribution.state_province_code,
+        )
+    )
+    for distribution in distributions:
+        scope = (distribution.country_code, distribution.state_province_code)
+        if scope in existing_scopes:
+            continue
+
+        fallback_regions.append(
+            AggregatedMetroArea(
+                country_code=distribution.country_code,
+                state_province_code=distribution.state_province_code,
+                metro_area_name=distribution.state_province_name,
+                region_type="territory",
+                population=None,
+                selection_probability=Decimal("0.00000000"),
+            )
+        )
+        existing_scopes.add(scope)
+
+    return fallback_regions

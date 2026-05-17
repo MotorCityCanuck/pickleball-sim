@@ -9,7 +9,7 @@
 > Historical note: this document captures the original Alembic-removal decision.
 > The active workflow is now ORM-first: SQLAlchemy metadata is the schema source
 > of truth, `backend/schema.sql` is generated from ORM metadata, and the live
-> schema currently contains 31 ORM-backed tables.
+> schema currently contains 33 ORM-backed tables.
 
 ---
 
@@ -129,20 +129,20 @@ Create `backend/schema.sql` with contents from `database/Pickleball_Simulation_D
 ```bash
 # Drop and recreate database (fresh start)
 docker exec -it pickleball-postgres psql -U postgres << EOF
-DROP DATABASE IF EXISTS pickleball_sim;
-CREATE DATABASE pickleball_sim;
+DROP DATABASE IF EXISTS pickleball;
+CREATE DATABASE pickleball;
 \q
 EOF
 
 # Apply schema
-docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim < backend/schema.sql
+docker exec -i pickleball-postgres psql -U postgres -d pickleball < backend/schema.sql
 ```
 
 ### 3. Verify Schema
 
 ```bash
-docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim << EOF
--- Should show 31 tables in the current ORM-backed schema
+docker exec -it pickleball-postgres psql -U postgres -d pickleball << EOF
+-- Should show 33 tables in the current ORM-backed schema
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 
 -- List all tables
@@ -185,7 +185,7 @@ def test_database_schema_exists():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 31, f"Expected 31 tables, found {len(tables)}"
+    assert len(tables) == 33, f"Expected 33 tables, found {len(tables)}"
     assert 'players' in tables
     assert 'player_rating_history' in tables
     assert 'monthly_batches' in tables

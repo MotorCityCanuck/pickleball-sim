@@ -1,37 +1,20 @@
-"""
-PlayerRatingHistory model - time-series player rating data.
-"""
+"""Player rating history model."""
 from sqlalchemy import (
-    BigInteger, Column, Date, Integer, String, Numeric, CheckConstraint, ForeignKey
+    Column, BigInteger, Date, String, Numeric, Integer, ForeignKey,
+    CheckConstraint, Index
 )
 from sqlalchemy.orm import relationship
+from .base import Base, TimestampMixin
 
-from .base import Base
 
-
-class PlayerRatingHistory(Base):
-    """
-    Historical rating records with effective dates.
+class PlayerRatingHistory(Base, TimestampMixin):
+    """Player rating history over time."""
     
-    Supports:
-    - Time-series analytics
-    - Rating evolution tracking
-    - Confidence modeling
-    - Point-in-time rating queries
+    __tablename__ = 'player_rating_history'
     
-    Critical: Never update historical records in place.
-    All corrections must append new records.
-    """
-    __tablename__ = "player_rating_history"
-    
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    player_id = Column(
-        BigInteger,
-        ForeignKey("players.id"),
-        nullable=False,
-        index=True
-    )
-    rating_date = Column(Date, nullable=False, index=True)
+    id = Column(BigInteger, primary_key=True)
+    player_id = Column(BigInteger, ForeignKey('players.id'), nullable=False)
+    rating_date = Column(Date, nullable=False)
     rating_type = Column(String(50), nullable=False)
     rating_value = Column(Numeric(8, 3), nullable=False)
     confidence_score = Column(Numeric(8, 3))
@@ -41,40 +24,17 @@ class PlayerRatingHistory(Base):
     global_percentile = Column(Numeric(5, 2))
     match_count_used = Column(Integer)
     calculation_version = Column(String(50))
-    batch_id = Column(
-        BigInteger,
-        ForeignKey("monthly_batches.id"),
-        nullable=False,
-        index=True
-    )
-    
-    # No created_at/updated_at from TimestampMixin - using custom created_at only
-    from sqlalchemy import DateTime
-    from sqlalchemy.sql import text
-    created_at = Column(
-        DateTime,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP")
-    )
+    batch_id = Column(BigInteger, ForeignKey('monthly_batches.id'), nullable=False)
     
     # Relationships
     player = relationship("Player", back_populates="rating_history")
-    batch = relationship("MonthlyBatch", back_populates="rating_updates")
+    batch = relationship("MonthlyBatch")
     
-    # Constraints
     __table_args__ = (
-        CheckConstraint(
-            "rating_value >= 0 AND rating_value <= 5000",
-            name="chk_rating_value"
-        ),
-        CheckConstraint(
-            "confidence_score >= 0 AND confidence_score <= 1",
-            name="chk_confidence_score"
-        ),
+        Index('idx_rating_player_date', 'player_id', rating_date.desc()),
+        Index('idx_rating_batch', 'batch_id'),
+        Index('idx_rating_date_type', 'rating_date', 'rating_type'),
+        Index('idx_rating_value', 'rating_value'),
+        CheckConstraint('rating_value >= 0 AND rating_value <= 5000', name='chk_rating_value'),
+        CheckConstraint('confidence_score >= 0 AND confidence_score <= 1', name='chk_confidence_score'),
     )
-    
-    def __repr__(self):
-        return (
-            f"<PlayerRatingHistory(player_id={self.player_id}, "
-            f"date={self.rating_date}, rating={self.rating_value})>"
-        )

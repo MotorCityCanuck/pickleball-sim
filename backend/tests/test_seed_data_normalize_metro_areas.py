@@ -41,6 +41,24 @@ def session_factory():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE raw_pickleball_club_distributions (
+                id integer primary key autoincrement,
+                load_run_id bigint not null,
+                source_file varchar(500) not null,
+                source_row_number integer not null,
+                raw_payload text not null,
+                country_code varchar(2) not null,
+                state_province_code varchar(10) not null,
+                state_province_name varchar(255) not null,
+                target_club_count integer not null,
+                source_dataset varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE regions (
                 id integer primary key autoincrement,
                 country_code varchar(10) not null,
@@ -114,6 +132,51 @@ def insert_raw_metro(
             "metro_area_name": metro_area_name,
             "population": population,
             "selection_probability": selection_probability,
+        },
+    )
+    session.commit()
+
+
+def insert_club_distribution(
+    session,
+    *,
+    country_code: str,
+    state_province_code: str,
+    state_province_name: str,
+    target_club_count: int,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_pickleball_club_distributions (
+                load_run_id,
+                source_file,
+                source_row_number,
+                raw_payload,
+                country_code,
+                state_province_code,
+                state_province_name,
+                target_club_count,
+                source_dataset
+            )
+            VALUES (
+                1,
+                'club_distribution.csv',
+                2,
+                '{}',
+                :country_code,
+                :state_province_code,
+                :state_province_name,
+                :target_club_count,
+                'test'
+            )
+            """
+        ),
+        {
+            "country_code": country_code,
+            "state_province_code": state_province_code,
+            "state_province_name": state_province_name,
+            "target_club_count": target_club_count,
         },
     )
     session.commit()
@@ -236,3 +299,39 @@ def test_aggregates_duplicate_raw_region_natural_keys(session):
     assert region.region_name == "Springfield"
     assert region.population == 2000
     assert region.selection_probability == Decimal("0.20000000")
+
+
+def test_adds_fallback_regions_for_positive_club_distribution_scopes(session):
+    insert_raw_metro(
+        session,
+        country_code="CA",
+        state_province_code="ON",
+        metro_area_name="Ottawa-Gatineau (CMA), Ontario",
+        population=1488307,
+        selection_probability="0.08000000",
+    )
+    insert_club_distribution(
+        session,
+        country_code="CA",
+        state_province_code="NU",
+        state_province_name="Nunavut",
+        target_club_count=1,
+    )
+
+    result = MetroAreaNormalizer().normalize(
+        replace_production=True,
+        session=session,
+    )
+
+    assert result.rows_read == 1
+    assert result.rows_loaded == 2
+
+    nunavut = (
+        session.query(Region)
+        .filter_by(country_code="CA", state_province_code="NU")
+        .one()
+    )
+    assert nunavut.region_name == "Nunavut"
+    assert nunavut.region_type == "territory"
+    assert nunavut.population is None
+    assert nunavut.selection_probability == Decimal("0E-8")

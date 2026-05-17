@@ -125,16 +125,16 @@ python backend/scripts/export_schema_from_orm.py
 ### Verify Database Schema
 
 ```bash
-docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim
+docker exec -it pickleball-postgres psql -U postgres -d pickleball
 ```
 ```sql
-\dt                    -- List all tables (should see 31)
+\dt                    -- List all tables (should see 33)
 \d players             -- Describe players table
 \d+ players            -- Detailed view with constraints
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 \q
 ```
-- [ ] All 31 ORM-backed tables created
+- [ ] All 33 ORM-backed tables created
 - [ ] Constraints applied correctly
 - [ ] Indexes created
 - [ ] Foreign keys established
@@ -175,8 +175,8 @@ Based on `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
 
 ### Reference Data Models (Priority 5)
 
-- [ ] `backend/app/models/first_names.py`
-- [ ] `backend/app/models/last_names.py`
+- [x] `backend/app/models/first_names.py`
+- [x] `backend/app/models/last_names.py`
 
 ### Operational Models (Priority 6)
 
@@ -387,8 +387,8 @@ Phase 1 is complete when:
 - [ ] Python virtual environment created
 - [ ] All dependencies installed
 - [ ] `backend/schema.sql` generated from ORM metadata
-- [ ] All 31 SQLAlchemy models created
-- [ ] Schema applied to database (all 31 tables exist)
+- [ ] All 33 SQLAlchemy models created
+- [ ] Schema applied to database (all 33 tables exist)
 - [ ] Database session management working
 - [ ] Configuration system working
 - [ ] Basic tests passing
