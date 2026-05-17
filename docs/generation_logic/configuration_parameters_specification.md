@@ -49,7 +49,19 @@
 | `player_age_distribution_45_59` | DECIMAL | 0.32 | 0.0-1.0 | probability | Age cohort 45-59 weight |
 | `player_age_distribution_60_74` | DECIMAL | 0.34 | 0.0-1.0 | probability | Age cohort 60-74 weight |
 | `player_age_distribution_75_plus` | DECIMAL | 0.08 | 0.0-1.0 | probability | Age cohort 75+ weight |
-| `dominant_hand_right_probability` | DECIMAL | 0.90 | 0.5-1.0 | probability | Right-handed player probability |
+| `dominant_hand_right_probability` | DECIMAL | 0.88 | 0.5-1.0 | probability | Right-handed player probability |
+| `dominant_hand_left_probability` | DECIMAL | 0.10 | 0.0-0.5 | probability | Left-handed player probability |
+| `dominant_hand_ambidextrous_probability` | DECIMAL | 0.02 | 0.0-0.1 | probability | Ambidextrous player probability |
+| `player_status_active_probability` | DECIMAL | 0.94 | 0.0-1.0 | probability | Initial active player status probability |
+| `player_status_injured_probability` | DECIMAL | 0.02 | 0.0-0.2 | probability | Initial injured player status probability |
+| `player_status_retired_probability` | DECIMAL | 0.02 | 0.0-0.2 | probability | Initial retired player status probability |
+| `player_status_inactive_probability` | DECIMAL | 0.02 | 0.0-0.2 | probability | Initial inactive player status probability |
+| `initial_skill_seed_mean` | DECIMAL | 1500.0 | 500-3500 | skill_points | Mean initial hidden skill seed |
+| `initial_skill_seed_std_dev` | DECIMAL | 275.0 | 25-1000 | skill_points | Standard deviation for initial hidden skill seed |
+| `initial_skill_seed_lower_bias` | DECIMAL | 100.0 | 0-500 | skill_points | Downward bias applied after sampling to modestly favor lower initial skill |
+| `initial_skill_seed_min` | DECIMAL | 500.0 | 0-3500 | skill_points | Minimum initial hidden skill seed |
+| `initial_skill_seed_max` | DECIMAL | 3500.0 | 500-5000 | skill_points | Maximum initial hidden skill seed |
+| `name_assignment_noise_rate` | DECIMAL | 0.03 | 0.0-0.10 | probability | Small probability of intentionally imperfect regional name selection |
 
 ---
 
@@ -189,8 +201,12 @@
 | `export_format_primary` | ENUM | "parquet" | parquet, csv, json | - | Primary export format |
 | `export_partition_strategy` | ENUM | "monthly" | none, monthly, regional, hybrid | - | Parquet partitioning strategy |
 | `export_compression_codec` | ENUM | "snappy" | snappy, gzip, zstd, none | - | Compression algorithm |
-| `include_instructor_only_tables` | BOOLEAN | false | true, false | - | Export hidden truth tables |
+| `export_included_table_groups` | ARRAY | ["student_core"] | student_core, reference, operational, raw_seed, audit, simulation_truth | - | Named export table groups to include |
+| `export_included_tables` | ARRAY | [] | table names | - | Explicit table allow-list; when populated, it overrides table groups |
 | `export_batch_on_completion` | BOOLEAN | true | true, false | - | Auto-export after validation |
+
+Exports use explicit allow-lists. Instructor or audit datasets are included only
+when their table group or table name is explicitly listed.
 
 ---
 
@@ -244,6 +260,19 @@ simulation:
 player_generation:
   monthly_player_growth_rate: 0.02
   player_age_distribution_45_59: 0.32
+  dominant_hand_right_probability: 0.88
+  dominant_hand_left_probability: 0.10
+  dominant_hand_ambidextrous_probability: 0.02
+  player_status_active_probability: 0.94
+  player_status_injured_probability: 0.02
+  player_status_retired_probability: 0.02
+  player_status_inactive_probability: 0.02
+  initial_skill_seed_mean: 1500.0
+  initial_skill_seed_std_dev: 275.0
+  initial_skill_seed_lower_bias: 100.0
+  initial_skill_seed_min: 500.0
+  initial_skill_seed_max: 3500.0
+  name_assignment_noise_rate: 0.03
   initial_rating_mean: 1500.0
   initial_rating_std_dev: 200.0
 
@@ -268,6 +297,16 @@ validation:
   validation_strictness: "standard"
   weekend_concentration_min: 0.40
   weekend_concentration_max: 0.60
+
+export:
+  export_format_primary: "parquet"
+  export_partition_strategy: "monthly"
+  export_compression_codec: "snappy"
+  export_included_table_groups:
+    - "student_core"
+    - "reference"
+  export_included_tables: []
+  export_batch_on_completion: true
 ```
 
 ### JSON Example
@@ -281,10 +320,28 @@ validation:
   },
   "player_generation": {
     "monthly_player_growth_rate": 0.02,
+    "dominant_hand_right_probability": 0.88,
+    "dominant_hand_left_probability": 0.10,
+    "dominant_hand_ambidextrous_probability": 0.02,
+    "player_status_active_probability": 0.94,
+    "player_status_injured_probability": 0.02,
+    "player_status_retired_probability": 0.02,
+    "player_status_inactive_probability": 0.02,
+    "initial_skill_seed_mean": 1500.0,
+    "initial_skill_seed_std_dev": 275.0,
+    "initial_skill_seed_lower_bias": 100.0,
     "initial_rating_mean": 1500.0
   },
   "match_scheduling": {
     "weekend_concentration_bias": 1.75
+  },
+  "export": {
+    "export_format_primary": "parquet",
+    "export_partition_strategy": "monthly",
+    "export_compression_codec": "snappy",
+    "export_included_table_groups": ["student_core", "reference"],
+    "export_included_tables": [],
+    "export_batch_on_completion": true
   }
 }
 ```
@@ -297,31 +354,64 @@ All configuration parsers must enforce:
 
 1. **Required parameters**: `master_seed`, `simulation_name`, `target_total_players`
 2. **Range validation**: All numeric parameters within documented ranges
-3. **Probability sum validation**: All distribution parameters sum to 1.0 ± 0.01
+3. **Probability sum validation**: All distribution groups sum to 1.0 ± 0.01,
+   including gender, dominant hand, player status, club size, match type, and
+   matchmaking quality distributions.
 4. **Consistency checks**: 
    - `rating_min` < `initial_rating_mean` < `rating_max`
    - `player_age_min` < `player_age_max`
    - `confidence_min` < `initial_confidence_score` < `confidence_max`
+   - `initial_skill_seed_min` < `initial_skill_seed_mean` < `initial_skill_seed_max`
+   - `initial_skill_seed_std_dev` > 0
+   - `initial_skill_seed_lower_bias` >= 0
+   - `export_included_table_groups` values must be known group names
+   - `export_included_tables` values must be known ORM table names
 5. **Type validation**: Enums must match exact string values
 6. **Mutual exclusivity**: Some parameters are mutually exclusive (documented per parameter)
 
 ---
 
-## 17. Configuration Precedence
+## 17. Configuration Repository Storage
+
+Configuration is stored in the database as versioned profile payloads so a
+future web UI can create, edit, validate, and activate configurations without
+schema changes for every individual parameter.
+
+- `configuration_profiles` stores named configuration profiles and whether a
+  profile is active.
+- `configuration_profile_versions` stores immutable versioned JSONB payloads
+  in `config_payload`, with a `config_schema_version` and validation status.
+- Individual configuration parameters are keys inside `config_payload`, not
+  columns on `configuration_profile_versions`.
+- `generation_runs.parameter_snapshot` stores the frozen effective
+  configuration used by a specific generation run after defaults,
+  profile values, environment overrides, UI overrides, and command-line
+  arguments are resolved.
+- A generation run must never depend on mutable profile state after it starts;
+  it must copy the resolved configuration into `parameter_snapshot`.
+- The canonical payload shape and grouped sample JSON are defined in
+  [Configuration Payload Architecture](../architecture/configuration_payload_architecture.md).
+
+This structure supports profile-level reloads, version history, rollback by
+selecting an earlier version, web-based editing, and future schema migrations
+inside the JSON payload.
+
+## 18. Configuration Precedence
 
 When loading configuration:
 
 1. **Default values** (documented in this specification)
-2. **Configuration file** (YAML/JSON)
-3. **Environment variables** (prefixed with `PBSIM_`)
-4. **UI overrides** (submitted through web control panel)
-5. **Command-line arguments** (highest precedence)
+2. **Configuration profile version** (`configuration_profile_versions.config_payload`)
+3. **Configuration file** (YAML/JSON, for development or import/export)
+4. **Environment variables** (prefixed with `PBSIM_`)
+5. **UI overrides** (submitted through web control panel)
+6. **Command-line arguments** (highest precedence)
 
 Example environment variable: `PBSIM_MASTER_SEED=12345`
 
 ---
 
-## 18. Deprecated Parameters
+## 19. Deprecated Parameters
 
 ### Removed in v1.0
 
@@ -329,12 +419,17 @@ Example environment variable: `PBSIM_MASTER_SEED=12345`
 |--------------------|-------------|---------|
 | `monthly_growth_rate` | `monthly_player_growth_rate` | Naming clarity |
 | `weekend_bias` | `weekend_concentration_bias` | Naming consistency |
+| `weekend_bias_multiplier` | `weekend_concentration_bias` | Naming consistency |
+| `date_noise_level` | `date_allocation_noise_level` | Naming consistency |
 | `regional_multiplier` | `competitiveness_multiplier_default` | Naming precision |
 | `rating_noise_factor` | `rating_noise_std_dev` | Unit specification |
+| `initial_rating_sd` | `initial_rating_std_dev` | Unit specification |
+| `initial_confidence` | `initial_confidence_score` | Naming precision |
+| `include_instructor_only_tables` | `export_included_table_groups` or `export_included_tables` | Explicit export allow-list |
 
 ---
 
-## 19. Future Configuration Extensions
+## 20. Future Configuration Extensions
 
 Planned parameters for future versions:
 
@@ -349,7 +444,7 @@ Planned parameters for future versions:
 
 ---
 
-## 20. Configuration Schema Versioning
+## 21. Configuration Schema Versioning
 
 This configuration specification is versioned separately from the platform version.
 

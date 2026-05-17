@@ -625,7 +625,7 @@ visible while exact day selection varies between simulation runs.
   -------------------------------------------------------------------------------
   **Configuration Field**         **Purpose**             **Example Value**
   ------------------------------- ----------------------- -----------------------
-  weekend_bias_multiplier         Increases Saturday and  1.75
+  weekend_concentration_bias      Increases Saturday and  1.75
                                   Sunday allocation       
                                   probability.            
 
@@ -647,7 +647,7 @@ visible while exact day selection varies between simulation runs.
   tournament_weekend_multiplier   Creates strong weekend  2.50
                                   tournament clustering.  
 
-  date_noise_level                Controls stochastic     medium
+  date_allocation_noise_level     Controls stochastic     medium
                                   variation in daily      
                                   assignment.             
 

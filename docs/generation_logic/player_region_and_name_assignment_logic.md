@@ -119,7 +119,7 @@ only. Player generation must persist final player identity values in
 # 6. Recommended Regional Assignment Formula
 
 - regional_player_target = regional_population × participation_rate ×
-  regional_multiplier
+  competitiveness_multiplier
 
 - Where:
 
@@ -127,7 +127,7 @@ only. Player generation must persist final player identity values in
 
 - participation_rate = estimated pickleball participation rate
 
-- regional_multiplier = competitiveness or retirement-area adjustment
+- competitiveness_multiplier = competitiveness or retirement-area adjustment
 
 # 7. Recommended Regional Multipliers
 

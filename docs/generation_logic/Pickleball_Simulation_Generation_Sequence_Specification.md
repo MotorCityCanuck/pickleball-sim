@@ -134,17 +134,20 @@ ranges, and freeze the effective configuration for the run.
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Inputs**                          configuration file; optional UI
-                                      overrides; environment variables
+  **Inputs**                          configuration profile version;
+                                      optional configuration file;
+                                      optional UI overrides; environment
+                                      variables
 
   **Outputs**                         effective SimulationConfig;
                                       configuration audit report
 
   **Must run after**                  Create Simulation Run
 
-  **Success criteria**                Configuration is valid and
-                                      persisted as the run configuration
-                                      snapshot.
+  **Success criteria**                Configuration is valid and the
+                                      resolved effective payload is
+                                      persisted to
+                                      generation_runs.parameter_snapshot.
   -----------------------------------------------------------------------
 
 ### Validation Gates
