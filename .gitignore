@@ -1,0 +1,3 @@
+# Local raw data staging. Keep source datasets out of git.
+data/raw/
+raw_data/

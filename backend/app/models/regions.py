@@ -33,6 +33,7 @@ class Region(Base, TimestampMixin):
     region_name = Column(String(255), nullable=False)
     state_province_code = Column(String(10))
     population = Column(BigInteger)
+    selection_probability = Column(Numeric(12, 8))
     competitiveness_multiplier = Column(
         Numeric(8, 4),
         default=1.0,

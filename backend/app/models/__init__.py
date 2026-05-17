@@ -23,6 +23,14 @@ from .uploaded_files import UploadedFile
 from .export_runs import ExportRun
 from .validation_results import ValidationResult
 from .job_status import JobStatus
+from .raw_seed_load_runs import RawSeedLoadRun
+from .raw_seed_load_errors import RawSeedLoadError
+from .raw_metro_areas import RawMetroArea
+from .raw_pickleball_club_names import RawPickleballClubName
+from .raw_pickleball_club_distributions import RawPickleballClubDistribution
+from .raw_first_names import RawFirstName
+from .raw_last_names import RawLastName
+from .raw_state_prov_biases import RawStateProvBias
 
 __all__ = [
     'Base',
@@ -50,4 +58,12 @@ __all__ = [
     'ExportRun',
     'ValidationResult',
     'JobStatus',
+    'RawSeedLoadRun',
+    'RawSeedLoadError',
+    'RawMetroArea',
+    'RawPickleballClubName',
+    'RawPickleballClubDistribution',
+    'RawFirstName',
+    'RawLastName',
+    'RawStateProvBias',
 ]

@@ -15,6 +15,8 @@ class LastName(Base, TimestampMixin):
     state_province_code = Column(String(2), nullable=False)
     last_name = Column(String(100), nullable=False)
     frequency_count = Column(Integer, nullable=False)
+    bias_multiplier = Column(Numeric(10, 4))
+    adjusted_frequency_count = Column(Numeric(18, 4))
     normalized_probability = Column(Numeric(12, 8))
     source_dataset = Column(String(255))
     
