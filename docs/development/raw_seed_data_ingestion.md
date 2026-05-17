@@ -630,6 +630,11 @@ Input:
   `raw_pickleball_club_distributions`, or an explicit state/province
   list.
 
+First implementation note:
+
+- Use distinct `regions(country_code, state_province_code)` rows as the
+  target state/province scope.
+
 Output:
 
 - `last_names`
