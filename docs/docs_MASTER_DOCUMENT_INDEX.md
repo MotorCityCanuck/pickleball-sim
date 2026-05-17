@@ -48,10 +48,11 @@ This index provides a hierarchical guide to all authoritative design documents f
 **File**: `database/Pickleball_Simulation_Database_Design_v3.md`  
 **Purpose**: Authoritative schema definition and data model  
 **Key Sections**:
-- Complete DDL for 22 tables
-- 59 indexes
-- 31 check constraints
-- 9 unique constraints
+- Complete DDL for the core schema, with ORM-generated reference SQL covering
+  31 live tables
+- 82 explicit ORM indexes in the generated reference SQL
+- 51 check constraints in the live ORM expectations
+- 12 unique constraints in the live ORM expectations
 - 35 validation rules
 - Parquet export strategy
 - Medallion architecture (Bronze/Silver/Gold)

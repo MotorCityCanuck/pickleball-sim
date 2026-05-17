@@ -28,7 +28,8 @@ The project uses an ORM-first database strategy during active development.
 
 ## Current Live Model Scope
 
-The current live schema and ORM define 23 tables:
+The current live schema and ORM define 31 tables: 23 core platform tables plus
+8 raw seed-data staging tables.
 
 1. `generation_runs`
 2. `regions`
@@ -53,6 +54,14 @@ The current live schema and ORM define 23 tables:
 21. `export_runs`
 22. `validation_results`
 23. `job_status`
+24. `raw_seed_load_runs`
+25. `raw_seed_load_errors`
+26. `raw_metro_areas`
+27. `raw_pickleball_club_names`
+28. `raw_pickleball_club_distributions`
+29. `raw_first_names`
+30. `raw_last_names`
+31. `raw_state_prov_biases`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

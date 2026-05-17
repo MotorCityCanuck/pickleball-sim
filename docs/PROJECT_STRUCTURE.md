@@ -193,7 +193,7 @@ pickleball-sim/
 |-----------|---------|----------|--------|
 | `backend/app/core/` | Configuration and settings | 🔴 Critical | TODO |
 | `backend/app/db/` | Database session management | 🔴 Critical | TODO |
-| `backend/app/models/` | SQLAlchemy ORM models (22 tables) | 🔴 Critical | TODO |
+| `backend/app/models/` | SQLAlchemy ORM models (31 tables) | 🔴 Critical | TODO |
 | `backend/app/repositories/` | Data access layer | 🟠 High | TODO |
 | `backend/app/generators/` | Data generation modules | 🟠 High | TODO |
 | `backend/app/simulations/` | Match/score simulation | 🟠 High | TODO |
@@ -276,7 +276,7 @@ pickleball-sim/
    python backend/scripts/recreate_db_from_orm.py
    ```
 
-4. Create all 22 SQLAlchemy models in `backend/app/models/`
+4. Maintain all 31 SQLAlchemy models in `backend/app/models/`
 
 5. Generate reference SQL from ORM metadata
 

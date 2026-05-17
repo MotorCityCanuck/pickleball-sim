@@ -177,11 +177,11 @@ Configuration → Monthly Batch Processor
 
 ## Database Schema
 
-23 core tables organized into layers:
+31 ORM-backed tables organized into layers:
 
-- **Bronze**: Raw ingestion (`uploaded_files`)
+- **Bronze**: Raw ingestion and staging (`uploaded_files`, `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases`)
 - **Silver**: Validated entities (`players`, `clubs`, `teams`, `regions`)
-- **Gold**: Analytics-ready (`player_rating_history`, `matches`, `monthly_batches`)
+- **Gold**: Analytics-ready (`player_rating_history`, `matches`, `match_games`, `monthly_batches`)
 - **Operational**: Platform metadata (`generation_runs`, `validation_results`, `job_status`)
 
 See [Database Design](database/Pickleball_Simulation_Database_Design_v3.md) for complete DDL.

@@ -1,7 +1,43 @@
 # Next Steps - Post-Alembic Architecture
 
 **Date**: 2024-05-15  
-**Status**: Ready to implement hybrid DDL + SQLAlchemy approach
+**Status**: Superseded by ORM-first schema recreation and generated reference SQL
+
+> Historical note: this checklist documents the transition away from Alembic.
+> The current workflow uses SQLAlchemy ORM metadata as the schema source of
+> truth, `backend/scripts/recreate_db_from_orm.py` for destructive development
+> database recreation, and `backend/scripts/export_schema_from_orm.py` to
+> generate `backend/schema.sql`.
+
+## Current State
+
+- Alembic is not part of the active schema workflow.
+- `backend/schema.sql` is generated from ORM metadata and must not be edited by
+  hand.
+- The live ORM currently defines 31 tables: 23 core platform tables plus 8 raw
+  seed-data staging tables.
+- Consistency expectations live in `backend/tests/schema_expectations.py`.
+- Use `../.venv/bin/python -m pytest -q` from `backend/` for the normal test
+  suite.
+
+## Current Commands
+
+```bash
+cd backend
+
+# Recreate a local development database from ORM metadata.
+../.venv/bin/python scripts/recreate_db_from_orm.py --yes
+
+# Regenerate reference SQL from ORM metadata.
+../.venv/bin/python scripts/export_schema_from_orm.py
+
+# Run offline consistency and unit tests.
+../.venv/bin/python -m pytest -q
+```
+
+---
+
+The original checklist below is retained for historical context only.
 
 ---
 
@@ -55,7 +91,7 @@ CREATE TABLE player_rating_history (...);
 CREATE TABLE player_assessment_history (...);
 CREATE TABLE player_registrations (...);
 
--- [... continue for all 22 tables ...]
+-- [... historical example originally continued for the then-current core tables ...]
 
 -- ============================================
 -- Indexes (Section 12)
@@ -80,7 +116,8 @@ docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "\dt"
 docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim -c "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public';"
 ```
 
-**Expected output**: 22 tables
+**Historical expected output**: 22 tables at the time of this checklist.
+Current ORM-backed schema expectation: 31 tables.
 
 ### Action 4: Fix Priority 2 Models (10 minutes)
 
@@ -168,11 +205,11 @@ def test_database_connection():
 
 
 def test_all_tables_exist():
-    """Verify all 22 tables were created."""
+    """Verify all ORM-backed tables were created."""
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 22, f"Expected 22 tables, found {len(tables)}: {tables}"
+    assert len(tables) == 31, f"Expected 31 tables, found {len(tables)}: {tables}"
     
     # Check key tables
     expected_tables = [
@@ -235,7 +272,7 @@ pytest tests/test_database_setup.py -v
 - [ ] Create `backend/schema.sql` from database design doc
 - [ ] Drop and recreate database
 - [ ] Apply schema (`psql -f schema.sql`)
-- [ ] Verify 22 tables exist
+- [ ] Verify 31 tables exist
 - [ ] Test Priority 1+2 model imports
 - [ ] Create `backend/app/db/session.py`
 - [ ] Create `backend/app/db/__init__.py`

@@ -5,7 +5,9 @@ generation-design documents.
 
 ## Current ORM Scope
 
-Before this assessment, the live ORM defined 22 tables:
+The live ORM now defines 31 tables: 23 core platform tables plus 8 raw
+seed-data staging tables. Before the `match_games` assessment, the live ORM
+defined these 22 core tables:
 
 1. `generation_runs`
 2. `regions`
@@ -49,7 +51,7 @@ Without `match_games`, the platform has no stable place to persist:
 - score-level noise metrics
 - chronological game result data used by rating updates
 
-Status: implemented as the 23rd ORM table.
+Status: implemented as the 23rd core ORM table.
 
 ## Existing Coverage
 
@@ -71,6 +73,10 @@ The following documented concepts already have ORM coverage:
 - consolidated name reference data: `first_names`, `last_names`
 - operational metadata: `uploaded_files`, `export_runs`, `validation_results`,
   `job_status`
+- raw seed-data ingestion staging: `raw_seed_load_runs`,
+  `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`,
+  `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`,
+  `raw_state_prov_biases`
 
 ## Deferred Optional Gaps
 
@@ -90,11 +96,16 @@ should not be implemented before `match_games`:
   parameter snapshots on `generation_runs`; normalized configuration tables can
   wait until the configuration API stabilizes.
 
-## Recommended Implementation Order
+## Completed Follow-Up
 
 1. Regenerate `backend/schema.sql` from ORM metadata.
 2. Extend ORM consistency expectations for the new table, indexes,
    constraints, and foreign key.
 3. Add a live smoke test proving game score constraints are enforced.
-4. Reassess whether team chemistry or hidden truth state should come next after
-   the match simulation pipeline has a complete persistence path.
+
+## Recommended Next Reassessment
+
+Reassess whether team chemistry or hidden truth state should come next after
+the match simulation pipeline has a complete persistence path. The immediate
+implementation path should first make the existing raw seed-data staging schema
+usable through ingestion and normalization modules.

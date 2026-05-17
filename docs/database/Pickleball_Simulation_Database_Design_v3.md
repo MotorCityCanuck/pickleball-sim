@@ -766,6 +766,52 @@ CONSTRAINT chk_match_type CHECK (match_type IN ('recreational', 'league', 'ladde
 
 \-\--
 
+## 11.3a match_games
+
+CREATE TABLE match_games (
+
+id BIGSERIAL PRIMARY KEY,
+
+match_id BIGINT NOT NULL REFERENCES matches(id),
+
+game_number INTEGER NOT NULL,
+
+team_one_score INTEGER NOT NULL,
+
+team_two_score INTEGER NOT NULL,
+
+winning_team_number INTEGER NOT NULL,
+
+target_score INTEGER NOT NULL DEFAULT 11,
+
+win_by INTEGER NOT NULL DEFAULT 2,
+
+expected_team_one_score_share NUMERIC(8,4),
+
+actual_team_one_score_share NUMERIC(8,4),
+
+score_noise_factor NUMERIC(8,3),
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+CONSTRAINT uq_match_game_number UNIQUE (match_id, game_number),
+
+CONSTRAINT chk_game_number CHECK (game_number >= 1),
+
+CONSTRAINT chk_game_scores_nonnegative CHECK (team_one_score >= 0 AND team_two_score >= 0),
+
+CONSTRAINT chk_game_winning_team CHECK (winning_team_number IN (1, 2)),
+
+CONSTRAINT chk_game_target_score CHECK (target_score IN (11, 15, 21)),
+
+CONSTRAINT chk_game_win_by CHECK (win_by >= 1)
+
+);
+
+\-\--
+
 ## 11.4 match_teams
 
 CREATE TABLE match_teams (
@@ -1391,6 +1437,10 @@ CREATE INDEX idx_matches_batch ON matches(batch_id);
 CREATE INDEX idx_matches_region ON matches(region_id);
 CREATE INDEX idx_matches_tournament ON matches(tournament_id);
 CREATE INDEX idx_matches_type ON matches(match_type);
+
+-- match_games indexes
+CREATE INDEX idx_match_games_match ON match_games(match_id);
+CREATE INDEX idx_match_games_winner ON match_games(winning_team_number);
 
 -- match_teams indexes
 CREATE INDEX idx_match_teams_match ON match_teams(match_id);

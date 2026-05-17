@@ -6,6 +6,11 @@
 **Date**: 2024-05-15  
 **Decision**: Remove Alembic from architecture in favor of direct DDL execution
 
+> Historical note: this document captures the original Alembic-removal decision.
+> The active workflow is now ORM-first: SQLAlchemy metadata is the schema source
+> of truth, `backend/schema.sql` is generated from ORM metadata, and the live
+> schema currently contains 31 ORM-backed tables.
+
 ---
 
 ## Rationale
@@ -13,7 +18,8 @@
 Alembic added unnecessary complexity for this project because:
 
 1. **This is a data generation platform**, not a SaaS app with evolving schemas
-2. **Schema is fully designed upfront** - all 22 tables documented in DDL
+2. **Schema is fully designed upfront** - the original core tables were
+   documented in DDL
 3. **No incremental migrations needed** - students will drop/recreate databases
 4. **Alembic's value proposition doesn't apply**:
    - No production schema evolution
@@ -30,9 +36,9 @@ Alembic added unnecessary complexity for this project because:
 ## New Approach: Hybrid DDL + SQLAlchemy
 
 ### Schema Management
-- **Source of truth**: DDL in `database/Pickleball_Simulation_Database_Design_v3.md` Section 11
-- **Execution**: Direct SQL via `psql` or `docker exec`
-- **File**: `backend/schema.sql` (extracted from database design doc)
+- **Source of truth**: SQLAlchemy ORM metadata under `backend/app/models`
+- **Execution**: `backend/scripts/recreate_db_from_orm.py`
+- **File**: `backend/schema.sql` (generated from ORM metadata)
 
 ### SQLAlchemy Usage
 - **Purpose**: Queries and data access only
@@ -136,7 +142,7 @@ docker exec -i pickleball-postgres psql -U postgres -d pickleball_sim < backend/
 
 ```bash
 docker exec -it pickleball-postgres psql -U postgres -d pickleball_sim << EOF
--- Should show 22 tables
+-- Should show 31 tables in the current ORM-backed schema
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 
 -- List all tables
@@ -179,7 +185,7 @@ def test_database_schema_exists():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 22, f"Expected 22 tables, found {len(tables)}"
+    assert len(tables) == 31, f"Expected 31 tables, found {len(tables)}"
     assert 'players' in tables
     assert 'player_rating_history' in tables
     assert 'monthly_batches' in tables

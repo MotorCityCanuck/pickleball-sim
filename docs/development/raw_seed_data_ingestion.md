@@ -8,9 +8,10 @@ models under `backend/app/models` are the source of truth for schema.
 `backend/schema.sql` is generated from ORM metadata and must not be
 hand-edited.
 
-This is a design/specification document. ORM models, schema generation,
-and loader implementation should begin only after this document is
-reviewed.
+This is a design/specification document. The raw staging ORM models and
+generated schema have been implemented; loader and normalization
+implementation should follow this document while preserving the boundaries
+below.
 
 ## 1. Design Goals
 
