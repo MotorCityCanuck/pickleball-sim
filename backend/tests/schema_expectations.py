@@ -197,7 +197,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         ("load_run_id", "country_code", "state_province_code"),
     },
     "raw_pickleball_club_names": {("load_run_id", "club_seed")},
-    "regions": {("country_code", "region_name")},
+    "regions": {("country_code", "state_province_code", "region_name")},
     "team_memberships": {("team_id", "player_id", "joined_date")},
 }
 

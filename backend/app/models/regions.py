@@ -46,8 +46,9 @@ class Region(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint(
             'country_code',
+            'state_province_code',
             'region_name',
-            name='uq_region_country_name'
+            name='uq_region_country_state_name'
         ),
     )
     

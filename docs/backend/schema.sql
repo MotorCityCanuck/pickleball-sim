@@ -20,12 +20,13 @@ CREATE TABLE regions (
     region_name VARCHAR(255) NOT NULL,
     state_province_code VARCHAR(10),
     population BIGINT,
+    selection_probability NUMERIC(12,8),
     competitiveness_multiplier NUMERIC(8,4) DEFAULT 1.0,
     latitude NUMERIC(10,6),
     longitude NUMERIC(10,6),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (country_code, region_name)
+    UNIQUE (country_code, state_province_code, region_name)
 );
 
 -- 3. monthly_batches

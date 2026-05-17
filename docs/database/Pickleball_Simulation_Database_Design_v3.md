@@ -878,6 +878,8 @@ state_province_code VARCHAR(10),
 
 population BIGINT,
 
+selection_probability NUMERIC(12,8),
+
 competitiveness_multiplier NUMERIC(8,4) DEFAULT 1.0,
 
 latitude NUMERIC(10,6),
@@ -888,7 +890,7 @@ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-UNIQUE (country_code, region_name)
+UNIQUE (country_code, state_province_code, region_name)
 
 );
 
@@ -2146,7 +2148,7 @@ easier to explain to students, and easier to extend.
 **REQUIRED**: Natural business keys must be enforced with unique constraints:
 
 - `players.external_player_key` must be UNIQUE
-- `regions(country_code, region_name)` must be UNIQUE
+- `regions(country_code, state_province_code, region_name)` must be UNIQUE
 - `clubs(region_id, club_name)` must be UNIQUE
 - `monthly_batches(generation_run_id, batch_month)` must be UNIQUE
 

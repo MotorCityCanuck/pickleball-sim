@@ -64,7 +64,7 @@ A comprehensive review of all design documents identified **15 critical inconsis
 UNIQUE (external_player_key)
 
 -- regions table
-UNIQUE (country_code, region_name)
+UNIQUE (country_code, state_province_code, region_name)
 
 -- clubs table
 UNIQUE (region_id, club_name)

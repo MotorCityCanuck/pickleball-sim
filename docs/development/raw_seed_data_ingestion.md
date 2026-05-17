@@ -77,6 +77,12 @@ Proposed package:
 
 ```text
 backend/app/seed_data_normalize/
+  __init__.py
+  base.py
+  metro_areas.py
+  first_names.py
+  last_names.py
+  pickleball_clubs.py
 ```
 
 Responsibilities:
@@ -682,16 +688,22 @@ Recommended first-pass behavior:
 
 - Create or refresh one `regions` row per metro area.
 
+- If multiple raw rows share the same production metro-area natural key
+  (`country_code`, `state_province_code`, `metro_area_name`), aggregate
+  them into one production `regions` row by summing `population` and
+  `selection_probability`.
+
 - Map:
   - `country_code` -> `regions.country_code`
   - `state_province_code` -> `regions.state_province_code`
   - `metro_area_name` -> `regions.region_name`
   - `population` -> `regions.population`
+  - `selection_probability` -> `regions.selection_probability`
 
 - Store `region_type` as a stable value such as `metro`.
 
-- Store `selection_probability` in production `regions`. This requires a
-  new nullable `regions.selection_probability NUMERIC(12,8)` ORM column.
+- Enforce metro-area uniqueness by country, state/province, and region name:
+  `regions(country_code, state_province_code, region_name)`.
 
 ### 7.4 Club Normalization
 
@@ -973,9 +985,10 @@ New staging and tracking tables proposed by this spec:
 
 This would increase the ORM table count by 8.
 
-Production table change proposed by this spec:
+Production table changes tracked by this spec:
 
-- Add nullable `selection_probability NUMERIC(12,8)` to `regions`.
+- `regions.selection_probability NUMERIC(12,8)` is available for metro
+  area normalization.
 
 - Add nullable `bias_multiplier NUMERIC(10,4)` to `last_names`.
 

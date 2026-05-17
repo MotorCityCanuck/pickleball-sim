@@ -114,7 +114,7 @@ CREATE TABLE regions (
 	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT uq_region_country_name UNIQUE (country_code, region_name)
+	CONSTRAINT uq_region_country_state_name UNIQUE (country_code, state_province_code, region_name)
 );
 
 CREATE TABLE uploaded_files (
