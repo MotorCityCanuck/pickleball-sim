@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from .base import SeedNormalizeResult
+from .first_names import FirstNameNormalizer
 from .metro_areas import MetroAreaNormalizer
 
 
 NORMALIZERS = {
+    FirstNameNormalizer.dataset: FirstNameNormalizer,
     MetroAreaNormalizer.dataset: MetroAreaNormalizer,
 }
 
@@ -31,6 +33,7 @@ def normalize_seed_dataset(
 
 __all__ = [
     "MetroAreaNormalizer",
+    "FirstNameNormalizer",
     "NORMALIZERS",
     "SeedNormalizeResult",
     "SUPPORTED_DATASETS",

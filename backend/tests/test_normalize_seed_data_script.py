@@ -41,7 +41,7 @@ def test_parse_args_defaults_replace_flag_to_false():
 
 
 def test_supported_datasets_are_exposed_by_normalization_package():
-    assert SUPPORTED_DATASETS == frozenset({"metro_areas"})
+    assert SUPPORTED_DATASETS == frozenset({"first_names", "metro_areas"})
 
 
 def test_rejects_unsupported_normalization_dataset():

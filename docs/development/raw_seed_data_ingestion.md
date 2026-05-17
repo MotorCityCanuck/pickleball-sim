@@ -594,14 +594,24 @@ gender
 
 3. For each group, calculate total `frequency_count`.
 
-4. Insert production `first_names` rows with:
+4. Aggregate rows at production first-name grain:
+
+```text
+country_code,
+state_province_code,
+birth_year,
+gender,
+first_name
+```
+
+5. Insert production `first_names` rows with:
 
 ```text
 normalized_probability =
   frequency_count / cohort_total
 ```
 
-5. Store the source dataset label for traceability.
+6. Store the source dataset label for traceability.
 
 Replacement behavior:
 
