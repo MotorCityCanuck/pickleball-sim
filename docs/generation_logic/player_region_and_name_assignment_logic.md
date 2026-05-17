@@ -16,6 +16,10 @@ not recreate legacy split tables such as `usa_first_names`,
 - Generate geographically realistic player populations across North
   America.
 
+- Make total player volume configuration driven. The player generation
+  module should read the target player count from generation
+  configuration rather than hardcoding population size.
+
 - Reflect realistic regional population densities using census-based
   weighting.
 
@@ -49,6 +53,8 @@ not recreate legacy split tables such as `usa_first_names`,
 - Load first-name reference datasets into `first_names`.
 
 - Load last-name reference datasets into `last_names`.
+
+- Read the configured target player count for the generation run.
 
 - Generate regional player distribution targets.
 
@@ -184,65 +190,55 @@ only. Player generation must persist final player identity values in
 
 # 13. First Name Generation Logic
 
-- First names should be generated using census or SSA frequency
-  datasets.
+- First names must be generated from the normalized production
+  `first_names` table.
+
+- Player generation must not read first-name source files directly.
+  Raw source files are handled only by seed ingestion and normalization.
 
 - Generation should be conditioned on:
+
+- Country
+
+- State/province
 
 - Birth year
 
 - Gender
 
-- State/province where possible
+- `normalized_probability`
 
-- Frequency weighting
+# 13.1 First-Name Production Table Grain
 
-# 13.1 USA First-Name Source Format
-
-USA first-name reference data will be loaded from roughly 50 state-level
-`.txt` files, one file per U.S. state. Each raw row has this comma-
-separated format:
+The production `first_names` table stores normalized first-name
+probabilities at this grain:
 
 ```text
-state,sex,birth_year,name,occurrences
+country_code,
+state_province_code,
+birth_year,
+gender,
+first_name
 ```
 
-Example:
+The generation module should query candidates by the player's assigned
+country, state/province, birth year, and gender, then select one
+`first_name` using `first_names.normalized_probability`.
 
-```text
-NE,F,1910,Mary,161
-```
-
-The loader maps raw fields to `first_names` as follows:
-
-- `country_code`: constant `US`
-
-- `state_province_code`: raw `state`
-
-- `birth_year`: raw `birth_year`
-
-- `gender`: raw `sex`
-
-- `first_name`: raw `name`
-
-- `frequency_count`: raw `occurrences`
-
-- `source_dataset`: stable source identifier for the imported dataset
-
-The raw `sex` value must be compatible with the current ORM constraint:
+The `gender` value must be compatible with the current ORM constraint:
 `M` or `F`.
 
 # 14. Recommended First Name Selection Formula
 
-- P(name_i) = frequency_i / sum(all frequencies in cohort)
+- P(first_name_i) = first_names.normalized_probability
 
-- Where cohorts are segmented by birth year, gender, and optionally
-  region.
+- The probability is already normalized during seed-data normalization.
 
-# 14.1 USA First-Name Normalization Rule
+# 14.1 First-Name Normalization Rule
 
-For USA first names, `normalized_probability` is calculated during load
-from total name occurrences in each state, birth-year, and gender cohort:
+For both USA and Canada first names, `normalized_probability` is
+calculated before player generation from total name occurrences in each
+country, state/province, birth-year, and gender cohort:
 
 ```text
 normalized_probability =
@@ -251,8 +247,9 @@ normalized_probability =
 ```
 
 This means the probabilities for all names in a given
-`US + state_province_code + birth_year + gender` cohort should sum to
-approximately `1.0`, subject to `NUMERIC(12,8)` rounding.
+`country_code + state_province_code + birth_year + gender` cohort
+should sum to approximately `1.0`, subject to `NUMERIC(12,8)`
+rounding.
 
 The current `first_names` lookup index supports this exact cohort:
 
@@ -276,9 +273,8 @@ available. The recommended fallback order is:
 - Same country, all available state/province cohorts for the nearest
   available birth year and same gender.
 
-For the first USA implementation, the expected primary path is exact
-state, birth year, and gender. Canada fallback behavior will be defined
-after Canada first-name source data is finalized.
+The expected primary path is exact country, state/province, birth year,
+and gender for both USA and Canada.
 
 # 15. Temporal Naming Realism
 
@@ -309,20 +305,60 @@ after Canada first-name source data is finalized.
 
 # 17. Last Name Generation Logic
 
-- Last names should be generated independently using census surname
-  frequency data.
+- Last names must be generated from the normalized production
+  `last_names` table.
+
+- Player generation must not read last-name source files or
+  state/province bias files directly. Raw surname files and bias files
+  are handled only by seed ingestion and normalization.
 
 - Regional surname weighting should influence probability selection.
 
 - Rare surnames should remain uncommon but still appear occasionally.
 
-Canada first-name handling and last-name loading/selection rules are not
-finalized in this version of the document. They will be defined after the
-raw Canada first-name and last-name source files are reviewed.
+# 17.1 Last-Name Production Table Grain
+
+The production `last_names` table stores normalized surname
+probabilities at this grain:
+
+```text
+country_code,
+state_province_code,
+last_name
+```
+
+The generation module should query candidates by the player's assigned
+country and state/province, then select one `last_name` using
+`last_names.normalized_probability`.
+
+The production row also preserves:
+
+- `frequency_count`: original country-level surname frequency
+
+- `bias_multiplier`: applied state/province surname bias multiplier
+
+- `adjusted_frequency_count`: frequency after applying regional bias
 
 # 18. Recommended Last Name Selection Model
 
-- Use weighted probabilistic selection based on census frequency.
+- Use weighted probabilistic selection based on
+  `last_names.normalized_probability`.
+
+- `normalized_probability` already includes regional surname bias. It is
+  calculated from:
+
+```text
+adjusted_frequency_count =
+  frequency_count * bias_multiplier
+```
+
+Then, within each country/state-province surname cohort:
+
+```text
+normalized_probability =
+  adjusted_frequency_count /
+  sum(adjusted_frequency_count for same country_code, state_province_code)
+```
 
 - Recommended distribution should follow long-tail behavior.
 
@@ -417,7 +453,86 @@ The month-specific intake link is stored in `player_registrations`:
 
 - `assigned_region_id`
 
-# 25. Validation Rules
+# 25. Remaining Player Attribute Generation
+
+The remaining stable player attributes should be generated during player
+creation from deterministic seeded random streams. Percentages and
+distribution parameters must be configurable through the generation
+configuration snapshot.
+
+## 25.1 Dominant Hand
+
+`dominant_hand` should be assigned using configurable weighted
+probabilities.
+
+Recommended default distribution:
+
+```text
+right: 0.88
+left:  0.10
+ambidextrous: 0.02
+```
+
+The vast majority of players should be right-handed. Left-handed and
+ambidextrous players should appear often enough to support realistic
+match and partnership analysis without dominating the population.
+
+## 25.2 Initial Skill Seed
+
+`initial_skill_seed` should be populated for every generated player.
+
+The value should be sampled from a bounded normal-like distribution that
+is modestly biased toward lower skill ratings. This field is an immutable
+starting skill seed used to initialize downstream rating and assessment
+history; it is not a current rating and should not replace
+`player_rating_history`.
+
+Recommended first-pass approach:
+
+```text
+base_skill = normal(mean, standard_deviation)
+lower_skill_bias = configurable downward adjustment or skew factor
+initial_skill_seed = clamp(base_skill - lower_skill_bias, min_skill, max_skill)
+```
+
+Recommended configurable defaults:
+
+```text
+initial_skill_mean: 1500
+initial_skill_standard_deviation: 275
+initial_skill_lower_bias: 100
+initial_skill_min: 500
+initial_skill_max: 3500
+```
+
+The distribution should produce many beginner and lower-intermediate
+players, fewer advanced players, and very few elite starting players.
+
+## 25.3 Player Status
+
+`player_status` should be assigned using configurable weighted
+probabilities.
+
+Recommended default distribution:
+
+```text
+ACTIVE:  0.94
+INJURED: 0.02
+RETIRED: 0.02
+INACTIVE: 0.02
+```
+
+Most generated players should be active. Injured, retired, and inactive
+players should be present in small numbers so downstream availability,
+retention, and lifecycle logic has realistic non-active states to work
+with.
+
+Status percentages must be validated to sum to `1.0`. The implementation
+should fail configuration validation if the status distribution is
+missing, negative, or materially different from a total probability of
+`1.0`.
+
+# 26. Validation Rules
 
 - Validate regional player counts against target population
   distributions.
@@ -430,7 +545,14 @@ The month-specific intake link is stored in `player_registrations`:
 
 - Validate regional concentration and metro clustering.
 
-# 26. Final Recommendation
+- Validate dominant-hand distribution against configured probabilities.
+
+- Validate initial skill seed distribution for range, mean, and lower-skill
+  skew.
+
+- Validate player status distribution against configured probabilities.
+
+# 27. Final Recommendation
 
 - Player region and name assignment should be census-driven,
   probabilistic, and regionally aware.
