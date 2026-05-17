@@ -1,36 +1,32 @@
 """Raw metro-area seed ingestion."""
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
-from hashlib import sha256
 from pathlib import Path
-from typing import Any, Iterable
 
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.db.session import session_scope
-from app.models import RawMetroArea, RawSeedLoadError, RawSeedLoadRun
+from app.models import RawMetroArea, RawSeedLoadError
+
+from .base import (
+    DEFAULT_RAW_ROOT,
+    ParsedRow,
+    RawSeedLoadResult,
+    add_parsed_row,
+    clean,
+    complete_load_run,
+    create_load_run,
+    discover_source_files,
+    iter_delimited_rows,
+    normalize_country,
+    parse_decimal,
+    parse_int,
+    run_in_transaction,
+)
 
 
-DEFAULT_RAW_ROOT = Path(__file__).resolve().parents[3] / "data" / "raw"
 SUPPORTED_DATASETS = {"metro_areas_us", "metro_areas_ca"}
-
-
-@dataclass(frozen=True)
-class RawSeedLoadResult:
-    """Summary of a raw seed-data load."""
-
-    load_run_id: int
-    dataset_type: str
-    source_file_count: int
-    rows_read: int
-    rows_loaded: int
-    rows_rejected: int
-    status: str
 
 
 @dataclass(frozen=True)
@@ -40,12 +36,6 @@ class _DatasetConfig:
     source_dataset: str
     filename_tokens: tuple[str, ...]
     field_map: dict[str, str]
-
-
-@dataclass(frozen=True)
-class _ParsedRow:
-    row: RawMetroArea | None
-    error: RawSeedLoadError | None
 
 
 DATASET_CONFIGS = {
@@ -93,7 +83,7 @@ def load_raw_seed_dataset(
 
 
 class RawSeedIngestor:
-    """Coordinates raw seed-data ingestion into staging tables."""
+    """Coordinates raw metro-area ingestion into staging tables."""
 
     def load_dataset(
         self,
@@ -102,22 +92,20 @@ class RawSeedIngestor:
         input_path: Path | str | None = None,
         session: Session | None = None,
     ) -> RawSeedLoadResult:
-        """Load a supported dataset.
-
-        The first implementation intentionally supports only metro-area
-        datasets and writes only Bronze staging tables.
-        """
+        """Load a supported metro-area dataset."""
         config = self._get_config(dataset_type)
         source_path = self._resolve_source_path(input_path)
         source_files = self._discover_source_files(source_path, config)
 
-        if session is not None:
-            with session.begin_nested():
-                return self._load(config, source_path, source_files, session)
-
-        with session_scope() as active_session:
-            with active_session.begin_nested():
-                return self._load(config, source_path, source_files, active_session)
+        return run_in_transaction(
+            lambda active_session: self._load(
+                config,
+                source_path,
+                source_files,
+                active_session,
+            ),
+            session=session,
+        )
 
     def _load(
         self,
@@ -126,19 +114,12 @@ class RawSeedIngestor:
         source_files: list[Path],
         session: Session,
     ) -> RawSeedLoadResult:
-        load_run = RawSeedLoadRun(
+        load_run = create_load_run(
+            session,
             dataset_type=config.dataset_type,
-            source_path=str(source_path),
-            source_file_count=len(source_files),
-            source_checksum=self._source_checksum(source_files),
-            started_at=_utc_now(),
-            status="running",
-            rows_read=0,
-            rows_loaded=0,
-            rows_rejected=0,
+            source_path=source_path,
+            source_files=source_files,
         )
-        session.add(load_run)
-        session.flush()
 
         session.execute(
             delete(RawMetroArea).where(
@@ -156,26 +137,11 @@ class RawSeedIngestor:
                     raw_row,
                     load_run.id,
                 )
-                if parsed.row is not None:
-                    session.add(parsed.row)
-                    load_run.rows_loaded += 1
-                if parsed.error is not None:
-                    session.add(parsed.error)
-                    load_run.rows_rejected += 1
+                add_parsed_row(session, load_run, parsed)
 
-        load_run.status = "completed"
-        load_run.completed_at = _utc_now()
+        result = complete_load_run(load_run)
         session.flush()
-
-        return RawSeedLoadResult(
-            load_run_id=load_run.id,
-            dataset_type=load_run.dataset_type,
-            source_file_count=load_run.source_file_count,
-            rows_read=load_run.rows_read,
-            rows_loaded=load_run.rows_loaded,
-            rows_rejected=load_run.rows_rejected,
-            status=load_run.status,
-        )
+        return result
 
     def _parse_metro_row(
         self,
@@ -184,39 +150,39 @@ class RawSeedIngestor:
         source_row_number: int,
         raw_row: dict[str, str],
         load_run_id: int,
-    ) -> _ParsedRow:
+    ) -> ParsedRow:
         errors: list[str] = []
         raw_payload = dict(raw_row)
 
-        country_value = _clean(raw_row.get(config.field_map["country"]))
-        country_code = _normalize_country(country_value)
+        country_value = clean(raw_row.get(config.field_map["country"]))
+        country_code = normalize_country(country_value)
         if country_code != config.country_code:
             errors.append(
                 f"country must map to {config.country_code}; got {country_value!r}"
             )
 
-        metro_area_name = _clean(raw_row.get(config.field_map["metro_area_name"]))
+        metro_area_name = clean(raw_row.get(config.field_map["metro_area_name"]))
         if not metro_area_name:
             errors.append("metro area name is required")
 
-        state_province_code = _clean(
+        state_province_code = clean(
             raw_row.get(config.field_map["state_province_code"])
         ).upper()
         if not state_province_code:
             errors.append("state/province code is required")
 
-        population = _parse_int(raw_row.get(config.field_map["population"]))
+        population = parse_int(raw_row.get(config.field_map["population"]))
         if population is None or population <= 0:
             errors.append("population must be a positive integer")
 
-        selection_probability = _parse_decimal(
+        selection_probability = parse_decimal(
             raw_row.get(config.field_map["selection_probability"])
         )
         if selection_probability is None or selection_probability < 0:
             errors.append("selection probability must be a non-negative decimal")
 
         if errors:
-            return _ParsedRow(
+            return ParsedRow(
                 row=None,
                 error=RawSeedLoadError(
                     load_run_id=load_run_id,
@@ -228,7 +194,7 @@ class RawSeedIngestor:
                 ),
             )
 
-        return _ParsedRow(
+        return ParsedRow(
             row=RawMetroArea(
                 load_run_id=load_run_id,
                 source_file=str(source_file),
@@ -265,94 +231,12 @@ class RawSeedIngestor:
         source_path: Path,
         config: _DatasetConfig,
     ) -> list[Path]:
-        if source_path.is_file():
-            return [source_path]
-        if not source_path.exists():
-            raise FileNotFoundError(f"Input path does not exist: {source_path}")
-        if not source_path.is_dir():
-            raise ValueError(f"Input path is not a file or directory: {source_path}")
-
-        candidates = [
-            path
-            for path in source_path.iterdir()
-            if path.is_file()
-            and path.suffix.lower() == ".csv"
-            and any(token in path.name.lower() for token in config.filename_tokens)
-        ]
-        if not candidates:
-            raise FileNotFoundError(
-                f"No CSV files for {config.dataset_type} found in {source_path}"
-            )
-        return sorted(candidates)
-
-    @staticmethod
-    def _iter_csv_rows(source_file: Path) -> Iterable[tuple[int, dict[str, str]]]:
-        for encoding in ("utf-8-sig", "cp1252", "latin-1"):
-            try:
-                with source_file.open("r", encoding=encoding, newline="") as handle:
-                    reader = csv.DictReader(handle)
-                    rows = [
-                        (source_row_number, {key or "": value for key, value in row.items()})
-                        for source_row_number, row in enumerate(reader, start=2)
-                    ]
-                yield from rows
-                return
-            except UnicodeDecodeError:
-                continue
-
-        raise UnicodeDecodeError(
-            "utf-8-sig/cp1252/latin-1",
-            b"",
-            0,
-            1,
-            f"could not decode {source_file}",
+        return discover_source_files(
+            source_path,
+            dataset_type=config.dataset_type,
+            filename_tokens=config.filename_tokens,
         )
 
     @staticmethod
-    def _source_checksum(source_files: list[Path]) -> str:
-        digest = sha256()
-        for source_file in source_files:
-            digest.update(source_file.name.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(source_file.read_bytes())
-            digest.update(b"\0")
-        return digest.hexdigest()
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
-def _clean(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _normalize_country(value: str) -> str:
-    normalized = value.strip().upper()
-    if normalized in {"USA", "US", "UNITED STATES"}:
-        return "US"
-    if normalized in {"CAN", "CA", "CANADA"}:
-        return "CA"
-    return normalized
-
-
-def _parse_int(value: Any) -> int | None:
-    cleaned = _clean(value).replace(",", "")
-    if cleaned == "":
-        return None
-    try:
-        return int(Decimal(cleaned))
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _parse_decimal(value: Any) -> Decimal | None:
-    cleaned = _clean(value).replace(",", "")
-    if cleaned == "":
-        return None
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation:
-        return None
+    def _iter_csv_rows(source_file: Path):
+        return iter_delimited_rows(source_file)

@@ -12,7 +12,13 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.seed_data_ingest import load_raw_seed_dataset  # noqa: E402
-from app.seed_data_ingest.metro_areas import SUPPORTED_DATASETS  # noqa: E402
+
+
+SUPPORTED_DATASETS = {
+    "metro_areas_ca",
+    "metro_areas_us",
+    "pickleball_club_distributions",
+}
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

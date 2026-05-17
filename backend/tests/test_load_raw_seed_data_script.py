@@ -26,3 +26,17 @@ def test_parse_args_accepts_metro_dataset_and_input_path():
 
     assert args.dataset == "metro_areas_us"
     assert args.input_path == Path("data/raw/metro_areas")
+
+
+def test_parse_args_accepts_club_distribution_dataset():
+    args = _parse_args(
+        [
+            "--dataset",
+            "pickleball_club_distributions",
+            "--input-path",
+            "data/raw/pickleball_clubs/distributions",
+        ]
+    )
+
+    assert args.dataset == "pickleball_club_distributions"
+    assert args.input_path == Path("data/raw/pickleball_clubs/distributions")
