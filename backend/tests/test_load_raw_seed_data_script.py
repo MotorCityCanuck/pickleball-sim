@@ -82,3 +82,17 @@ def test_parse_args_accepts_state_prov_bias_dataset():
 
     assert args.dataset == "state_prov_biases_us"
     assert args.input_path == Path("data/raw/last_names/state_prov_biases")
+
+
+def test_parse_args_accepts_first_name_dataset():
+    args = _parse_args(
+        [
+            "--dataset",
+            "first_names_ca",
+            "--input-path",
+            "data/raw/first_names/ca",
+        ]
+    )
+
+    assert args.dataset == "first_names_ca"
+    assert args.input_path == Path("data/raw/first_names/ca")

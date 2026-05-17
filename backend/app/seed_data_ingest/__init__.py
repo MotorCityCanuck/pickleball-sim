@@ -1,6 +1,7 @@
 """Raw seed-data ingestion helpers."""
 
 from .base import RawSeedLoadResult
+from .first_names import FirstNameIngestor
 from .last_names import LastNameIngestor
 from .metro_areas import RawSeedIngestor
 from .pickleball_clubs import (
@@ -42,6 +43,12 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
             input_path=input_path,
             session=session,
         )
+    if dataset_type in {"first_names_us", "first_names_ca"}:
+        return FirstNameIngestor().load_dataset(
+            dataset_type,
+            input_path=input_path,
+            session=session,
+        )
 
     supported = ", ".join(
         sorted(
@@ -54,6 +61,8 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
                 "last_names_ca",
                 "state_prov_biases_us",
                 "state_prov_biases_ca",
+                "first_names_us",
+                "first_names_ca",
             }
         )
     )
@@ -63,6 +72,7 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
 
 __all__ = [
     "RawSeedIngestor",
+    "FirstNameIngestor",
     "LastNameIngestor",
     "PickleballClubDistributionIngestor",
     "PickleballClubNameIngestor",

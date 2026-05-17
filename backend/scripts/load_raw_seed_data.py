@@ -17,6 +17,8 @@ from app.seed_data_ingest import load_raw_seed_dataset  # noqa: E402
 SUPPORTED_DATASETS = {
     "metro_areas_ca",
     "metro_areas_us",
+    "first_names_ca",
+    "first_names_us",
     "last_names_ca",
     "last_names_us",
     "pickleball_club_distributions",
