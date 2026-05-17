@@ -285,9 +285,8 @@ Normalization notes:
   competitiveness multiplier.
 
 - `selection_probability` is required by downstream regional player
-  allocation logic and should be promoted into production `regions`.
-  This requires adding a nullable `selection_probability` column to the
-  `regions` ORM model during implementation.
+  allocation logic and is promoted into production
+  `regions.selection_probability`.
 
 ### 6.2 `raw_pickleball_club_names`
 
@@ -680,11 +679,11 @@ Production schema implication:
 - The existing `last_names.frequency_count` should store the original
   country-level raw surname count.
 
-- Add nullable `bias_multiplier NUMERIC(10,4)` to production
-  `last_names`.
+- `last_names.bias_multiplier NUMERIC(10,4)` stores the applied
+  state/province surname bias multiplier.
 
-- Add nullable `adjusted_frequency_count NUMERIC(18,4)` to production
-  `last_names`.
+- `last_names.adjusted_frequency_count NUMERIC(18,4)` stores the
+  state/province adjusted surname frequency.
 
 - `last_names.normalized_probability` should be calculated from
   `adjusted_frequency_count` within each country/state-province cohort.
@@ -707,6 +706,13 @@ Recommended first-pass behavior:
   (`country_code`, `state_province_code`, `metro_area_name`), aggregate
   them into one production `regions` row by summing `population` and
   `selection_probability`.
+
+- If a positive club-distribution state/province has no raw metro row,
+  create a fallback production region for that state/province with
+  `region_type = 'territory'`, `population = NULL`, and
+  `selection_probability = 0`. This keeps club normalization
+  reproducible for territories such as Nunavut without changing metro
+  area probability mass.
 
 - Map:
   - `country_code` -> `regions.country_code`
@@ -877,7 +883,7 @@ Example:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3 backend/scripts/load_raw_seed_data.py \
   --dataset first_names_us \
-  --input-dir data/raw/first_names/us
+  --input-path data/raw/first_names/us
 ```
 
 Dataset-to-folder defaults:
@@ -930,7 +936,6 @@ Example:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3 backend/scripts/normalize_seed_data.py \
   --dataset first_names \
-  --country US \
   --replace-production
 ```
 
@@ -1003,17 +1008,19 @@ New staging and tracking tables proposed by this spec:
 
 - `raw_state_prov_biases`
 
-This would increase the ORM table count by 8.
+These tables are implemented in the ORM and included in the current
+31-table schema.
 
 Production table changes tracked by this spec:
 
 - `regions.selection_probability NUMERIC(12,8)` is available for metro
   area normalization.
 
-- Add nullable `bias_multiplier NUMERIC(10,4)` to `last_names`.
+- `last_names.bias_multiplier NUMERIC(10,4)` is available for surname
+  bias normalization.
 
-- Add nullable `adjusted_frequency_count NUMERIC(18,4)` to
-  `last_names`.
+- `last_names.adjusted_frequency_count NUMERIC(18,4)` is available for
+  surname bias normalization.
 
 These production-column changes must be made in the ORM models first and
 then reflected in `backend/schema.sql` by regenerating from ORM metadata.
