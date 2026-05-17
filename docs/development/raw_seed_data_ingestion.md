@@ -118,15 +118,16 @@ Initial raw source datasets:
   candidates.
 
 - Pickleball club distribution summary: one file defining club counts by
-  state/province.
+  state/province. This belongs with the club seed-data files.
 
-- First names: one USA folder with 50 state files and one Canada folder
-  with 10 province files.
+- First names: one USA folder with state-level files, including DC when
+  present, and one Canada folder with 10 province files.
 
 - Last names: one folder with two files, one USA and one Canada.
 
 - State/province last-name bias rules: two files, one USA and one
-  Canada.
+  Canada. These belong under the last-name seed-data folder because they
+  are applied during surname normalization.
 
 Raw source files should be staged outside Git under:
 
@@ -141,13 +142,14 @@ Expected local folder layout:
 ```text
 data/raw/
   metro_areas/
-  pickleball_club_names/
-  pickleball_club_distributions/
+  pickleball_clubs/
+    names/
+    distributions/
   first_names/
     us/
     ca/
   last_names/
-  state_prov_biases/
+    state_prov_biases/
 ```
 
 These folders are local working directories for raw source files. They
@@ -377,7 +379,8 @@ birth year, and gender.
 
 Source files:
 
-- USA: one folder containing 50 state files, one file per state.
+- USA: one folder containing state-level files, one file per state plus
+  DC when present.
 
 - Canada: one folder containing 10 province files, one file per
   province.
@@ -851,14 +854,14 @@ Dataset-to-folder defaults:
 | --- | --- |
 | `metro_areas_us` | `data/raw/metro_areas/` |
 | `metro_areas_ca` | `data/raw/metro_areas/` |
-| `pickleball_club_names` | `data/raw/pickleball_club_names/` |
-| `pickleball_club_distributions` | `data/raw/pickleball_club_distributions/` |
+| `pickleball_club_names` | `data/raw/pickleball_clubs/names/` |
+| `pickleball_club_distributions` | `data/raw/pickleball_clubs/distributions/` |
 | `first_names_us` | `data/raw/first_names/us/` |
 | `first_names_ca` | `data/raw/first_names/ca/` |
 | `last_names_us` | `data/raw/last_names/` |
 | `last_names_ca` | `data/raw/last_names/` |
-| `state_prov_biases_us` | `data/raw/state_prov_biases/` |
-| `state_prov_biases_ca` | `data/raw/state_prov_biases/` |
+| `state_prov_biases_us` | `data/raw/last_names/state_prov_biases/` |
+| `state_prov_biases_ca` | `data/raw/last_names/state_prov_biases/` |
 
 Initial supported dataset values:
 
