@@ -218,10 +218,30 @@ Suggested groups:
     "stochastic_override_rate": 0.02
   },
   "team_formation": {
+    "target_team_count": null,
+    "player_team_participation_rate": 0.70,
+    "multi_team_player_rate": 0.08,
+    "max_active_teams_per_player": 2,
+    "same_club_team_rate": 0.78,
+    "same_region_team_rate": 0.95,
+    "rating_gap_mean": 175.0,
+    "rating_gap_std_dev": 125.0,
+    "rating_gap_max": 1500.0,
+    "team_type_weights": {
+      "mens_doubles": 0.30,
+      "womens_doubles": 0.30,
+      "mixed_doubles": 0.30,
+      "open_doubles": 0.10
+    },
     "team_persistence_probability_recreational": 0.72,
     "team_persistence_probability_competitive": 0.88,
+    "dormant_team_reactivation_rate": 0.04,
+    "retired_team_rate_on_dissolution": 0.10,
     "team_chemistry_weight": 0.35,
     "team_skill_balance_weight": 0.25,
+    "team_club_proximity_weight": 0.25,
+    "team_region_proximity_weight": 0.10,
+    "team_prior_partnership_weight": 0.20,
     "team_noise_factor": 0.15,
     "monthly_team_dissolution_rate": 0.1,
     "allow_multiple_active_teams_per_scope": false

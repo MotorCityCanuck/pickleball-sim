@@ -587,9 +587,26 @@ non-deterministic variation.
   **Dependencies**                    player_core_generator;
                                       rating_history_repository
 
-  **Configuration keys**              team_persistence_probability;
+  **Configuration keys**              target_team_count;
+                                      player_team_participation_rate;
+                                      multi_team_player_rate;
+                                      max_active_teams_per_player;
+                                      same_club_team_rate;
+                                      same_region_team_rate;
+                                      rating_gap_mean;
+                                      rating_gap_std_dev;
+                                      rating_gap_max;
+                                      team_type_weights;
+                                      team_persistence_probability_recreational;
+                                      team_persistence_probability_competitive;
+                                      dormant_team_reactivation_rate;
+                                      retired_team_rate_on_dissolution;
+                                      monthly_team_dissolution_rate;
+                                      team_chemistry_weight;
                                       team_skill_balance_weight;
-                                      match_type_weights;
+                                      team_club_proximity_weight;
+                                      team_region_proximity_weight;
+                                      team_prior_partnership_weight;
                                       team_noise_factor
   -----------------------------------------------------------------------
 
@@ -597,6 +614,19 @@ non-deterministic variation.
 
 - Support men pairs, women pairs, mixed pairs, open pairs, and
   configured custom match types.
+
+- Use `player_team_participation_rate` to determine how many eligible
+  players participate in active teams for the batch unless an explicit
+  `target_team_count` is provided.
+
+- Use `team_type_weights` to allocate newly created teams across team
+  types.
+
+- Prefer same-club and same-region pairings according to
+  `same_club_team_rate` and `same_region_team_rate`.
+
+- Keep partner rating gaps within configured limits using
+  `rating_gap_mean`, `rating_gap_std_dev`, and `rating_gap_max`.
 
 - Use prior team history to preserve consistency across months unless
   churn is configured.

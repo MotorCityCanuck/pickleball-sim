@@ -131,11 +131,28 @@
 
 | Parameter Name | Type | Default | Range/Options | Units | Description |
 |----------------|------|---------|---------------|-------|-------------|
+| `target_team_count` | INTEGER/null | null | null or >0 | teams | Optional explicit team count target; null derives demand from eligible players |
+| `player_team_participation_rate` | DECIMAL | 0.70 | 0.0-1.0 | probability | Share of eligible players assigned to at least one active team in a batch |
+| `multi_team_player_rate` | DECIMAL | 0.08 | 0.0-0.30 | probability | Share of team-participating players allowed on multiple active teams |
+| `max_active_teams_per_player` | INTEGER | 2 | 1-5 | teams | Maximum active teams per player when multiple active teams are allowed |
+| `same_club_team_rate` | DECIMAL | 0.78 | 0.0-1.0 | probability | Share of new teams whose partners should share a club when feasible |
+| `same_region_team_rate` | DECIMAL | 0.95 | 0.0-1.0 | probability | Share of new teams whose partners should share a region when feasible |
+| `rating_gap_mean` | DECIMAL | 175.0 | 0-1000 | rating_points | Target average rating gap between team partners |
+| `rating_gap_std_dev` | DECIMAL | 125.0 | 0-1000 | rating_points | Variation in acceptable rating gap during partner selection |
+| `rating_gap_max` | DECIMAL | 1500.0 | 0-2500 | rating_points | Maximum allowed rating gap between partners for newly formed teams, especially open-play teams |
+| `team_type_weights` | OBJECT | see defaults | probabilities sum to 1 | probability | Distribution across mens, womens, mixed, and open doubles teams |
 | `team_persistence_probability_recreational` | DECIMAL | 0.72 | 0.3-0.95 | probability | Recreational team retention rate |
 | `team_persistence_probability_competitive` | DECIMAL | 0.88 | 0.5-0.98 | probability | Competitive team retention rate |
+| `dormant_team_reactivation_rate` | DECIMAL | 0.04 | 0.0-0.30 | probability | Monthly chance that an eligible dormant partnership reforms |
+| `retired_team_rate_on_dissolution` | DECIMAL | 0.10 | 0.0-1.0 | probability | Share of dissolved teams marked retired instead of dormant |
 | `team_chemistry_weight` | DECIMAL | 0.35 | 0.0-1.0 | weight | Weight of chemistry in team formation |
 | `team_skill_balance_weight` | DECIMAL | 0.25 | 0.0-1.0 | weight | Weight of rating balance |
+| `team_club_proximity_weight` | DECIMAL | 0.25 | 0.0-1.0 | weight | Weight of shared-club proximity in partner scoring |
+| `team_region_proximity_weight` | DECIMAL | 0.10 | 0.0-1.0 | weight | Weight of regional proximity in partner scoring |
+| `team_prior_partnership_weight` | DECIMAL | 0.20 | 0.0-1.0 | weight | Weight of prior partnership history in partner scoring |
 | `team_noise_factor` | DECIMAL | 0.15 | 0.0-0.5 | probability_shift | Random variation in team formation |
+| `monthly_team_dissolution_rate` | DECIMAL | 0.10 | 0.0-0.5 | probability | Monthly probability that an active team dissolves or becomes dormant |
+| `allow_multiple_active_teams_per_scope` | BOOLEAN | false | true/false | flag | Whether a player can be active on multiple teams in the same scheduling scope |
 
 ---
 
