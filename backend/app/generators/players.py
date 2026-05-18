@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from bisect import bisect_left
 import random
 from typing import Any, Iterable, Sequence, TypeVar
 
@@ -142,6 +143,41 @@ class NameCandidate:
     weight: Decimal
 
 
+class WeightedSampler[T]:
+    """Precomputed weighted random sampler for repeated draws."""
+
+    def __init__(self, weighted_items: Sequence[tuple[T, Any] | NameCandidate]) -> None:
+        if not weighted_items:
+            raise ValueError("Cannot choose from an empty weighted item list")
+
+        self.values: list[T | str] = []
+        self.cumulative_weights: list[float] = []
+        total = 0.0
+
+        for item in weighted_items:
+            if isinstance(item, NameCandidate):
+                value, weight = item.value, item.weight
+            else:
+                value, weight = item
+            numeric_weight = float(_positive_weight(weight))
+            self.values.append(value)
+            total += numeric_weight
+            self.cumulative_weights.append(total)
+
+        self.total_weight = total
+
+    def choose(self, rng: random.Random) -> T | str:
+        """Choose one value using cached cumulative weights."""
+        if self.total_weight <= 0:
+            return self.values[rng.randrange(len(self.values))]
+
+        target = rng.random() * self.total_weight
+        index = bisect_left(self.cumulative_weights, target)
+        if index >= len(self.values):
+            index = len(self.values) - 1
+        return self.values[index]
+
+
 class NameIndex:
     """Cached database lookup for first and last name probabilities."""
 
@@ -149,11 +185,11 @@ class NameIndex:
         self.session = session
         self.first_exact: dict[
             tuple[str, str, int, str],
-            list[NameCandidate],
+            WeightedSampler[str] | None,
         ] = {}
         self.first_country_year: dict[
             tuple[str, int, str],
-            list[NameCandidate],
+            WeightedSampler[str] | None,
         ] = {}
         self.first_years_by_state_gender: dict[
             tuple[str, str, str],
@@ -163,8 +199,8 @@ class NameIndex:
             tuple[str, str],
             set[int],
         ] = {}
-        self.last_exact: dict[tuple[str, str], list[NameCandidate]] = {}
-        self.last_country: dict[str, list[NameCandidate]] = {}
+        self.last_exact: dict[tuple[str, str], WeightedSampler[str] | None] = {}
+        self.last_country: dict[str, WeightedSampler[str] | None] = {}
 
     def choose_first_name(
         self,
@@ -177,9 +213,9 @@ class NameIndex:
     ) -> str:
         """Choose a first name using exact cohort then documented fallbacks."""
         exact_key = (country_code, state_province_code, birth_year, gender)
-        candidates = self._first_exact_candidates(exact_key)
-        if candidates:
-            return weighted_choice(rng, candidates)
+        sampler = self._first_exact_sampler(exact_key)
+        if sampler:
+            return sampler.choose(rng)
 
         nearest_state_year = _nearest(
             birth_year,
@@ -190,27 +226,27 @@ class NameIndex:
             ),
         )
         if nearest_state_year is not None:
-            candidates = self._first_exact_candidates(
+            sampler = self._first_exact_sampler(
                 (country_code, state_province_code, nearest_state_year, gender)
             )
-            return weighted_choice(rng, candidates)
+            if sampler:
+                return sampler.choose(rng)
 
         country_year_key = (country_code, birth_year, gender)
-        candidates = self._first_country_year_candidates(country_year_key)
-        if candidates:
-            return weighted_choice(rng, candidates)
+        sampler = self._first_country_year_sampler(country_year_key)
+        if sampler:
+            return sampler.choose(rng)
 
         nearest_country_year = _nearest(
             birth_year,
             self._first_country_years(country_code, gender),
         )
         if nearest_country_year is not None:
-            return weighted_choice(
-                rng,
-                self._first_country_year_candidates(
-                    (country_code, nearest_country_year, gender)
-                ),
+            sampler = self._first_country_year_sampler(
+                (country_code, nearest_country_year, gender)
             )
+            if sampler:
+                return sampler.choose(rng)
 
         raise ValueError(
             "No first-name distribution found for "
@@ -225,24 +261,24 @@ class NameIndex:
         state_province_code: str,
     ) -> str:
         """Choose a last name using exact state/province then country fallback."""
-        candidates = self._last_exact_candidates(country_code, state_province_code)
-        if candidates:
-            return weighted_choice(rng, candidates)
+        sampler = self._last_exact_sampler(country_code, state_province_code)
+        if sampler:
+            return sampler.choose(rng)
 
-        candidates = self._last_country_candidates(country_code)
-        if candidates:
-            return weighted_choice(rng, candidates)
+        sampler = self._last_country_sampler(country_code)
+        if sampler:
+            return sampler.choose(rng)
 
         raise ValueError(f"No last-name distribution found for {country_code}")
 
-    def _first_exact_candidates(
+    def _first_exact_sampler(
         self,
         key: tuple[str, str, int, str],
-    ) -> list[NameCandidate]:
+    ) -> WeightedSampler[str] | None:
         if key not in self.first_exact:
             country_code, state_province_code, birth_year, gender = key
-            rows = self.session.scalars(
-                select(FirstName)
+            rows = self.session.execute(
+                select(FirstName.first_name, FirstName.normalized_probability)
                 .where(
                     FirstName.country_code == country_code,
                     FirstName.state_province_code == state_province_code,
@@ -250,32 +286,26 @@ class NameIndex:
                     FirstName.gender == gender,
                 )
                 .order_by(FirstName.id)
-            )
-            self.first_exact[key] = [
-                NameCandidate(row.first_name, _positive_weight(row.normalized_probability))
-                for row in rows
-            ]
+            ).all()
+            self.first_exact[key] = _sampler_or_none(rows)
         return self.first_exact[key]
 
-    def _first_country_year_candidates(
+    def _first_country_year_sampler(
         self,
         key: tuple[str, int, str],
-    ) -> list[NameCandidate]:
+    ) -> WeightedSampler[str] | None:
         if key not in self.first_country_year:
             country_code, birth_year, gender = key
-            rows = self.session.scalars(
-                select(FirstName)
+            rows = self.session.execute(
+                select(FirstName.first_name, FirstName.normalized_probability)
                 .where(
                     FirstName.country_code == country_code,
                     FirstName.birth_year == birth_year,
                     FirstName.gender == gender,
                 )
                 .order_by(FirstName.id)
-            )
-            self.first_country_year[key] = [
-                NameCandidate(row.first_name, _positive_weight(row.normalized_probability))
-                for row in rows
-            ]
+            ).all()
+            self.first_country_year[key] = _sampler_or_none(rows)
         return self.first_country_year[key]
 
     def _first_state_years(
@@ -318,38 +348,32 @@ class NameIndex:
             )
         return self.first_years_by_country_gender[key]
 
-    def _last_exact_candidates(
+    def _last_exact_sampler(
         self,
         country_code: str,
         state_province_code: str,
-    ) -> list[NameCandidate]:
+    ) -> WeightedSampler[str] | None:
         key = (country_code, state_province_code)
         if key not in self.last_exact:
-            rows = self.session.scalars(
-                select(LastName)
+            rows = self.session.execute(
+                select(LastName.last_name, LastName.normalized_probability)
                 .where(
                     LastName.country_code == country_code,
                     LastName.state_province_code == state_province_code,
                 )
                 .order_by(LastName.id)
-            )
-            self.last_exact[key] = [
-                NameCandidate(row.last_name, _positive_weight(row.normalized_probability))
-                for row in rows
-            ]
+            ).all()
+            self.last_exact[key] = _sampler_or_none(rows)
         return self.last_exact[key]
 
-    def _last_country_candidates(self, country_code: str) -> list[NameCandidate]:
+    def _last_country_sampler(self, country_code: str) -> WeightedSampler[str] | None:
         if country_code not in self.last_country:
-            rows = self.session.scalars(
-                select(LastName)
+            rows = self.session.execute(
+                select(LastName.last_name, LastName.normalized_probability)
                 .where(LastName.country_code == country_code)
                 .order_by(LastName.id)
-            )
-            self.last_country[country_code] = [
-                NameCandidate(row.last_name, _positive_weight(row.normalized_probability))
-                for row in rows
-            ]
+            ).all()
+            self.last_country[country_code] = _sampler_or_none(rows)
         return self.last_country[country_code]
 
 
@@ -358,7 +382,11 @@ class ClubIndex:
 
     def __init__(self, session: Session) -> None:
         self.session = session
-        self.clubs_by_region: dict[int, list[Club]] = {}
+        self.clubs_by_region: dict[int, list[tuple[int, date | None, int | None]]] = {}
+        self.club_samplers: dict[
+            tuple[int, date],
+            WeightedSampler[tuple[int, date | None]] | None,
+        ] = {}
 
     def choose_club(
         self,
@@ -367,28 +395,39 @@ class ClubIndex:
         region_id: int,
         batch_month: date,
     ) -> Club | None:
-        candidates = [
-            club
-            for club in self._clubs_for_region(region_id)
-            if club.founding_date is None or club.founding_date <= batch_month
-        ]
-        if not candidates:
+        sampler = self._club_sampler(region_id, batch_month)
+        if sampler is None:
             return None
-        weighted_clubs = [
-            (club, Decimal(club.member_capacity or 1))
-            for club in candidates
-        ]
-        return weighted_choice(rng, weighted_clubs)
+        club_id, founding_date = sampler.choose(rng)
+        return Club(id=club_id, founding_date=founding_date)
 
-    def _clubs_for_region(self, region_id: int) -> list[Club]:
+    def _club_sampler(
+        self,
+        region_id: int,
+        batch_month: date,
+    ) -> WeightedSampler[tuple[int, date | None]] | None:
+        key = (region_id, batch_month)
+        if key not in self.club_samplers:
+            candidates = [
+                ((club_id, founding_date), Decimal(capacity or 1))
+                for club_id, founding_date, capacity in self._clubs_for_region(region_id)
+                if founding_date is None or founding_date <= batch_month
+            ]
+            self.club_samplers[key] = (
+                WeightedSampler(candidates) if candidates else None
+            )
+        return self.club_samplers[key]
+
+    def _clubs_for_region(self, region_id: int) -> list[tuple[int, date | None, int | None]]:
         if region_id not in self.clubs_by_region:
-            self.clubs_by_region[region_id] = list(
-                self.session.scalars(
-                    select(Club)
+            self.clubs_by_region[region_id] = [
+                (club_id, founding_date, member_capacity)
+                for club_id, founding_date, member_capacity in self.session.execute(
+                    select(Club.id, Club.founding_date, Club.member_capacity)
                     .where(Club.region_id == region_id)
                     .order_by(Club.id)
                 )
-            )
+            ]
         return self.clubs_by_region[region_id]
 
 
@@ -473,74 +512,97 @@ class PlayerGenerator:
 
         name_index = NameIndex(session)
         club_index = ClubIndex(session)
+        region_sampler = WeightedSampler(
+            [
+                (region, _positive_weight(region.selection_probability))
+                for region in regions
+            ]
+        )
+        age_sampler = WeightedSampler(config.age_distribution)
+        gender_sampler = WeightedSampler(config.gender_weights)
+        dominant_hand_sampler = WeightedSampler(config.dominant_hand_weights)
+        player_status_sampler = WeightedSampler(config.player_status_weights)
         rng = random.Random(int(generation_run.seed_value))
         active_start = int(existing_run_players or 0)
         registration_month = _month_start(batch.batch_month)
-        generated_players: list[Player] = []
+        chunk_size = 5_000
 
-        for _ in range(target_count):
-            region = choose_region(rng, regions)
-            age = choose_age(rng, config)
-            birth_date = choose_birth_date(rng, age, registration_month)
-            gender = weighted_choice(rng, config.gender_weights)
-            first_name = name_index.choose_first_name(
-                rng,
-                country_code=region.country_code,
-                state_province_code=region.state_province_code,
-                birth_year=birth_date.year,
-                gender=gender,
-            )
-            last_name = name_index.choose_last_name(
-                rng,
-                country_code=region.country_code,
-                state_province_code=region.state_province_code,
-            )
-            associated_club = club_index.choose_club(
-                rng,
-                region_id=region.id,
-                batch_month=registration_month,
-            )
-            registration_date = choose_registration_date(
-                rng,
-                batch_month=registration_month,
-                birth_date=birth_date,
-                associated_club=associated_club,
-            )
-            generated_players.append(
-                Player(
-                    first_name=first_name,
-                    last_name=last_name,
-                    gender=gender,
-                    birth_date=birth_date,
-                    dominant_hand=weighted_choice(rng, config.dominant_hand_weights),
-                    home_region_id=region.id,
-                    registration_date=registration_date,
-                    initial_skill_seed=initial_skill_seed(rng, config),
-                    player_status=weighted_choice(rng, config.player_status_weights),
-                    generation_run_id=generation_run_id,
-                )
-            )
+        with session.begin_nested():
+            generated_so_far = 0
+            while generated_so_far < target_count:
+                current_chunk_size = min(chunk_size, target_count - generated_so_far)
+                generated_players: list[Player] = []
 
-        session.add_all(generated_players)
-        session.flush()
+                for _ in range(current_chunk_size):
+                    region = region_sampler.choose(rng)
+                    age = choose_age(rng, config, sampler=age_sampler)
+                    birth_date = choose_birth_date(rng, age, registration_month)
+                    gender = gender_sampler.choose(rng)
+                    first_name = name_index.choose_first_name(
+                        rng,
+                        country_code=region.country_code,
+                        state_province_code=region.state_province_code,
+                        birth_year=birth_date.year,
+                        gender=gender,
+                    )
+                    last_name = name_index.choose_last_name(
+                        rng,
+                        country_code=region.country_code,
+                        state_province_code=region.state_province_code,
+                    )
+                    associated_club = club_index.choose_club(
+                        rng,
+                        region_id=region.id,
+                        batch_month=registration_month,
+                    )
+                    registration_date = choose_registration_date(
+                        rng,
+                        batch_month=registration_month,
+                        birth_date=birth_date,
+                        associated_club=associated_club,
+                    )
+                    generated_players.append(
+                        Player(
+                            first_name=first_name,
+                            last_name=last_name,
+                            gender=gender,
+                            birth_date=birth_date,
+                            dominant_hand=dominant_hand_sampler.choose(rng),
+                            home_region_id=region.id,
+                            registration_date=registration_date,
+                            initial_skill_seed=initial_skill_seed(rng, config),
+                            player_status=player_status_sampler.choose(rng),
+                            generation_run_id=generation_run_id,
+                        )
+                    )
 
-        registrations = [
-            PlayerRegistration(
-                player_id=player.id,
-                batch_id=batch_id,
-                registration_month=registration_month,
-                assigned_region_id=player.home_region_id,
-                initial_rating_value=config.initial_rating_mean,
-                initial_confidence_score=config.initial_confidence_score,
-            )
-            for player in generated_players
-        ]
-        session.add_all(registrations)
+                session.add_all(generated_players)
+                session.flush()
 
-        batch.active_player_count_start = active_start
-        batch.new_player_count = target_count
-        batch.active_player_count_end = active_start + target_count
-        session.flush()
+                registrations = [
+                    PlayerRegistration(
+                        player_id=player.id,
+                        batch_id=batch_id,
+                        registration_month=registration_month,
+                        assigned_region_id=player.home_region_id,
+                        initial_rating_value=config.initial_rating_mean,
+                        initial_confidence_score=config.initial_confidence_score,
+                    )
+                    for player in generated_players
+                ]
+                session.add_all(registrations)
+                session.flush()
+
+                for player in generated_players:
+                    session.expunge(player)
+                for registration in registrations:
+                    session.expunge(registration)
+                generated_so_far += current_chunk_size
+
+            batch.active_player_count_start = active_start
+            batch.new_player_count = target_count
+            batch.active_player_count_end = active_start + target_count
+            session.flush()
 
         return PlayerGenerationResult(
             generation_run_id=generation_run_id,
@@ -560,9 +622,18 @@ def choose_region(rng: random.Random, regions: Sequence[Region]) -> Region:
     return weighted_choice(rng, weighted_regions)
 
 
-def choose_age(rng: random.Random, config: PlayerGenerationConfig) -> int:
+def choose_age(
+    rng: random.Random,
+    config: PlayerGenerationConfig,
+    *,
+    sampler: WeightedSampler[tuple[int, int]] | None = None,
+) -> int:
     """Choose an age from configured age cohorts."""
-    low, high = weighted_choice(rng, config.age_distribution)
+    low, high = (
+        sampler.choose(rng)
+        if sampler is not None
+        else weighted_choice(rng, config.age_distribution)
+    )
     low = max(low, config.age_min)
     high = min(high, config.age_max)
     if high < low:
@@ -641,6 +712,12 @@ def weighted_choice(
         if target < cumulative:
             return value
     return normalized_items[-1][0]
+
+
+def _sampler_or_none(rows: Sequence[tuple[T, Any]]) -> WeightedSampler[T] | None:
+    if not rows:
+        return None
+    return WeightedSampler(rows)
 
 
 def _age_distribution(
