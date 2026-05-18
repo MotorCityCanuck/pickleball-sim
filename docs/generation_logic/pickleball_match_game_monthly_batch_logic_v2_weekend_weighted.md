@@ -180,6 +180,10 @@ behavior.**
 
 - Expected win probabilities should derive from combined team ratings.
 
+- The selected match-level expected winner should be stored before
+  outcome noise using `predicted_winning_team_number` and
+  `predicted_win_probability`.
+
 - Small rating gaps should produce highly competitive outcomes.
 
 - Noise injection should occasionally override expected balancing.
@@ -197,6 +201,12 @@ behavior.**
 - Blowouts should remain statistically uncommon.
 
 - Noise injection should occasionally generate upset victories.
+
+- Game generation should store rating-derived expected score share and
+  expected raw scores for both teams before applying score noise.
+
+- Win-by-two extensions should be controlled by
+  `win_by_two_extension_rate` when `win_by_two_rule_enabled` is true.
 
 ## 14. Noise Injection Framework
 
@@ -276,23 +286,29 @@ behavior.**
 
 - Travel radius limits.
 
-## 19. Suggested Data Model Enhancements
+## 19. Data Model Status and Future Enhancements
 
-- Match table.
+- Implemented: `matches`, `match_teams`, `match_team_players`, and
+  `match_games`.
 
-- Game table.
+- Implemented: predicted match winner fields on `matches`.
 
-- Session table.
+- Implemented: expected score share, actual score share, expected raw
+  scores, and score noise fields on `match_games`.
 
-- Match type dimension table.
+- Future enhancement: Session table.
 
-- Monthly batch tracking table.
+- Future enhancement: Match type dimension table.
 
-- Scheduling conflict audit table.
+- Implemented: Monthly batch tracking table.
 
-- Historical rating snapshot table.
+- Future enhancement: Scheduling conflict audit table.
 
-- Noise configuration table.
+- Implemented: Historical rating snapshot table via
+  `player_rating_history`.
+
+- Implemented as JSONB configuration profile payloads; a normalized noise
+  configuration table remains optional.
 
 ## 20. Recommended Processing Sequence
 
@@ -306,7 +322,8 @@ behavior.**
 
 - Generate player availability.
 
-- Generate sessions.
+- Generate sessions. This is a future enhancement; the current generator
+  schedules matches directly to dates.
 
 - Generate match schedules.
 
@@ -595,10 +612,11 @@ visible while exact day selection varies between simulation runs.
 
 ### 23.9 Example Monthly Distribution Workflow
 
-- Assume a region requires 50,000 generated matches for May.
+- Assume a region requires a configured number of generated matches for
+  May.
 
-- Split the 50,000 matches by configured match type distribution before
-  date assignment.
+- Split those matches by configured match type distribution before date
+  assignment.
 
 - For each match type, calculate a daily probability distribution across
   all May dates.

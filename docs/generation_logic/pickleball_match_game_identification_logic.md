@@ -104,6 +104,10 @@ matches and games within a large-scale synthetic simulation platform.**
 
 - Expected win probabilities should be calculated from team ratings.
 
+- The match row should persist a no-noise predicted winner using
+  `predicted_winning_team_number` and `predicted_win_probability` before
+  stochastic game outcomes are generated.
+
 - Controlled random noise should occasionally produce mismatches.
 
 - Tournament seeding should influence pairing quality.
@@ -120,13 +124,24 @@ matches and games within a large-scale synthetic simulation platform.**
 
 - Noise injection should occasionally generate upset results.
 
+- Game rows should persist both expected score share and expected raw
+  scores (`expected_team_one_score`, `expected_team_two_score`) so the
+  rating engine can compare rating-derived expectations to actual
+  points.
+
+- When `win_by_two_rule_enabled` is true, a configured
+  `win_by_two_extension_rate` should allow a minority of games to
+  extend beyond the target score.
+
 ## 11. Multi-Game Match Logic
 
 - Tournament matches may use best-of-three formatting.
 
 - Recreational play may use single-game matches.
 
-- Win probability should update dynamically between games.
+- Current implementation applies one rating-derived expected win
+  probability across all games in the match; dynamic between-game
+  probability updates are a future enhancement.
 
 - Player fatigue can slightly influence later games.
 
@@ -148,7 +163,9 @@ matches and games within a large-scale synthetic simulation platform.**
 
 - Ratings should update incrementally after match processing.
 
-- Historical records should never be regenerated retroactively.
+- Historical records should never be regenerated retroactively in
+  normal incremental operation. Full reseeding or local test-data
+  rebuilds may regenerate prior synthetic history.
 
 ## 14. Anti-Determinism Controls
 
@@ -174,7 +191,8 @@ matches and games within a large-scale synthetic simulation platform.**
 
 - Generate player availability.
 
-- Construct sessions.
+- Construct sessions. This remains a future enhancement; current match
+  generation schedules directly at the match date level.
 
 - Generate matches.
 

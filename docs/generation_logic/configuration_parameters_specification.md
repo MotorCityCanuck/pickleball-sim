@@ -30,6 +30,7 @@
 | `simulation_name` | STRING | (required) | max 255 chars | - | Human-readable simulation name |
 | `target_total_players` | INTEGER | 50000 | 1000-10000000 | players | Total player population target |
 | `historical_batch_count` | INTEGER | 12 | 1-36 | months | Number of historical months to generate |
+| `first_batch_month` | DATE | 2024-01-01 | ISO date | date | First monthly batch date for the simulation timeline |
 | `generation_run_mode` | ENUM | "full" | full, historical_only, incremental | - | Execution mode |
 
 ---
@@ -39,6 +40,7 @@
 | Parameter Name | Type | Default | Range/Options | Units | Description |
 |----------------|------|---------|---------------|-------|-------------|
 | `monthly_player_growth_rate` | DECIMAL | 0.02 | 0.0-0.10 | decimal | Monthly new player growth (2% default) |
+| `player_count` | INTEGER | 50000 | 1000-10000000 | players | Player generator target when no explicit override is supplied |
 | `initial_player_count` | INTEGER | (calculated) | - | players | Starting player population (calculated from growth) |
 | `player_gender_distribution_male` | DECIMAL | 0.50 | 0.0-1.0 | probability | Probability of male player |
 | `player_gender_distribution_female` | DECIMAL | 0.50 | 0.0-1.0 | probability | Probability of female player |
@@ -162,6 +164,7 @@
 |----------------|------|---------|---------------|-------|-------------|
 | `monthly_matches_per_active_player_mean` | DECIMAL | 8.0 | 1.0-30.0 | matches | Average matches per player per month |
 | `monthly_matches_per_active_player_std_dev` | DECIMAL | 4.0 | 1.0-15.0 | matches | Standard deviation of match frequency |
+| `matches_per_team_per_month` | DECIMAL | 4.0 | 0.1-30.0 | matches | Main match volume driver currently used by the match generator |
 | `weekend_concentration_bias` | DECIMAL | 1.75 | 1.0-3.0 | multiplier | Weekend date probability multiplier |
 | `saturday_weight` | DECIMAL | 2.25 | 1.0-4.0 | weight | Saturday match concentration |
 | `sunday_weight` | DECIMAL | 1.85 | 1.0-4.0 | weight | Sunday match concentration |
@@ -170,6 +173,7 @@
 | `league_weekday_multiplier` | DECIMAL | 1.40 | 1.0-2.5 | multiplier | League play weekday boost |
 | `tournament_weekend_multiplier` | DECIMAL | 2.50 | 1.5-4.0 | multiplier | Tournament weekend concentration |
 | `max_daily_match_share` | DECIMAL | 0.08 | 0.03-0.15 | probability | Maximum matches on single day |
+| `max_daily_matches_per_team` | INTEGER | 2 | 1-10 | matches | Maximum matches a team can be scheduled for on one date |
 | `date_allocation_noise_level` | ENUM | "medium" | low, medium, high | - | Day-of-month allocation noise |
 
 ---
@@ -281,8 +285,10 @@ simulation:
   simulation_version: "1.0"
   target_total_players: 50000
   historical_batch_count: 12
+  first_batch_month: "2024-01-01"
 
 player_generation:
+  player_count: 50000
   monthly_player_growth_rate: 0.02
   player_age_distribution_45_59: 0.32
   dominant_hand_right_probability: 0.88
@@ -308,7 +314,7 @@ regional:
   competitiveness_multiplier_default: 1.0
   competitiveness_noise_std_dev: 0.05
 
-clubs:
+club_generation:
   clubs_per_75k_population: 1.0
   unaffiliated_player_rate: 0.12
   multi_club_membership_rate: 0.06
@@ -317,9 +323,20 @@ clubs:
   secondary_membership_same_region_rate: 0.85
 
 match_scheduling:
+  matches_per_team_per_month: 4.0
   monthly_matches_per_active_player_mean: 8.0
   weekend_concentration_bias: 1.75
   saturday_weight: 2.25
+  max_daily_matches_per_team: 2
+
+games_and_scores:
+  games_per_match:
+    recreational: 1
+    league: 2
+    tournament: 3
+  game_target_score: 11
+  win_by_two_rule_enabled: true
+  win_by_two_extension_rate: 0.10
 
 matchmaking:
   rating_band_width_recreational: 400.0
@@ -348,9 +365,11 @@ export:
   "simulation": {
     "master_seed": 42,
     "simulation_name": "NAPA_Olympic_Analytics_v1",
-    "target_total_players": 50000
+    "target_total_players": 50000,
+    "first_batch_month": "2024-01-01"
   },
   "player_generation": {
+    "player_count": 50000,
     "monthly_player_growth_rate": 0.02,
     "dominant_hand_right_probability": 0.88,
     "dominant_hand_left_probability": 0.10,
@@ -365,7 +384,14 @@ export:
     "initial_rating_mean": 1500.0
   },
   "match_scheduling": {
-    "weekend_concentration_bias": 1.75
+    "matches_per_team_per_month": 4.0,
+    "weekend_concentration_bias": 1.75,
+    "max_daily_matches_per_team": 2
+  },
+  "games_and_scores": {
+    "game_target_score": 11,
+    "win_by_two_rule_enabled": true,
+    "win_by_two_extension_rate": 0.10
   },
   "export": {
     "export_format_primary": "parquet",

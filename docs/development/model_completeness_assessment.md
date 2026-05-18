@@ -33,26 +33,26 @@ defined these 22 core tables:
 21. `validation_results`
 22. `job_status`
 
-## Required Gap
+## Current Required Gap
 
-`match_games` is the safest next required model.
+The core persistence path for players, club memberships, teams, matches,
+match teams, match players, and games is now implemented. The next required
+modeling gap is not another table; it is the rating update engine that consumes
+`match_games.expected_team_one_score_share`, expected raw scores, actual scores,
+and prior `player_rating_history` rows to append new rating history records.
 
-The generation sequence includes a dedicated "Generate Games and Scores" step
-whose outputs are game records and game score metrics. The current schema has
-match-level records and match-team records, but it has no normalized child table
-for one or more games inside a match.
-
-Without `match_games`, the platform has no stable place to persist:
+`match_games` is implemented as the 23rd core ORM table and now stores:
 
 - game number within a match
 - per-game team scores
 - game winner
 - target score
 - win-by requirement
+- expected team-one score share
+- actual team-one score share
+- expected raw score for both teams
 - score-level noise metrics
 - chronological game result data used by rating updates
-
-Status: implemented as the 23rd core ORM table.
 
 ## Existing Coverage
 
@@ -70,7 +70,7 @@ The following documented concepts already have ORM coverage:
 - tournaments: `tournaments`
 - match shells and match teams: `matches`, `match_teams`,
   `match_team_players`
-- match games and scores: `match_games`
+- match games, expected scores, and actual scores: `match_games`
 - consolidated name reference data: `first_names`, `last_names`
 - operational metadata: `uploaded_files`, `export_runs`, `validation_results`,
   `job_status`
@@ -84,7 +84,7 @@ The following documented concepts already have ORM coverage:
 ## Deferred Optional Gaps
 
 The architecture documents also mention or imply several additional tables that
-should not be implemented before `match_games`:
+remain optional or deferred:
 
 - `player_truth_state`: optional instructor-only hidden true-skill state.
 - `team_chemistry_history`: useful for partnership analytics, but not required
@@ -109,7 +109,7 @@ should not be implemented before `match_games`:
 
 ## Recommended Next Reassessment
 
-Reassess whether team chemistry or hidden truth state should come next after
-the match simulation pipeline has a complete persistence path. The immediate
-implementation path should first make the existing raw seed-data staging schema
-usable through ingestion and normalization modules.
+Reassess whether the rating update engine can use the existing expected score
+and actual score fields without adding rating-event audit tables. Team
+chemistry history, hidden truth state, session tracking, and tournament bracket
+tables should remain secondary until rating updates are implemented and tested.

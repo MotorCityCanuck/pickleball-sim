@@ -2,9 +2,9 @@
 
 **Pickleball Simulation Platform - Authoritative Design Documentation**
 
-**Last Updated**: 2024-05-10  
+**Last Updated**: 2026-05-18  
 **Status**: ✅ Reviewed and Consistent  
-**Version**: 1.0
+**Version**: 1.1
 
 ---
 
@@ -50,8 +50,8 @@ This index provides a hierarchical guide to all authoritative design documents f
 **Key Sections**:
 - Complete DDL for the core schema, with ORM-generated reference SQL covering
   33 live tables
-- 82 explicit ORM indexes in the generated reference SQL
-- 51 check constraints in the live ORM expectations
+- 86 explicit ORM indexes in the generated reference SQL
+- Live check constraints are verified by `backend/tests/schema_expectations.py`
 - 12 unique constraints in the live ORM expectations
 - 35 validation rules
 - Parquet export strategy
@@ -382,20 +382,20 @@ architecture.md (FOUNDATION)
 
 ## Reading Order for New Developers
 
-### Phase 1: Foundation (Day 1)
+### Phase 1: Foundation
 1. `architecture/architecture.md` - Big picture
 2. `database/Pickleball_Simulation_Database_Design_v3.md` - Data model
 3. `docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md` - What changed and why
 
-### Phase 2: Configuration (Day 1-2)
+### Phase 2: Configuration
 4. `generation_logic/configuration_parameters_specification.md` - All parameters
 
-### Phase 3: Generation Logic (Day 2-3)
+### Phase 3: Generation Logic
 5. `generation_logic/Pickleball_Simulation_Generation_Sequence_Specification.md` - Step-by-step workflow
 6. `generation_logic/NAPA_Historical_Simulation_Design_v4_Player_Growth.md` - Rating system
 7. `generation_logic/pickleball_match_game_monthly_batch_logic_v2_weekend_weighted.md` - Monthly processing
 
-### Phase 4: Detailed Generation (Day 3-5)
+### Phase 4: Detailed Generation
 8. `generation_logic/player_region_and_name_assignment_logic.md`
 9. `generation_logic/pickleball_database_generation_club_logic_addendum.md`
 10. `generation_logic/player_to_club_assignment_logic_updated.md`
@@ -403,7 +403,7 @@ architecture.md (FOUNDATION)
 12. `generation_logic/pickleball_matchmaking_logic.md`
 13. `generation_logic/pickleball_match_game_identification_logic.md`
 
-### Phase 5: Implementation Contracts (Day 5-7)
+### Phase 5: Implementation Contracts
 14. `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md`
 
 ### Phase 6: Context (As Needed)

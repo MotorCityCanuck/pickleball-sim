@@ -24,13 +24,13 @@ pickleball-sim/
 │   │   │
 │   │   ├── 📂 core/                                # Core configuration
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 config.py                        # [TODO] Pydantic settings
-│   │   │   └── 📄 logging.py                       # [TODO] Logging config
+│   │   │   ├── 📄 config.py                        # Runtime settings
+│   │   │   ├── 📄 configuration_profiles.py        # Versioned config repository helpers
+│   │   │   └── 📄 default_configuration.py         # Default generation payload
 │   │   │
 │   │   ├── 📂 db/                                  # Database management
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 session.py                       # [TODO] SQLAlchemy session
-│   │   │   └── 📄 base.py                          # [TODO] Model registry
+│   │   │   └── 📄 session.py                       # SQLAlchemy engine/session scope
 │   │   │
 │   │   ├── 📂 models/                              # SQLAlchemy ORM models (33 total)
 │   │   │   ├── 📄 __init__.py
@@ -67,49 +67,18 @@ pickleball-sim/
 │   │   │   ├── 📄 raw_last_names.py                # Raw surname staging
 │   │   │   └── 📄 raw_state_prov_biases.py         # Raw surname bias staging
 │   │   │
-│   │   ├── 📂 repositories/                        # Data access layer
+│   │   ├── 📂 generation/                          # Batch planning and orchestration
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 base_repository.py               # [TODO] Base CRUD
-│   │   │   ├── 📄 player_repository.py             # [TODO] Player queries
-│   │   │   └── 📄 match_repository.py              # [TODO] Match queries
-│   │   │
-│   │   ├── 📂 services/                            # Business logic
-│   │   │   ├── 📄 __init__.py
-│   │   │   └── 📄 generation_orchestrator.py       # [TODO] Main orchestrator
+│   │   │   ├── 📄 control_plane.py                 # Generation run/batch creation
+│   │   │   └── 📄 orchestrator.py                  # Module orchestration
 │   │   │
 │   │   ├── 📂 generators/                          # Data generation modules
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 player_generator.py              # [TODO] Player creation
-│   │   │   ├── 📄 region_generator.py              # [TODO] Regional allocation
-│   │   │   ├── 📄 club_generator.py                # [TODO] Club creation
-│   │   │   ├── 📄 team_generator.py                # [TODO] Team formation
-│   │   │   ├── 📄 match_generator.py               # [TODO] Match scheduling
-│   │   │   └── 📄 rating_generator.py              # [TODO] Rating calculation
-│   │   │
-│   │   ├── 📂 simulations/                         # Simulation engines
-│   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 match_simulation.py              # [TODO] Match outcomes
-│   │   │   └── 📄 score_simulation.py              # [TODO] Score generation
-│   │   │
-│   │   ├── 📂 batch_processing/                    # Monthly batch logic
-│   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 monthly_processor.py             # [TODO] Batch orchestration
-│   │   │   └── 📄 batch_state_machine.py           # [TODO] State management
-│   │   │
-│   │   ├── 📂 analytics/                           # Analytics computations
-│   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 confidence_calculator.py         # [TODO] Confidence scoring
-│   │   │   └── 📄 ranking_calculator.py            # [TODO] Ranking logic
-│   │   │
-│   │   ├── 📂 exports/                             # Export pipelines
-│   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 parquet_exporter.py              # [TODO] Parquet generation
-│   │   │   └── 📄 export_manifest.py               # [TODO] Manifest creation
-│   │   │
-│   │   ├── 📂 validation/                          # Data quality validation
-│   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 validation_engine.py             # [TODO] Rule executor
-│   │   │   └── 📄 validation_rules.py              # [TODO] 35 validation rules
+│   │   │   ├── 📄 players.py                       # Player creation and initial ratings
+│   │   │   ├── 📄 club_memberships.py              # Player-club memberships
+│   │   │   ├── 📄 teams.py                         # Point-in-time team determination
+│   │   │   ├── 📄 matches.py                       # Match scheduling and pairing
+│   │   │   └── 📄 games.py                         # Game scores and expected score metrics
 │   │   │
 │   │   ├── 📂 web/                                 # Web interface (Phase 5)
 │   │   │   ├── 📄 __init__.py
@@ -159,10 +128,17 @@ pickleball-sim/
 │   └── 📂 uploads/                                 # User-uploaded files
 │       └── 📄 .gitkeep
 │
-├── 📂 scripts/                                     # Utility scripts
-│   ├── 📄 setup_dev_environment.sh                 # Automated setup
+├── 📂 backend/scripts/                             # Backend command-line utilities
+│   ├── 📄 recreate_db_from_orm.py                  # Rebuild local DB from ORM metadata
+│   ├── 📄 export_schema_from_orm.py                # Export schema.sql from ORM metadata
+│   ├── 📄 seed_configuration_profile.py            # Seed default config profile/version
 │   ├── 📄 load_raw_seed_data.py                    # Load raw seed staging tables
-│   └── 📄 normalize_seed_data.py                   # Promote raw seed data to production tables
+│   ├── 📄 normalize_seed_data.py                   # Promote raw seed data to production tables
+│   ├── 📄 create_generation_plan.py                # Create generation run and batch records
+│   ├── 📄 generate_players.py                      # Generate players and initial ratings
+│   ├── 📄 generate_club_memberships.py             # Generate club memberships
+│   ├── 📄 generate_teams.py                        # Determine point-in-time teams
+│   └── 📄 generate_matches.py                      # Generate matches, teams, players, and games
 │
 ├── 📂 docs/                                        # Additional documentation
 │   └── (Created during design review)
@@ -200,19 +176,15 @@ pickleball-sim/
 
 | Directory | Purpose | Priority | Status |
 |-----------|---------|----------|--------|
-| `backend/app/core/` | Configuration and settings | 🔴 Critical | TODO |
-| `backend/app/db/` | Database session management | 🔴 Critical | TODO |
-| `backend/app/models/` | SQLAlchemy ORM models (33 tables) | 🔴 Critical | TODO |
-| `backend/app/repositories/` | Data access layer | 🟠 High | TODO |
-| `backend/app/generators/` | Data generation modules | 🟠 High | TODO |
-| `backend/app/simulations/` | Match/score simulation | 🟠 High | TODO |
-| `backend/app/batch_processing/` | Monthly orchestration | 🟠 High | TODO |
-| `backend/app/validation/` | Data quality rules | 🟡 Medium | TODO |
-| `backend/app/exports/` | Parquet export logic | 🟡 Medium | TODO |
-| `backend/app/analytics/` | Derived computations | 🟡 Medium | TODO |
-| `backend/app/web/` | FastAPI control panel | 🟢 Low (Phase 5) | TODO |
-| `backend/scripts/` | ORM schema recreation/export utilities | 🔴 Critical | TODO |
-| `backend/tests/` | Test suite | 🟠 High | TODO |
+| `backend/app/core/` | Configuration and settings | 🔴 Critical | Implemented |
+| `backend/app/db/` | Database session management | 🔴 Critical | Implemented |
+| `backend/app/models/` | SQLAlchemy ORM models (33 tables) | 🔴 Critical | Implemented |
+| `backend/app/generation/` | Generation run planning and orchestration | 🟠 High | Implemented |
+| `backend/app/generators/` | Data generation modules | 🟠 High | In progress |
+| `backend/app/seed_data_ingest/` | Raw seed loading | 🟠 High | Implemented |
+| `backend/app/seed_data_normalize/` | Seed data normalization | 🟠 High | Implemented |
+| `backend/scripts/` | ORM, seed, and generation utilities | 🔴 Critical | Implemented |
+| `backend/tests/` | Test suite | 🟠 High | Implemented |
 | `data/` | Data storage (git-ignored) | 🟠 High | ✅ Created |
 | `scripts/` | Utility scripts | 🟡 Medium | Partial |
 
@@ -220,33 +192,33 @@ pickleball-sim/
 
 ## 🎯 Implementation Phases
 
-### Phase 1: Foundation (Current) - Days 1-2
+### Phase 1: Foundation
 1. ✅ Project structure created
-2. ⏭️ Database models (22 files)
-3. ⏭️ ORM schema recreation scripts
-4. ⏭️ Session management
-5. ⏭️ Configuration system
+2. ✅ Database models (33 tables)
+3. ✅ ORM schema recreation scripts
+4. ✅ Session management
+5. ✅ Configuration system
 
-### Phase 2: Core Generation - Days 3-7
-6. Regional distribution
-7. Player generation
-8. Club generation
-9. Reference data loading
-10. Basic testing
+### Phase 2: Core Generation
+6. ✅ Raw seed loading and normalization
+7. ✅ Player generation
+8. ✅ Initial rating history generation
+9. ✅ Club membership generation
+10. ✅ Point-in-time team determination
 
-### Phase 3: Match Simulation - Days 8-12
-11. Team formation
-12. Match scheduling
-13. Matchmaking
-14. Score generation
-15. Rating calculation
+### Phase 3: Match Simulation
+11. ✅ Match scheduling
+12. ✅ Matchmaking
+13. ✅ Game and score generation
+14. ✅ Predicted winner and expected score fields
+15. ⏭️ Rating calculation
 
-### Phase 4: Batch Processing - Days 13-17
-16. Monthly orchestration
-17. Player registration
-18. Validation framework
-19. Parquet exports
-20. Integration tests
+### Phase 4: Batch Processing
+16. ✅ Generation run and batch creation
+17. ⏭️ Full monthly orchestration
+18. ⏭️ Validation framework
+19. ⏭️ Parquet exports
+20. ✅ Integration tests for implemented modules
 
 ### Phase 5: Web Interface - Days 18-20
 21. FastAPI setup
@@ -261,8 +233,9 @@ pickleball-sim/
 - **Total Directories**: 40+
 - **Configuration Files**: 4 (✅ Created)
 - **Documentation Files**: 25+ (✅ Created)
-- **Python Modules to Create**: ~60 (⏭️ Next)
-- **Test Files to Create**: ~40 (⏭️ Later)
+- **Backend Python Modules**: 50+ implemented across ORM, seed loading,
+  generation, and tests
+- **Test Files**: 30 implemented backend test modules
 
 ---
 
@@ -291,6 +264,7 @@ pickleball-sim/
 
 ---
 
-**Last Updated**: 2024-05-10  
-**Current Phase**: 1 - Foundation  
-**Progress**: Structure Complete, Models TODO
+**Last Updated**: 2026-05-18  
+**Current Phase**: Match simulation and rating engine buildout  
+**Progress**: Core ORM, seed loading, players, clubs, teams, matches,
+and games implemented; rating update engine remains next.

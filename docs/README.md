@@ -8,8 +8,10 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 ### Key Features
 
-- 🏓 **50,000 default synthetic players** across North America
-- 📊 **10M+ historical matches** with realistic scoring
+- 🏓 **50,000 default synthetic players** across North America, with
+  smaller test runs commonly using 5,000 players
+- 📊 **Monthly generated matches and games** with rating-derived expected
+  scores, predicted winners, and realistic scoring
 - 📅 **Monthly batch processing** for incremental data releases
 - 🎯 **Rating system** with confidence and volatility tracking
 - 🤝 **Team dynamics** with persistent partnerships
@@ -132,25 +134,25 @@ Configuration → Monthly Batch Processor
 
 ## Development Phases
 
-### ✅ Phase 1: Foundation (Current)
+### ✅ Phase 1: Foundation
 - [x] Project structure
 - [x] Documentation review
-- [ ] Database schema implementation
-- [ ] SQLAlchemy models
-- [ ] ORM-driven database recreation scripts
+- [x] Database schema implementation
+- [x] SQLAlchemy models
+- [x] ORM-driven database recreation scripts
 
-### 🔄 Phase 2: Core Generation
-- [ ] Configuration system
-- [ ] Regional distribution engine
-- [ ] Player generation
-- [ ] Club generation and assignment
-- [ ] Reference data loading
+### ✅ Phase 2: Core Generation
+- [x] Configuration system
+- [x] Raw seed data loading and normalization
+- [x] Player generation with initial rating history
+- [x] Club membership generation, including unaffiliated and multi-club players
+- [x] Team determination
 
-### 🔜 Phase 3: Match Simulation
-- [ ] Team formation logic
-- [ ] Match scheduling (weekend-weighted)
-- [ ] Matchmaking engine
-- [ ] Game and score generation
+### 🔄 Phase 3: Match Simulation
+- [x] Team formation logic
+- [x] Match scheduling (weekend-weighted)
+- [x] Matchmaking engine
+- [x] Game and score generation
 - [ ] Rating calculation engine
 
 ### 🔜 Phase 4: Monthly Batch Processing
@@ -250,6 +252,6 @@ For questions about the architecture, see the authoritative design documents in:
 
 ---
 
-**Status**: Phase 1 - Foundation Setup ✅  
-**Last Updated**: 2024-05-10  
-**Version**: 1.0
+**Status**: Core generation and match/game generation in progress  
+**Last Updated**: 2026-05-18  
+**Version**: 1.1

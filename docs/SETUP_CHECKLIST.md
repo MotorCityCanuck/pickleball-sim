@@ -1,26 +1,27 @@
 # Development Setup Checklist
 
-**Pickleball Simulation Platform - Phase 1 Foundation Setup**
+**Pickleball Simulation Platform - Development Setup Checklist**
+
+**Current status note (2026-05-18):** The foundation work described here is
+complete in the live repository. The active codebase now includes 33 ORM-backed
+tables, ORM schema recreation/export scripts, configuration profiles, raw seed
+loading/normalization, player generation, club memberships, team determination,
+match generation, and game generation. Use this file as an environment setup
+checklist, not as the current implementation status source.
 
 ---
 
 ## ✅ STEP 1: PROJECT STRUCTURE (COMPLETE)
 
 - [x] Created `backend/` directory structure
-- [x] Created `backend/app/` with all submodules
+- [x] Created `backend/app/` with implemented core submodules
   - [x] `core/` - Configuration and settings
   - [x] `db/` - Database session management
   - [x] `models/` - SQLAlchemy ORM models
-  - [x] `repositories/` - Data access layer
-  - [x] `services/` - Business logic services
   - [x] `generators/` - Data generation modules
-  - [x] `simulations/` - Simulation engines
-  - [x] `batch_processing/` - Monthly batch orchestration
-  - [x] `analytics/` - Analytics computations
-  - [x] `exports/` - Parquet export logic
-  - [x] `validation/` - Data quality validation
-  - [x] `web/` - FastAPI web interface (later)
-  - [x] `utils/` - Shared utilities
+  - [x] `generation/` - Generation planning/orchestration
+  - [x] `seed_data_ingest/` - Raw seed loading
+  - [x] `seed_data_normalize/` - Seed normalization
 - [x] Created `backend/schema.sql` for database schema
 - [x] Created `backend/tests/` structure
 - [x] Created `data/` directories
@@ -119,8 +120,8 @@ python backend/scripts/recreate_db_from_orm.py
 python backend/scripts/export_schema_from_orm.py
 ```
 
-- [ ] Schema applied successfully
-- [ ] `backend/schema.sql` regenerated successfully
+- [x] Schema applied successfully
+- [x] `backend/schema.sql` regenerated successfully
 
 ### Verify Database Schema
 
@@ -134,44 +135,45 @@ docker exec -it pickleball-postgres psql -U postgres -d pickleball
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 \q
 ```
-- [ ] All 33 ORM-backed tables created
-- [ ] Constraints applied correctly
-- [ ] Indexes created
-- [ ] Foreign keys established
+- [x] All 33 ORM-backed tables created
+- [x] Constraints applied correctly
+- [x] Indexes created
+- [x] Foreign keys established
 
 ---
 
-## ⏭️ STEP 4: CREATE SQLALCHEMY MODELS (NEXT)
+## ✅ STEP 4: CREATE SQLALCHEMY MODELS (COMPLETE)
 
 Based on `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
 
 ### Core Foundation Models (Priority 1)
 
-- [ ] `backend/app/models/base.py` - Base class and mixins
-- [ ] `backend/app/models/generation_runs.py`
-- [ ] `backend/app/models/monthly_batches.py`
-- [ ] `backend/app/models/regions.py`
+- [x] `backend/app/models/base.py` - Base class and mixins
+- [x] `backend/app/models/generation_runs.py`
+- [x] `backend/app/models/monthly_batches.py`
+- [x] `backend/app/models/regions.py`
 
 ### Player and Identity Models (Priority 2)
 
-- [ ] `backend/app/models/players.py`
-- [ ] `backend/app/models/player_rating_history.py`
-- [ ] `backend/app/models/player_assessment_history.py`
-- [ ] `backend/app/models/player_registrations.py`
+- [x] `backend/app/models/players.py`
+- [x] `backend/app/models/player_rating_history.py`
+- [x] `backend/app/models/player_assessment_history.py`
+- [x] `backend/app/models/player_registrations.py`
 
 ### Club and Team Models (Priority 3)
 
-- [ ] `backend/app/models/clubs.py`
-- [ ] `backend/app/models/club_memberships.py`
-- [ ] `backend/app/models/teams.py`
-- [ ] `backend/app/models/team_memberships.py`
+- [x] `backend/app/models/clubs.py`
+- [x] `backend/app/models/club_memberships.py`
+- [x] `backend/app/models/teams.py`
+- [x] `backend/app/models/team_memberships.py`
 
 ### Match Models (Priority 4)
 
-- [ ] `backend/app/models/matches.py`
-- [ ] `backend/app/models/match_teams.py`
-- [ ] `backend/app/models/match_team_players.py`
-- [ ] `backend/app/models/tournaments.py`
+- [x] `backend/app/models/matches.py`
+- [x] `backend/app/models/match_games.py`
+- [x] `backend/app/models/match_teams.py`
+- [x] `backend/app/models/match_team_players.py`
+- [x] `backend/app/models/tournaments.py`
 
 ### Reference Data Models (Priority 5)
 
@@ -180,20 +182,20 @@ Based on `database/Pickleball_Simulation_Database_Design_v3.md` Section 11.
 
 ### Operational Models (Priority 6)
 
-- [ ] `backend/app/models/batch_runs.py`
-- [ ] `backend/app/models/uploaded_files.py`
-- [ ] `backend/app/models/export_runs.py`
-- [ ] `backend/app/models/validation_results.py`
-- [ ] `backend/app/models/job_status.py`
+- [x] `backend/app/models/batch_runs.py`
+- [x] `backend/app/models/uploaded_files.py`
+- [x] `backend/app/models/export_runs.py`
+- [x] `backend/app/models/validation_results.py`
+- [x] `backend/app/models/job_status.py`
 
 ### Model Package
 
-- [ ] Update `backend/app/models/__init__.py` with all imports
+- [x] Update `backend/app/models/__init__.py` with all imports
 
 ---
 
 
-## ⏭️ STEP 5: VERIFY SQLALCHEMY MODELS (NEXT)
+## ✅ STEP 5: VERIFY SQLALCHEMY MODELS (COMPLETE)
 
 
 ### Test Model Imports
@@ -208,8 +210,8 @@ python -c "from app.models import Player, Region, MonthlyBatch; print('Models im
 
 
 
-- [ ] All models import without errors
-- [ ] No circular dependency issues
+- [x] All models import without errors
+- [x] No circular dependency issues
 
 
 ### Test Database Connection via SQLAlchemy
@@ -228,8 +230,8 @@ python -c "from app.db.session import get_db; from app.models import Player; pri
 ```
 
 
-- [ ] SQLAlchemy can connect to database
-- [ ] Models can query existing tables
+- [x] SQLAlchemy can connect to database
+- [x] Models can query existing tables
 
 
 **Note**: SQLAlchemy models are the schema source of truth. `schema.sql` is a generated/reference artifact.
@@ -251,12 +253,12 @@ python -c "from app.db.session import get_db; from app.models import Player; pri
 
 ---
 
-## ⏭️ STEP 6: DATABASE SESSION MANAGEMENT (NEXT)
+## ✅ STEP 6: DATABASE SESSION MANAGEMENT (COMPLETE)
 
 ### Create Database Session Handler
 
-- [ ] `backend/app/db/session.py` - SQLAlchemy session management
-- [ ] `backend/app/db/base.py` - Import all models for ORM metadata setup
+- [x] `backend/app/db/session.py` - SQLAlchemy session management
+- [x] `backend/app/models/__init__.py` - Imports all models for ORM metadata setup
 
 ### Test Database Connection
 
@@ -272,19 +274,21 @@ def test_database_connection():
 ```bash
 pytest backend/tests/test_db_connection.py
 ```
-- [ ] Test passes
-- [ ] Can create session
-- [ ] Can execute queries
+- [x] Test passes
+- [x] Can create session
+- [x] Can execute queries
 
 ---
 
-## ⏭️ STEP 7: CONFIGURATION SYSTEM (NEXT)
+## ✅ STEP 7: CONFIGURATION SYSTEM (COMPLETE)
 
 ### Create Configuration Classes
 
-- [ ] `backend/app/core/config.py` - Pydantic settings
-- [ ] Load from environment variables
-- [ ] Based on `generation_logic/configuration_parameters_specification.md`
+- [x] `backend/app/core/config.py` - Runtime settings
+- [x] `backend/app/core/default_configuration.py` - Default generation payload
+- [x] `backend/app/core/configuration_profiles.py` - Versioned config profile helpers
+- [x] Load from environment variables where applicable
+- [x] Based on `generation_logic/configuration_parameters_specification.md`
 
 ### Test Configuration
 
@@ -315,20 +319,21 @@ pytest backend/tests/test_db_connection.py
 |-------|--------|------------|
 | **1. Project Structure** | ✅ Complete | 100% |
 | **2. Environment Setup** | 🔄 In Progress | 50% |
-| **3. Database Init** | ⏭️ Next | 0% |
-| **4. SQLAlchemy Models** | ⏭️ Next | 0% |
-| **5. Migrations** | ⏭️ Next | 0% |
-| **6. Session Management** | ⏭️ Next | 0% |
-| **7. Configuration** | ⏭️ Next | 0% |
-| **8. Testing** | ⏭️ Next | 0% |
+| **3. Database Init** | ✅ Complete | 100% |
+| **4. SQLAlchemy Models** | ✅ Complete | 100% |
+| **5. ORM Schema Export/Recreation** | ✅ Complete | 100% |
+| **6. Session Management** | ✅ Complete | 100% |
+| **7. Configuration** | ✅ Complete | 100% |
+| **8. Testing** | ✅ Complete | 100% |
 
 ---
 
 ## 🎯 CURRENT FOCUS
 
-**YOU ARE HERE** → Step 2: Environment Setup
+**Current implementation focus** → Rating update engine
 
-**NEXT STEP** → Step 3: Database Initialization (ORM recreation setup)
+**Next build step** → Consume `match_games` expected/actual score metrics and
+append new `player_rating_history` rows.
 
 ---
 
@@ -380,18 +385,18 @@ pip install -r requirements.txt
 
 ## ✅ COMPLETION CRITERIA
 
-Phase 1 is complete when:
+Foundation setup is complete when:
 
 - [x] All directories created
-- [ ] PostgreSQL running via Docker
-- [ ] Python virtual environment created
-- [ ] All dependencies installed
-- [ ] `backend/schema.sql` generated from ORM metadata
-- [ ] All 33 SQLAlchemy models created
-- [ ] Schema applied to database (all 33 tables exist)
-- [ ] Database session management working
-- [ ] Configuration system working
-- [ ] Basic tests passing
+- [x] PostgreSQL running via Docker for local development
+- [x] Python virtual environment created
+- [x] All dependencies installed
+- [x] `backend/schema.sql` generated from ORM metadata
+- [x] All 33 SQLAlchemy models created
+- [x] Schema applied to database (all 33 tables exist)
+- [x] Database session management working
+- [x] Configuration system working
+- [x] Basic tests passing
 
 **Estimated Time**: 1-2 days focused work
 

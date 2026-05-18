@@ -18,14 +18,21 @@ suitable for the initial implementation phase of the platform.
 
 # 2. Recommended Initial Club Count
 
-- For an ecosystem of approximately 250,000 simulated players, the
-  recommended starting point is approximately 4,000 clubs.
+- The current default configuration uses an explicit
+  `target_club_count` of 4,000 clubs for local generation, independent
+  of the smaller 50,000-player default population used during active
+  development.
+
+- For larger instructional releases, an ecosystem of approximately
+  250,000 simulated players may also use approximately 4,000 clubs as a
+  reasonable starting point.
 
 - This creates an average of roughly 62 players per club while still
   allowing realistic distribution variance.
 
-- The club count should scale proportionally with overall player
-  population.
+- When `target_club_count` is not supplied, the club count should scale
+  proportionally with regional population using the configured
+  `clubs_per_75k_population` heuristic.
 
 # 3. Recommended Club Size Distribution
 

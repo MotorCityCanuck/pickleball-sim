@@ -514,6 +514,19 @@ initial_skill_max: 3500
 
 The distribution should produce many beginner and lower-intermediate
 players, fewer advanced players, and very few elite starting players.
+Observed initial ratings are stored separately in `player_rating_history`
+using `initial_rating_mean`, `initial_rating_std_dev`, and the elite-tail
+controls:
+
+```text
+initial_rating_elite_tail_rate: 0.003
+initial_rating_elite_min: 4000.0
+initial_rating_elite_max: 4500.0
+```
+
+The elite tail prevents the initial rating distribution from being
+unrealistically capped near the low 2000s while still keeping 4000+
+ratings rare.
 
 ## 25.3 Player Status
 

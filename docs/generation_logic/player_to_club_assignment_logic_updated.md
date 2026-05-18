@@ -30,9 +30,11 @@ assignment.
 
 - 6\. Calculate eligible clubs for each player
 
-- 7\. Apply probabilistic club assignment logic
+- 7\. Apply probabilistic club assignment logic, including configured
+  unaffiliated players
 
-- 8\. Persist club membership records
+- 8\. Persist primary and, for a configured minority, secondary club
+  membership records
 
 - 9\. Initialize social graph and partner affinity relationships
 
@@ -74,7 +76,7 @@ assignment.
 
 - Recommended structure:
 
-- club_membership
+- club_memberships
 
 - player_id
 
@@ -94,7 +96,8 @@ assignment.
 
 - Supports independent/unaffiliated players.
 
-- Supports future multi-club membership logic.
+- Supports current multi-club membership logic for an infrequent
+  configured share of affiliated players.
 
 - Supports relocation and regional migration.
 
@@ -131,6 +134,23 @@ assignment.
 
 - Occasional stochastic overrides should occur for approximately 1%--3%
   of assignments.
+
+# Multi-Club and Unaffiliated Controls
+
+- `unaffiliated_player_rate` controls the baseline share of players who
+  should not receive a club membership.
+
+- Players may also remain unaffiliated naturally when their region has
+  no eligible clubs.
+
+- `multi_club_membership_rate` controls the share of affiliated players
+  eligible for secondary memberships.
+
+- `min_club_memberships_per_affiliated_player` and
+  `max_club_memberships_per_player` bound active membership counts.
+
+- `secondary_membership_same_region_rate` controls whether secondary
+  memberships remain in the same region when feasible.
 
 # Power-Law Club Distribution
 

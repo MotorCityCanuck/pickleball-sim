@@ -10,7 +10,7 @@
 
 ## Welcome!
 
-You're about to work on a large-scale synthetic pickleball analytics simulation platform designed for graduate-level data science education. This platform generates realistic historical data spanning 50,000 default players, 10M+ matches, and includes sophisticated rating systems, team dynamics, and monthly batch processing.
+You're about to work on a large-scale synthetic pickleball analytics simulation platform designed for graduate-level data science education. This platform generates realistic historical data spanning 50,000 default players, configurable monthly match volume, and includes rating systems, team dynamics, expected scoring, and monthly batch processing.
 
 **This guide will get you oriented in 15 minutes.**
 
@@ -22,7 +22,8 @@ You're about to work on a large-scale synthetic pickleball analytics simulation 
 
 This platform:
 - Generates **synthetic pickleball data** for analytics education
-- Creates **50,000 players** across North America
+- Creates **50,000 default players** across North America, with smaller
+  5,000-player runs used for efficient local testing
 - Simulates **12 months of historical match data**
 - Processes **monthly batch increments** for future data releases
 - Exports **Parquet datasets** for student analytics projects
@@ -96,11 +97,11 @@ Graduate students will:
       ↓
 4. Form/Update Teams
       ↓
-5. Schedule Matches (weekend-weighted)
+5. Schedule Matches (weekend-weighted, capped by team/day limits)
       ↓
 6. Pair Opponents (rating-based)
       ↓
-7. Generate Games & Scores
+7. Generate Games, Expected Scores & Actual Scores
       ↓
 8. Update Player Ratings
       ↓
@@ -278,6 +279,7 @@ players (many) ──> team_memberships (many) ──> teams (many)
 # Global
 master_seed: 42                          # Reproducibility
 target_total_players: 50000             # Population size
+first_batch_month: "2024-01-01"         # Current simulation start month
 historical_batch_count: 12               # Initial history
 
 # Player Growth
@@ -285,8 +287,14 @@ monthly_player_growth_rate: 0.02         # 2% monthly growth
 
 # Ratings
 initial_rating_mean: 1500.0              # Starting rating
+initial_rating_elite_tail_rate: 0.003    # Small high-rating tail
 rating_noise_std_dev: 75.0               # Match performance variance
 k_factor_new_player: 48.0                # Rating volatility
+
+# Match/Game Generation
+matches_per_team_per_month: 4.0          # Approx. weekly team play
+max_daily_matches_per_team: 2            # Daily scheduling cap
+win_by_two_extension_rate: 0.10          # Chance of extended games
 
 # Scheduling
 monthly_matches_per_active_player_mean: 8.0   # Match frequency

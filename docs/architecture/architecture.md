@@ -94,7 +94,7 @@ Examples of generated data may include users, players, teams, matches, transacti
 | Backend Runtime | Python | Primary runtime |
 | Database | PostgreSQL | Relational persistence |
 | ORM | SQLAlchemy | Database queries and data access |
-| Data Generation | Faker + custom generators | Synthetic data creation |
+| Data Generation | Custom seeded generators | Synthetic data creation |
 | Data Processing | Pandas | Data manipulation |
 | Parquet Export | PyArrow or fastparquet | Parquet file generation |
 | Validation | Pydantic | Structured validation and settings |
@@ -441,15 +441,14 @@ backend/app/generators/
 
 Generators are responsible for creating synthetic entities, applying randomization, generating realistic values, maintaining relational consistency, creating temporal patterns, and enforcing generation constraints.
 
-Example generators:
+Current generator modules:
 
 ```text
-player_generator.py
-region_generator.py
-match_generator.py
-event_generator.py
-ranking_generator.py
-telemetry_generator.py
+players.py
+club_memberships.py
+teams.py
+matches.py
+games.py
 ```
 
 ## 10.2 Simulation Layer

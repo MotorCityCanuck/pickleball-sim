@@ -459,7 +459,7 @@ random noise.
                                       refresh scope; club table; regional
                                       constraints
 
-  **Primary outputs**                 player_club_assignment rows; club
+  **Primary outputs**                 club_memberships rows; club
                                       membership metrics
 
   **Dependencies**                    club_generator;
@@ -498,11 +498,18 @@ random noise.
 
 - Warn when clubs in a region are exhausted.
 
-- Fail if a player cannot be assigned under mandatory constraints.
+- Fail only when a player selected for mandatory affiliation cannot be
+  assigned under mandatory constraints. Players in regions with no
+  eligible clubs may naturally remain unaffiliated.
 
 ### Minimum Tests
 
-- Every active player has exactly one active club assignment.
+- Every affiliated player has exactly one active primary club
+  membership.
+
+- Configured unaffiliated players have no `club_memberships` rows.
+
+- Multi-club membership counts respect configured min/max bounds.
 
 - Large clubs receive proportionally more players.
 
@@ -686,7 +693,10 @@ constraints, and controlled noise.
 
   **Configuration keys**              matches_per_team_per_month;
                                       weekend_concentration_bias;
-                                      holiday_bias; weekday_noise;
+                                      saturday_weight; sunday_weight;
+                                      friday_weight;
+                                      weekday_evening_weight;
+                                      max_daily_matches_per_team;
                                       match_type_weights
   -----------------------------------------------------------------------
 

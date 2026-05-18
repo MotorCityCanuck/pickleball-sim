@@ -397,7 +397,7 @@ The simulation should generate:
 
 - Doubles partnership histories
 
-- Player assessment history records
+- Player rating history records and optional assessment history records
 
 - Monthly rating histories
 
@@ -472,9 +472,11 @@ as:\
 • Tournament-driven player acquisition\
 • Demographic-specific growth patterns\
 \
-New-player records should first appear in the players table and receive
-their initial organizational assessment through an initial
-player_assessments record tied to the registration batch date.
+New-player records should first appear in the `players` table and
+receive their initial observed rating through a
+`player_rating_history` record tied to the registration batch date.
+`player_assessment_history` is reserved for broader assessment metrics,
+not for the canonical player rating.
 
 Doubles partnerships are a critical component of the simulation.
 

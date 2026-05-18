@@ -355,8 +355,8 @@ stable demographic fields to new players using weighted reference data.
 
 ## 10. Assign Clubs to Players
 
-**Purpose:** Assign each new player to one club using region, club size,
-type, and randomized preference noise.
+**Purpose:** Assign affiliated players to one or more clubs using
+region, club size, type, capacity, and randomized preference noise.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
@@ -364,17 +364,27 @@ type, and randomized preference noise.
   **Inputs**                          new player records; clubs; club
                                       assignment config
 
-  **Outputs**                         player_club_assignment records
+  **Outputs**                         club_memberships records
 
   **Must run after**                  Assign Names and Demographics
 
-  **Success criteria**                Every active player has a valid
-                                      active club assignment.
+  **Success criteria**                Affiliated players have valid
+                                      active club memberships;
+                                      configured unaffiliated players
+                                      remain without memberships.
   -----------------------------------------------------------------------
 
 ### Validation Gates
 
-- Exactly one active club assignment per active player.
+- Exactly one primary active club membership per affiliated player.
+
+- Some players may remain unaffiliated according to
+  `unaffiliated_player_rate` or because their region has no eligible
+  clubs.
+
+- A configured minority of affiliated players may hold secondary
+  memberships, bounded by
+  `max_club_memberships_per_player`.
 
 - No invalid cross-region assignment.
 
@@ -382,8 +392,9 @@ type, and randomized preference noise.
 
 ## 11. Initialize New Player Ratings and Confidence
 
-**Purpose:** Create initial assessment history records for new players,
-using configured rating distribution and regional competitiveness.
+**Purpose:** Create initial rating history records for new players,
+using configured rating distribution, elite-tail controls, and regional
+competitiveness.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
@@ -391,7 +402,7 @@ using configured rating distribution and regional competitiveness.
   **Inputs**                          new players; regional
                                       competitiveness; rating config
 
-  **Outputs**                         player_assessment_history records
+  **Outputs**                         player_rating_history records
 
   **Must run after**                  Assign Clubs to Players
 
@@ -405,7 +416,10 @@ using configured rating distribution and regional competitiveness.
 
 - Confidence bounds are enforced.
 
-- Assessment effective date belongs to batch month.
+- Rating effective date belongs to batch month.
+
+- Initial ratings are persisted in `player_rating_history`, not in
+  `players` or `player_assessment_history`.
 
 ## 12. Build Monthly Eligible Player Pool
 
@@ -415,7 +429,7 @@ formation in the current month.
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Inputs**                          active players; club assignments;
+  **Inputs**                          active players; club memberships;
                                       rating snapshots; eligibility
                                       config
 
@@ -532,8 +546,8 @@ controlled noise.
 ## 16. Generate Games and Scores
 
 **Purpose:** Generate configured games per match, including plausible
-score lines, rating-derived expected scores, outcomes, upset probability,
-and score noise.
+score lines, rating-derived expected scores, outcomes, win-by-two
+extensions, upset probability, and score noise.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
