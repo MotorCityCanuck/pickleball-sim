@@ -343,6 +343,14 @@ editing, payload validation, and run snapshot creation.
 
 ---
 
+### 5.4 Web Control Panel Design
+**File**: `development/web_control_panel_design.md`
+**Purpose**: Proposed single-page FastAPI/HTMX control panel for configuration and workload orchestration
+
+**When to Reference**: Building the web layer, job status polling, configuration editing, workload controls
+
+---
+
 ## 6. Review and Correction Documents
 
 ### 6.1 Design Review Summary
