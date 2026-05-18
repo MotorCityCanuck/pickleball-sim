@@ -20,6 +20,28 @@ supporting controlled randomness and evolving player relationships.**
 - Introduce controlled randomness without eliminating long-term
   consistency.
 
+## 1.1 Point-in-Time Team Semantics
+
+- Team state must always be evaluated as of a specific monthly batch
+  month.
+
+- A team is active for a point in time when `formation_date` is on or
+  before the batch month, `team_status` is active, and
+  `dissolution_date` is null or after the point-in-time date.
+
+- Team membership is active for a point in time when `joined_date` is on
+  or before the point-in-time date and `left_date` is null or after that
+  date.
+
+- Monthly generation must not rebuild all teams from scratch. It should
+  load the prior point-in-time team state, retain most eligible teams,
+  dissolve or mark dormant a configured minority, and create new teams
+  for newly eligible players or replacement demand.
+
+- Dormant teams remain part of team history and may reform later by
+  reactivating the same team record and opening new team membership
+  periods when the same partnership returns.
+
 ## 2. Team Persistence Philosophy
 
 - Real-world pickleball players commonly maintain recurring partners
@@ -33,6 +55,10 @@ supporting controlled randomness and evolving player relationships.**
 
 - Monthly batch processing should evolve team networks incrementally
   instead of regenerating them entirely.
+
+- New teams should emerge in every monthly batch from new players,
+  previously unaffiliated team participants, dissolved teams, and
+  stochastic social mixing.
 
 ## 3. Persistent Team Modeling
 
@@ -55,6 +81,9 @@ supporting controlled randomness and evolving player relationships.**
 - Existing teams should always be evaluated first before creating new
   pairings.
 
+- Existing team and membership eligibility must be calculated as of the
+  current monthly batch month.
+
 - Monthly batches should preserve the majority of established
   partnerships.
 
@@ -76,6 +105,14 @@ supporting controlled randomness and evolving player relationships.**
 - Dormant Team: Temporarily inactive but eligible for future reuse.
 
 - Retired Team: Permanently inactive partnership.
+
+- Dissolved teams should not be deleted. The team should receive a
+  `dissolution_date`, and active `team_memberships` should receive
+  `left_date` values.
+
+- Reforming the same partnership later should prefer reusing the
+  historical team identity when the player pair is the same and the team
+  is dormant rather than creating an unrelated duplicate team.
 
 ## 6. Team Chemistry Scoring
 
@@ -179,7 +216,14 @@ supporting controlled randomness and evolving player relationships.**
 
 - Dissolve a minority of teams.
 
+- Mark dissolved teams dormant or retired according to configured
+  lifecycle rules.
+
+- Reactivate eligible dormant teams when the same partnership reforms.
+
 - Generate replacement partnerships.
+
+- Generate new teams for monthly player growth and unmet team demand.
 
 - Generate matches and schedules.
 

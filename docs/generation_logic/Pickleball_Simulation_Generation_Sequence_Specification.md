@@ -436,25 +436,28 @@ formation in the current month.
 
 - Eligibility counts are logged by region and club.
 
-## 13. Create or Reuse Teams
+## 13. Determine Teams as of Batch Month
 
-**Purpose:** Form doubles teams with consistency across months,
-preserving prior partnerships when configured and creating new teams as
-required.
+**Purpose:** Determine the valid doubles team set as of the monthly batch
+month, preserving prior partnerships when configured, dissolving or
+marking dormant a configured minority of teams, reactivating dormant
+teams when partnerships reform, and creating new teams as required.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
   **Inputs**                          eligible player pool; prior team
-                                      history; match type config
+                                      and membership history as of batch
+                                      month; match type config
 
   **Outputs**                         team records; team membership
-                                      records
+                                      records with joined/left dates;
+                                      team lifecycle metrics
 
   **Must run after**                  Build Monthly Eligible Player Pool
 
-  **Success criteria**                Teams are valid for the month and
-                                      match type scope.
+  **Success criteria**                Teams are valid for the batch month
+                                      and match type scope.
   -----------------------------------------------------------------------
 
 ### Validation Gates
@@ -463,7 +466,13 @@ required.
 
 - No duplicate active team membership in same scope.
 
+- Active teams and memberships are evaluated using point-in-time
+  date-window logic.
+
 - Team persistence rate is measured.
+
+- Team dissolution, dormancy, reactivation, and newly created team counts
+  are logged.
 
 ## 14. Create Monthly Match Schedule
 
@@ -478,7 +487,7 @@ configurable concentration bias toward weekend dates.
 
   **Outputs**                         match schedule shells
 
-  **Must run after**                  Create or Reuse Teams
+  **Must run after**                  Determine Teams as of Batch Month
 
   **Success criteria**                Match shell dates are distributed
                                       across the month.

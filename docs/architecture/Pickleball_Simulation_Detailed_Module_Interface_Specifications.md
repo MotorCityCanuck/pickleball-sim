@@ -568,19 +568,21 @@ optional experience proxies.
 
 ## team_assignment_engine
 
-**Purpose:** Forms doubles teams consistently across months while
-allowing configurable churn, partner preference, skill balance,
-gender/match type constraints, and non-deterministic variation.
+**Purpose:** Determines doubles teams as of a monthly batch point in time,
+while allowing configurable churn, partner preference, skill balance,
+gender/match type constraints, reactivation of dormant partnerships, and
+non-deterministic variation.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
   **Primary inputs**                  eligible player pool; prior team
-                                      history; match type config;
-                                      monthly_batch_id
+                                      history as of batch month; match
+                                      type config; monthly_batch_id
 
-  **Primary outputs**                 team rows; team membership rows;
-                                      team continuity metrics
+  **Primary outputs**                 team rows; team membership rows
+                                      with joined/left dates; team
+                                      continuity metrics
 
   **Dependencies**                    player_core_generator;
                                       rating_history_repository
@@ -599,6 +601,19 @@ gender/match type constraints, and non-deterministic variation.
 - Use prior team history to preserve consistency across months unless
   churn is configured.
 
+- Determine active teams and active memberships using point-in-time
+  `formation_date`, `dissolution_date`, `joined_date`, and `left_date`
+  semantics for the current batch month.
+
+- Evaluate existing active teams before creating new teams.
+
+- Dissolve or mark dormant a configured minority of teams during each
+  monthly batch, then create replacement teams and teams for newly
+  eligible players.
+
+- Reactivate dormant teams when the same player pair reforms instead of
+  creating duplicate team identities.
+
 - Ensure no player appears on more than one active team in the same
   scheduling scope unless explicitly configured.
 
@@ -612,6 +627,11 @@ gender/match type constraints, and non-deterministic variation.
 ### Minimum Tests
 
 - Prior teams persist at configured rate.
+
+- Dormant teams can reform in a later batch with the same team identity.
+
+- Point-in-time queries exclude teams and memberships that are not active
+  for the batch month.
 
 - No team has more or fewer than two players.
 
