@@ -19,6 +19,7 @@ from app.models import (
     LastName,
     MonthlyBatch,
     Player,
+    PlayerRatingHistory,
     PlayerRegistration,
     Region,
     Club,
@@ -56,6 +57,12 @@ class PlayerGenerationConfig:
     skill_min: Decimal
     skill_max: Decimal
     initial_rating_mean: Decimal
+    initial_rating_std_dev: Decimal
+    rating_min: Decimal
+    rating_max: Decimal
+    initial_rating_elite_tail_rate: Decimal
+    initial_rating_elite_min: Decimal
+    initial_rating_elite_max: Decimal
     initial_confidence_score: Decimal
 
     @classmethod
@@ -81,6 +88,17 @@ class PlayerGenerationConfig:
         age_max = int(player_config.get("age_max", 85))
         if age_min < 0 or age_max < age_min:
             raise ValueError("player_generation age bounds are invalid")
+        rating_min = _decimal(ratings.get("rating_min", 0))
+        rating_max = _decimal(ratings.get("rating_max", 5000))
+        if rating_min < 0 or rating_max <= rating_min:
+            raise ValueError("ratings rating bounds are invalid")
+        elite_tail_rate = _decimal(ratings.get("initial_rating_elite_tail_rate", 0))
+        if elite_tail_rate < 0 or elite_tail_rate > 1:
+            raise ValueError("ratings.initial_rating_elite_tail_rate is invalid")
+        elite_min = _decimal(ratings.get("initial_rating_elite_min", 4000))
+        elite_max = _decimal(ratings.get("initial_rating_elite_max", 4500))
+        if elite_min < rating_min or elite_max > rating_max or elite_max <= elite_min:
+            raise ValueError("ratings elite rating bounds are invalid")
 
         return cls(
             player_count=player_count,
@@ -129,6 +147,14 @@ class PlayerGenerationConfig:
             skill_min=_decimal(skill_seed.get("min", 500)),
             skill_max=_decimal(skill_seed.get("max", 3500)),
             initial_rating_mean=_decimal(ratings.get("initial_rating_mean", 1500)),
+            initial_rating_std_dev=_decimal(
+                ratings.get("initial_rating_std_dev", 200)
+            ),
+            rating_min=rating_min,
+            rating_max=rating_max,
+            initial_rating_elite_tail_rate=elite_tail_rate,
+            initial_rating_elite_min=elite_min,
+            initial_rating_elite_max=elite_max,
             initial_confidence_score=_decimal(
                 confidence.get("initial_confidence_score", 0.1)
             ),
@@ -509,6 +535,7 @@ class PlayerGenerator:
         )
         if not regions:
             raise ValueError("No production regions are available for player generation")
+        region_by_id = {region.id: region for region in regions}
 
         name_index = NameIndex(session)
         club_index = ClubIndex(session)
@@ -593,10 +620,37 @@ class PlayerGenerator:
                 session.add_all(registrations)
                 session.flush()
 
+                rating_history_rows = [
+                    PlayerRatingHistory(
+                        player_id=player.id,
+                        rating_date=registration_month,
+                        rating_type="initial",
+                        rating_value=initial_rating_value(
+                            generation_run.seed_value,
+                            batch_id=batch_id,
+                            player_sequence=generated_so_far + index,
+                            config=config,
+                        ),
+                        confidence_score=config.initial_confidence_score,
+                        volatility_score=Decimal("1.000"),
+                        regional_adjustment_factor=_regional_adjustment_factor(
+                            region_by_id.get(player.home_region_id)
+                        ),
+                        match_count_used=0,
+                        calculation_version="initial_v1",
+                        batch_id=batch_id,
+                    )
+                    for index, player in enumerate(generated_players)
+                ]
+                session.add_all(rating_history_rows)
+                session.flush()
+
                 for player in generated_players:
                     session.expunge(player)
                 for registration in registrations:
                     session.expunge(registration)
+                for rating_history_row in rating_history_rows:
+                    session.expunge(rating_history_row)
                 generated_so_far += current_chunk_size
 
             batch.active_player_count_start = active_start
@@ -686,6 +740,40 @@ def initial_skill_seed(
     return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
 
+def initial_rating_value(
+    seed_value: int,
+    *,
+    batch_id: int,
+    player_sequence: int,
+    config: PlayerGenerationConfig,
+) -> Decimal:
+    """Sample a bounded initial observed rating using a rating-specific seed."""
+    rating_rng = random.Random(
+        int(seed_value) * 1_000_003 + int(batch_id) * 10_007 + player_sequence
+    )
+    if (
+        config.initial_rating_elite_tail_rate > 0
+        and Decimal(str(rating_rng.random())) < config.initial_rating_elite_tail_rate
+    ):
+        elite_span = config.initial_rating_elite_max - config.initial_rating_elite_min
+        value = (
+            config.initial_rating_elite_min
+            + Decimal(str(rating_rng.random())) * elite_span
+        )
+        return value.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+    sampled = Decimal(
+        str(
+            rating_rng.gauss(
+                float(config.initial_rating_mean),
+                float(config.initial_rating_std_dev),
+            )
+        )
+    )
+    value = max(config.rating_min, min(config.rating_max, sampled))
+    return value.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
 def weighted_choice(
     rng: random.Random,
     weighted_items: Sequence[tuple[T, Decimal] | NameCandidate],
@@ -773,6 +861,15 @@ def _validate_weights(weighted_items: Iterable[tuple[Any, Decimal]]) -> None:
 def _positive_weight(value: Any) -> Decimal:
     weight = _decimal(value or 0)
     return weight if weight > 0 else Decimal("0")
+
+
+def _regional_adjustment_factor(region: Region | None) -> Decimal:
+    if region is None:
+        return Decimal("1.0000")
+    return _decimal(region.competitiveness_multiplier or 1).quantize(
+        Decimal("0.0001"),
+        rounding=ROUND_HALF_UP,
+    )
 
 
 def _decimal(value: Any) -> Decimal:

@@ -704,8 +704,22 @@ Recommended first-pass behavior:
 
 - If multiple raw rows share the same production metro-area natural key
   (`country_code`, `state_province_code`, `metro_area_name`), aggregate
-  them into one production `regions` row by summing `population` and
-  `selection_probability`.
+  them into one production `regions` row by summing `population`.
+
+- Recompute production `regions.selection_probability` globally across
+  all normalized supported-country metro regions using aggregated
+  population:
+
+  ```text
+  regions.selection_probability =
+    regions.population /
+    sum(regions.population for all normalized US and Canada metro regions)
+  ```
+
+  Raw metro-area probability values may be country-local/source-local and
+  must not be copied directly into production. This prevents player
+  generation from accidentally allocating equal probability mass to the
+  USA and Canada.
 
 - If a positive club-distribution state/province has no raw metro row,
   create a fallback production region for that state/province with
@@ -719,7 +733,7 @@ Recommended first-pass behavior:
   - `state_province_code` -> `regions.state_province_code`
   - `metro_area_name` -> `regions.region_name`
   - `population` -> `regions.population`
-  - `selection_probability` -> `regions.selection_probability`
+  - global population share -> `regions.selection_probability`
 
 - Store `region_type` as a stable value such as `metro`.
 

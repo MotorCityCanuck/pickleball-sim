@@ -73,6 +73,9 @@
 | `initial_rating_std_dev` | DECIMAL | 200.0 | 50-500 | rating_points | Standard deviation of initial rating |
 | `rating_min` | DECIMAL | 0.0 | 0 | rating_points | Minimum allowed rating |
 | `rating_max` | DECIMAL | 5000.0 | 3000-10000 | rating_points | Maximum allowed rating |
+| `initial_rating_elite_tail_rate` | DECIMAL | 0.003 | 0.0-0.02 | probability | Small share of initial players sampled from the elite rating tail |
+| `initial_rating_elite_min` | DECIMAL | 4000.0 | 3000-5000 | rating_points | Lower bound for elite-tail initial ratings |
+| `initial_rating_elite_max` | DECIMAL | 4500.0 | 3000-5000 | rating_points | Upper bound for elite-tail initial ratings |
 | `initial_confidence_score` | DECIMAL | 0.10 | 0.0-1.0 | probability | Starting confidence for new players |
 | `confidence_min` | DECIMAL | 0.0 | 0.0-1.0 | probability | Minimum confidence score |
 | `confidence_max` | DECIMAL | 1.0 | 0.0-1.0 | probability | Maximum confidence score |
@@ -275,6 +278,9 @@ player_generation:
   name_assignment_noise_rate: 0.03
   initial_rating_mean: 1500.0
   initial_rating_std_dev: 200.0
+  initial_rating_elite_tail_rate: 0.003
+  initial_rating_elite_min: 4000.0
+  initial_rating_elite_max: 4500.0
 
 regional:
   competitiveness_multiplier_default: 1.0

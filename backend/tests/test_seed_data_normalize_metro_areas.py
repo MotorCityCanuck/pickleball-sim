@@ -231,9 +231,9 @@ def test_normalizes_raw_metro_areas_to_regions(session):
     ]
     assert regions[0].region_type == "MSA"
     assert regions[0].population == 2283371
-    assert regions[0].selection_probability == Decimal("0.12000000")
+    assert regions[0].selection_probability == Decimal("0.60539924")
     assert regions[1].region_type == "CMA"
-    assert regions[1].selection_probability == Decimal("0.08000000")
+    assert regions[1].selection_probability == Decimal("0.39460076")
 
 
 def test_replace_deletes_existing_regions_for_raw_countries_only(session):
@@ -298,7 +298,7 @@ def test_aggregates_duplicate_raw_region_natural_keys(session):
     assert region.state_province_code == "MO"
     assert region.region_name == "Springfield"
     assert region.population == 2000
-    assert region.selection_probability == Decimal("0.20000000")
+    assert region.selection_probability == Decimal("1.00000000")
 
 
 def test_adds_fallback_regions_for_positive_club_distribution_scopes(session):

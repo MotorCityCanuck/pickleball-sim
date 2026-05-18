@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ class MetroAreaNormalizer:
             metro_areas.extend(
                 fallback_regions_from_club_distributions(active_session, metro_areas)
             )
+            recompute_global_selection_probabilities(metro_areas)
             regions = [
                 Region(
                     country_code=metro_area.country_code,
@@ -110,9 +111,32 @@ def aggregate_raw_metro_areas(raw_rows: list[RawMetroArea]) -> list[AggregatedMe
 
         metro_area = aggregated[key]
         metro_area.population += row.population
-        metro_area.selection_probability += row.selection_probability
 
     return list(aggregated.values())
+
+
+def recompute_global_selection_probabilities(
+    metro_areas: list[AggregatedMetroArea],
+) -> None:
+    """Set production probabilities from global supported-region population."""
+    total_population = sum(
+        metro_area.population or 0
+        for metro_area in metro_areas
+        if metro_area.population and metro_area.population > 0
+    )
+    if total_population <= 0:
+        raise ValueError("Metro area normalization requires positive population")
+
+    quantizer = Decimal("0.00000001")
+    total_population_decimal = Decimal(total_population)
+    for metro_area in metro_areas:
+        if not metro_area.population or metro_area.population <= 0:
+            metro_area.selection_probability = Decimal("0.00000000")
+            continue
+
+        metro_area.selection_probability = (
+            Decimal(metro_area.population) / total_population_decimal
+        ).quantize(quantizer, rounding=ROUND_HALF_UP)
 
 
 def infer_region_type(row: RawMetroArea) -> str:

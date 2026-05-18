@@ -22,6 +22,7 @@ from app.models import (  # noqa: E402
     LastName,
     MonthlyBatch,
     Player,
+    PlayerRatingHistory,
     PlayerRegistration,
     Region,
 )
@@ -225,6 +226,27 @@ def session_factory():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE player_rating_history (
+                id integer primary key autoincrement,
+                player_id bigint not null,
+                rating_date date not null,
+                rating_type varchar(50) not null,
+                rating_value numeric(8, 3) not null,
+                confidence_score numeric(8, 3),
+                volatility_score numeric(8, 3),
+                expected_performance numeric(8, 3),
+                regional_adjustment_factor numeric(8, 4),
+                global_percentile numeric(5, 2),
+                match_count_used integer,
+                calculation_version varchar(50),
+                batch_id bigint not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE player_registrations (
                 id integer primary key autoincrement,
                 player_id bigint not null,
@@ -355,6 +377,7 @@ def test_generate_initial_population_creates_players_and_registrations(session):
     assert result.rows_loaded == 8
     assert session.query(Player).count() == 8
     assert session.query(PlayerRegistration).count() == 8
+    assert session.query(PlayerRatingHistory).count() == 8
 
     players = session.query(Player).order_by(Player.id).all()
     assert {player.generation_run_id for player in players} == {generation_run.id}
@@ -376,6 +399,21 @@ def test_generate_initial_population_creates_players_and_registrations(session):
     assert {row.registration_month for row in registrations} == {date(2024, 1, 1)}
     assert {str(row.initial_rating_value) for row in registrations} == {"1400.000"}
     assert {str(row.initial_confidence_score) for row in registrations} == {"0.200"}
+
+    rating_rows = (
+        session.query(PlayerRatingHistory).order_by(PlayerRatingHistory.id).all()
+    )
+    assert {row.player_id for row in rating_rows} == {player.id for player in players}
+    assert {row.batch_id for row in rating_rows} == {monthly_batch.id}
+    assert {row.rating_date for row in rating_rows} == {date(2024, 1, 1)}
+    assert {row.rating_type for row in rating_rows} == {"initial"}
+    assert all(
+        Decimal("0") <= row.rating_value <= Decimal("5000") for row in rating_rows
+    )
+    assert {str(row.confidence_score) for row in rating_rows} == {"0.200"}
+    assert {str(row.volatility_score) for row in rating_rows} == {"1.000"}
+    assert {row.match_count_used for row in rating_rows} == {0}
+    assert {row.calculation_version for row in rating_rows} == {"initial_v1"}
 
     session.refresh(monthly_batch)
     assert monthly_batch.active_player_count_start == 0
@@ -413,6 +451,20 @@ def test_generate_initial_population_is_deterministic(session_factory):
             )
             for player in first_session.query(Player).order_by(Player.id)
         ]
+        first_ratings = [
+            (
+                row.player_id,
+                row.rating_date,
+                row.rating_type,
+                str(row.rating_value),
+                str(row.confidence_score),
+                str(row.volatility_score),
+                row.match_count_used,
+            )
+            for row in first_session.query(PlayerRatingHistory).order_by(
+                PlayerRatingHistory.id
+            )
+        ]
         second_players = [
             (
                 player.first_name,
@@ -425,7 +477,22 @@ def test_generate_initial_population_is_deterministic(session_factory):
             )
             for player in second_session.query(Player).order_by(Player.id)
         ]
+        second_ratings = [
+            (
+                row.player_id,
+                row.rating_date,
+                row.rating_type,
+                str(row.rating_value),
+                str(row.confidence_score),
+                str(row.volatility_score),
+                row.match_count_used,
+            )
+            for row in second_session.query(PlayerRatingHistory).order_by(
+                PlayerRatingHistory.id
+            )
+        ]
         assert first_players == second_players
+        assert first_ratings == second_ratings
     finally:
         first_session.close()
         second_session.close()
@@ -482,6 +549,45 @@ def test_payload_player_count_defaults_to_current_50000():
     config = PlayerGenerationConfig.from_payload(DEFAULT_CONFIG_PAYLOAD)
 
     assert config.player_count == 50000
+    assert config.initial_rating_elite_tail_rate == Decimal("0.003")
+    assert config.initial_rating_elite_min == Decimal("4000.0")
+    assert config.initial_rating_elite_max == Decimal("4500.0")
+
+
+def test_payload_initial_rating_elite_tail_can_generate_high_ratings():
+    from app.generators.players import PlayerGenerationConfig, initial_rating_value
+
+    payload = test_payload(1)
+    payload["ratings"]["initial_rating_elite_tail_rate"] = 1
+    payload["ratings"]["initial_rating_elite_min"] = 4000
+    payload["ratings"]["initial_rating_elite_max"] = 4500
+    config = PlayerGenerationConfig.from_payload(payload)
+
+    rating = initial_rating_value(42, batch_id=1, player_sequence=0, config=config)
+
+    assert Decimal("4000") <= rating <= Decimal("4500")
+
+
+def test_payload_initial_rating_elite_tail_rate_must_be_probability():
+    from app.generators.players import PlayerGenerationConfig
+
+    payload = test_payload(1)
+    payload["ratings"]["initial_rating_elite_tail_rate"] = 1.5
+
+    with pytest.raises(ValueError, match="elite_tail_rate"):
+        PlayerGenerationConfig.from_payload(payload)
+
+
+def test_payload_initial_rating_elite_bounds_must_fit_rating_bounds():
+    from app.generators.players import PlayerGenerationConfig
+
+    payload = test_payload(1)
+    payload["ratings"]["rating_max"] = 4200
+    payload["ratings"]["initial_rating_elite_min"] = 4000
+    payload["ratings"]["initial_rating_elite_max"] = 4500
+
+    with pytest.raises(ValueError, match="elite rating bounds"):
+        PlayerGenerationConfig.from_payload(payload)
 
 
 def test_payload_player_count_can_be_overridden_for_smoke_load(session):

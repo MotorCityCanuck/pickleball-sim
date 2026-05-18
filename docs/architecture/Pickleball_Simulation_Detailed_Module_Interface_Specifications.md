@@ -508,7 +508,7 @@ optional experience proxies.
                                       competitiveness metrics; rating
                                       config
 
-  **Primary outputs**                 player_assessment_history rows
+  **Primary outputs**                 player_rating_history rows
 
   **Dependencies**                    player_core_generator;
                                       regional_distribution_engine
@@ -516,27 +516,38 @@ optional experience proxies.
   **Configuration keys**              initial_rating_mean;
                                       initial_rating_std_dev; rating_min;
                                       rating_max;
+                                      initial_rating_elite_tail_rate;
+                                      initial_rating_elite_min;
+                                      initial_rating_elite_max;
                                       initial_confidence_score
   -----------------------------------------------------------------------
 
 ### Required Behavior
 
-- Persist ratings in a date-keyed history table, not in player.
+- Persist ratings in `player_rating_history`, not in `players` or
+  `player_assessment_history`.
 
 - Bound ratings to configured min/max.
 
 - Use regional competitiveness to avoid interpreting equal raw ratings
   as equal cross-region skill when configured.
 
+- Ratings should mostly follow the configured initial normal
+  distribution, with a small configurable elite tail to represent rare
+  highly rated players.
+
+- Initial player confidence should use the configured
+  `initial_confidence_score`.
+
 ### Failure Handling and Logging
 
 - Warn on excessive clipping at min/max bounds.
 
-- Fail when assessment date is missing.
+- Fail when rating date is missing.
 
 ### Minimum Tests
 
-- All new players receive initial assessment record.
+- All new players receive an initial rating history record.
 
 - Ratings are in configured bounds.
 

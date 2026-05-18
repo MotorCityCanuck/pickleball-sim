@@ -108,6 +108,11 @@ only. Player generation must persist final player identity values in
 - Players should be distributed proportionally based on metropolitan
   population.
 
+- Production `regions.selection_probability` must represent global
+  population share across all supported US and Canada regions, not a
+  country-local probability. Player generation samples directly from this
+  value.
+
 - Large metro regions should contain significantly more players than
   rural regions.
 
