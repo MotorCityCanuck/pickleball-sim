@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import random
 from typing import Any, Iterable, Sequence, TypeVar
@@ -20,6 +20,7 @@ from app.models import (
     Player,
     PlayerRegistration,
     Region,
+    Club,
 )
 
 
@@ -142,53 +143,28 @@ class NameCandidate:
 
 
 class NameIndex:
-    """In-memory lookup indexes for first and last name probabilities."""
+    """Cached database lookup for first and last name probabilities."""
 
-    def __init__(
-        self,
-        first_names: Sequence[FirstName],
-        last_names: Sequence[LastName],
-    ) -> None:
-        self.first_exact: dict[tuple[str, str, int, str], list[NameCandidate]] = {}
-        self.first_country_year: dict[tuple[str, int, str], list[NameCandidate]] = {}
-        self.first_years_by_state_gender: dict[tuple[str, str, str], set[int]] = {}
-        self.first_years_by_country_gender: dict[tuple[str, str], set[int]] = {}
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.first_exact: dict[
+            tuple[str, str, int, str],
+            list[NameCandidate],
+        ] = {}
+        self.first_country_year: dict[
+            tuple[str, int, str],
+            list[NameCandidate],
+        ] = {}
+        self.first_years_by_state_gender: dict[
+            tuple[str, str, str],
+            set[int],
+        ] = {}
+        self.first_years_by_country_gender: dict[
+            tuple[str, str],
+            set[int],
+        ] = {}
         self.last_exact: dict[tuple[str, str], list[NameCandidate]] = {}
         self.last_country: dict[str, list[NameCandidate]] = {}
-
-        for row in first_names:
-            weight = _positive_weight(row.normalized_probability)
-            exact_key = (
-                row.country_code,
-                row.state_province_code,
-                row.birth_year,
-                row.gender,
-            )
-            country_key = (row.country_code, row.birth_year, row.gender)
-            self.first_exact.setdefault(exact_key, []).append(
-                NameCandidate(row.first_name, weight)
-            )
-            self.first_country_year.setdefault(country_key, []).append(
-                NameCandidate(row.first_name, weight)
-            )
-            self.first_years_by_state_gender.setdefault(
-                (row.country_code, row.state_province_code, row.gender),
-                set(),
-            ).add(row.birth_year)
-            self.first_years_by_country_gender.setdefault(
-                (row.country_code, row.gender),
-                set(),
-            ).add(row.birth_year)
-
-        for row in last_names:
-            weight = _positive_weight(row.normalized_probability)
-            exact_key = (row.country_code, row.state_province_code)
-            self.last_exact.setdefault(exact_key, []).append(
-                NameCandidate(row.last_name, weight)
-            )
-            self.last_country.setdefault(row.country_code, []).append(
-                NameCandidate(row.last_name, weight)
-            )
 
     def choose_first_name(
         self,
@@ -201,38 +177,39 @@ class NameIndex:
     ) -> str:
         """Choose a first name using exact cohort then documented fallbacks."""
         exact_key = (country_code, state_province_code, birth_year, gender)
-        candidates = self.first_exact.get(exact_key)
+        candidates = self._first_exact_candidates(exact_key)
         if candidates:
             return weighted_choice(rng, candidates)
 
         nearest_state_year = _nearest(
             birth_year,
-            self.first_years_by_state_gender.get(
-                (country_code, state_province_code, gender),
-                set(),
+            self._first_state_years(
+                country_code,
+                state_province_code,
+                gender,
             ),
         )
         if nearest_state_year is not None:
-            candidates = self.first_exact[
+            candidates = self._first_exact_candidates(
                 (country_code, state_province_code, nearest_state_year, gender)
-            ]
+            )
             return weighted_choice(rng, candidates)
 
         country_year_key = (country_code, birth_year, gender)
-        candidates = self.first_country_year.get(country_year_key)
+        candidates = self._first_country_year_candidates(country_year_key)
         if candidates:
             return weighted_choice(rng, candidates)
 
         nearest_country_year = _nearest(
             birth_year,
-            self.first_years_by_country_gender.get((country_code, gender), set()),
+            self._first_country_years(country_code, gender),
         )
         if nearest_country_year is not None:
             return weighted_choice(
                 rng,
-                self.first_country_year[
+                self._first_country_year_candidates(
                     (country_code, nearest_country_year, gender)
-                ],
+                ),
             )
 
         raise ValueError(
@@ -248,15 +225,171 @@ class NameIndex:
         state_province_code: str,
     ) -> str:
         """Choose a last name using exact state/province then country fallback."""
-        candidates = self.last_exact.get((country_code, state_province_code))
+        candidates = self._last_exact_candidates(country_code, state_province_code)
         if candidates:
             return weighted_choice(rng, candidates)
 
-        candidates = self.last_country.get(country_code)
+        candidates = self._last_country_candidates(country_code)
         if candidates:
             return weighted_choice(rng, candidates)
 
         raise ValueError(f"No last-name distribution found for {country_code}")
+
+    def _first_exact_candidates(
+        self,
+        key: tuple[str, str, int, str],
+    ) -> list[NameCandidate]:
+        if key not in self.first_exact:
+            country_code, state_province_code, birth_year, gender = key
+            rows = self.session.scalars(
+                select(FirstName)
+                .where(
+                    FirstName.country_code == country_code,
+                    FirstName.state_province_code == state_province_code,
+                    FirstName.birth_year == birth_year,
+                    FirstName.gender == gender,
+                )
+                .order_by(FirstName.id)
+            )
+            self.first_exact[key] = [
+                NameCandidate(row.first_name, _positive_weight(row.normalized_probability))
+                for row in rows
+            ]
+        return self.first_exact[key]
+
+    def _first_country_year_candidates(
+        self,
+        key: tuple[str, int, str],
+    ) -> list[NameCandidate]:
+        if key not in self.first_country_year:
+            country_code, birth_year, gender = key
+            rows = self.session.scalars(
+                select(FirstName)
+                .where(
+                    FirstName.country_code == country_code,
+                    FirstName.birth_year == birth_year,
+                    FirstName.gender == gender,
+                )
+                .order_by(FirstName.id)
+            )
+            self.first_country_year[key] = [
+                NameCandidate(row.first_name, _positive_weight(row.normalized_probability))
+                for row in rows
+            ]
+        return self.first_country_year[key]
+
+    def _first_state_years(
+        self,
+        country_code: str,
+        state_province_code: str,
+        gender: str,
+    ) -> set[int]:
+        key = (country_code, state_province_code, gender)
+        if key not in self.first_years_by_state_gender:
+            self.first_years_by_state_gender[key] = set(
+                self.session.scalars(
+                    select(FirstName.birth_year)
+                    .where(
+                        FirstName.country_code == country_code,
+                        FirstName.state_province_code == state_province_code,
+                        FirstName.gender == gender,
+                    )
+                    .distinct()
+                )
+            )
+        return self.first_years_by_state_gender[key]
+
+    def _first_country_years(
+        self,
+        country_code: str,
+        gender: str,
+    ) -> set[int]:
+        key = (country_code, gender)
+        if key not in self.first_years_by_country_gender:
+            self.first_years_by_country_gender[key] = set(
+                self.session.scalars(
+                    select(FirstName.birth_year)
+                    .where(
+                        FirstName.country_code == country_code,
+                        FirstName.gender == gender,
+                    )
+                    .distinct()
+                )
+            )
+        return self.first_years_by_country_gender[key]
+
+    def _last_exact_candidates(
+        self,
+        country_code: str,
+        state_province_code: str,
+    ) -> list[NameCandidate]:
+        key = (country_code, state_province_code)
+        if key not in self.last_exact:
+            rows = self.session.scalars(
+                select(LastName)
+                .where(
+                    LastName.country_code == country_code,
+                    LastName.state_province_code == state_province_code,
+                )
+                .order_by(LastName.id)
+            )
+            self.last_exact[key] = [
+                NameCandidate(row.last_name, _positive_weight(row.normalized_probability))
+                for row in rows
+            ]
+        return self.last_exact[key]
+
+    def _last_country_candidates(self, country_code: str) -> list[NameCandidate]:
+        if country_code not in self.last_country:
+            rows = self.session.scalars(
+                select(LastName)
+                .where(LastName.country_code == country_code)
+                .order_by(LastName.id)
+            )
+            self.last_country[country_code] = [
+                NameCandidate(row.last_name, _positive_weight(row.normalized_probability))
+                for row in rows
+            ]
+        return self.last_country[country_code]
+
+
+class ClubIndex:
+    """Cached lookup for regional clubs used to anchor registration dates."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.clubs_by_region: dict[int, list[Club]] = {}
+
+    def choose_club(
+        self,
+        rng: random.Random,
+        *,
+        region_id: int,
+        batch_month: date,
+    ) -> Club | None:
+        candidates = [
+            club
+            for club in self._clubs_for_region(region_id)
+            if club.founding_date is None or club.founding_date <= batch_month
+        ]
+        if not candidates:
+            return None
+        weighted_clubs = [
+            (club, Decimal(club.member_capacity or 1))
+            for club in candidates
+        ]
+        return weighted_choice(rng, weighted_clubs)
+
+    def _clubs_for_region(self, region_id: int) -> list[Club]:
+        if region_id not in self.clubs_by_region:
+            self.clubs_by_region[region_id] = list(
+                self.session.scalars(
+                    select(Club)
+                    .where(Club.region_id == region_id)
+                    .order_by(Club.id)
+                )
+            )
+        return self.clubs_by_region[region_id]
 
 
 class PlayerGenerator:
@@ -338,10 +471,8 @@ class PlayerGenerator:
         if not regions:
             raise ValueError("No production regions are available for player generation")
 
-        name_index = NameIndex(
-            list(session.scalars(select(FirstName))),
-            list(session.scalars(select(LastName))),
-        )
+        name_index = NameIndex(session)
+        club_index = ClubIndex(session)
         rng = random.Random(int(generation_run.seed_value))
         active_start = int(existing_run_players or 0)
         registration_month = _month_start(batch.batch_month)
@@ -364,6 +495,17 @@ class PlayerGenerator:
                 country_code=region.country_code,
                 state_province_code=region.state_province_code,
             )
+            associated_club = club_index.choose_club(
+                rng,
+                region_id=region.id,
+                batch_month=registration_month,
+            )
+            registration_date = choose_registration_date(
+                rng,
+                batch_month=registration_month,
+                birth_date=birth_date,
+                associated_club=associated_club,
+            )
             generated_players.append(
                 Player(
                     first_name=first_name,
@@ -372,7 +514,7 @@ class PlayerGenerator:
                     birth_date=birth_date,
                     dominant_hand=weighted_choice(rng, config.dominant_hand_weights),
                     home_region_id=region.id,
-                    registration_date=registration_month,
+                    registration_date=registration_date,
                     initial_skill_seed=initial_skill_seed(rng, config),
                     player_status=weighted_choice(rng, config.player_status_weights),
                     generation_run_id=generation_run_id,
@@ -438,6 +580,28 @@ def choose_birth_date(
     month = rng.randint(1, 12)
     day = rng.randint(1, 28)
     return date(year, month, day)
+
+
+def choose_registration_date(
+    rng: random.Random,
+    *,
+    batch_month: date,
+    birth_date: date,
+    associated_club: Club | None,
+) -> date:
+    """Choose a realistic registration date no earlier than club founding."""
+    latest_date = batch_month
+    if associated_club is None or associated_club.founding_date is None:
+        return latest_date
+
+    earliest_date = birth_date + timedelta(days=1)
+    earliest_date = max(earliest_date, associated_club.founding_date)
+
+    if earliest_date >= latest_date:
+        return latest_date
+
+    day_offset = rng.randint(0, (latest_date - earliest_date).days)
+    return earliest_date + timedelta(days=day_offset)
 
 
 def initial_skill_seed(

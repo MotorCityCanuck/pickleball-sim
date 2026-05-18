@@ -413,6 +413,8 @@ normalized_probability =
 
 - `generation_runs`
 
+- `clubs`
+
 Potential future analytical/reference tables such as region
 demographics or regional population targets must be introduced through
 ORM models first if they become necessary.
@@ -532,6 +534,25 @@ should fail configuration validation if the status distribution is
 missing, negative, or materially different from a total probability of
 `1.0`.
 
+## 25.4 Registration Date
+
+`players.registration_date` should be randomized rather than always set
+to the first day of the batch month.
+
+During player generation, the module should choose a regional club as a
+registration-date anchor. The selected date must satisfy these rules:
+
+```text
+registration_date >= associated club founding_date
+registration_date <= monthly batch month start
+registration_date > player birth_date
+```
+
+If a region has no eligible club, or if the selected club has no
+`founding_date`, the generator may fall back to the month-specific batch
+date. `player_registrations.registration_month` remains the normalized
+batch month and should not be randomized.
+
 # 26. Validation Rules
 
 - Validate regional player counts against target population
@@ -551,6 +572,9 @@ missing, negative, or materially different from a total probability of
   skew.
 
 - Validate player status distribution against configured probabilities.
+
+- Validate generated registration dates are not earlier than associated
+  club founding dates and are not later than the batch month.
 
 # 27. Final Recommendation
 
