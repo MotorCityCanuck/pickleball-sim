@@ -175,6 +175,226 @@ class PlayerCandidate:
     club_ids: frozenset[int]
 
 
+class TeamCandidatePool:
+    """Indexed active player pool for scalable partner selection."""
+
+    def __init__(self, candidates: list[PlayerCandidate]) -> None:
+        self.by_id = {candidate.id: candidate for candidate in candidates}
+        self.active_ids = set(self.by_id)
+        self.all_ids = [candidate.id for candidate in candidates]
+        self.ids_by_gender: dict[str, list[int]] = {}
+        self.ids_by_region: dict[int, list[int]] = {}
+        self.ids_by_club: dict[int, list[int]] = {}
+
+        for candidate in candidates:
+            if candidate.gender is not None:
+                self.ids_by_gender.setdefault(candidate.gender, []).append(candidate.id)
+            if candidate.home_region_id is not None:
+                self.ids_by_region.setdefault(candidate.home_region_id, []).append(
+                    candidate.id
+                )
+            for club_id in candidate.club_ids:
+                self.ids_by_club.setdefault(club_id, []).append(candidate.id)
+
+    def __len__(self) -> int:
+        return len(self.active_ids)
+
+    def deactivate(self, player_id: int) -> None:
+        self.active_ids.discard(player_id)
+
+    def choose_first(
+        self,
+        rng: random.Random,
+        team_type: str,
+    ) -> PlayerCandidate | None:
+        source_ids = self._first_source_ids(team_type)
+        player_id = self._random_active_id(
+            rng,
+            source_ids,
+            lambda candidate: _player_allowed_for_team_type(candidate, team_type),
+        )
+        return self.by_id[player_id] if player_id is not None else None
+
+    def choose_partner(
+        self,
+        rng: random.Random,
+        *,
+        first_player: PlayerCandidate,
+        team_type: str,
+        require_same_region: bool,
+        require_same_club: bool,
+        config: TeamFormationConfig,
+    ) -> PlayerCandidate | None:
+        sampled = self._sample_partner_candidates(
+            rng,
+            first_player=first_player,
+            team_type=team_type,
+            require_same_region=require_same_region,
+            require_same_club=require_same_club,
+            config=config,
+        )
+        if not sampled and (require_same_club or require_same_region):
+            sampled = self._sample_partner_candidates(
+                rng,
+                first_player=first_player,
+                team_type=team_type,
+                require_same_region=False,
+                require_same_club=False,
+                config=config,
+            )
+        if not sampled:
+            return None
+
+        weighted_candidates = [
+            (candidate, _partner_weight(first_player, candidate, config, rng))
+            for candidate in sampled
+        ]
+        return WeightedSampler(weighted_candidates).choose(rng)
+
+    def _first_source_ids(self, team_type: str) -> list[int]:
+        if team_type == "mens_doubles":
+            return self.ids_by_gender.get("M", [])
+        if team_type == "womens_doubles":
+            return self.ids_by_gender.get("F", [])
+        return self.all_ids
+
+    def _partner_source_ids(
+        self,
+        *,
+        first_player: PlayerCandidate,
+        team_type: str,
+        require_same_region: bool,
+        require_same_club: bool,
+    ) -> list[int]:
+        source_ids = self.all_ids
+        if team_type == "mens_doubles":
+            source_ids = self.ids_by_gender.get("M", [])
+        elif team_type == "womens_doubles":
+            source_ids = self.ids_by_gender.get("F", [])
+
+        if require_same_club and first_player.club_ids:
+            club_ids = sorted(
+                first_player.club_ids,
+                key=lambda club_id: len(self.ids_by_club.get(club_id, [])),
+            )
+            club_source_ids = [
+                player_id
+                for club_id in club_ids
+                for player_id in self.ids_by_club.get(club_id, [])
+            ]
+            if club_source_ids:
+                source_ids = club_source_ids
+        elif (
+            require_same_region
+            and first_player.home_region_id is not None
+            and first_player.home_region_id in self.ids_by_region
+        ):
+            source_ids = self.ids_by_region[first_player.home_region_id]
+        return source_ids
+
+    def _sample_partner_candidates(
+        self,
+        rng: random.Random,
+        *,
+        first_player: PlayerCandidate,
+        team_type: str,
+        require_same_region: bool,
+        require_same_club: bool,
+        config: TeamFormationConfig,
+    ) -> list[PlayerCandidate]:
+        source_ids = self._partner_source_ids(
+            first_player=first_player,
+            team_type=team_type,
+            require_same_region=require_same_region,
+            require_same_club=require_same_club,
+        )
+        sample_size = min(64, max(8, len(source_ids)))
+        sampled: dict[int, PlayerCandidate] = {}
+        attempts = min(max(sample_size * 20, 100), max(len(source_ids) * 2, 100))
+
+        for _ in range(attempts):
+            if len(sampled) >= sample_size:
+                break
+            player_id = source_ids[rng.randrange(len(source_ids))] if source_ids else None
+            if player_id is None or player_id in sampled:
+                continue
+            candidate = self.by_id.get(player_id)
+            if candidate is not None and self._valid_partner(
+                first_player,
+                candidate,
+                team_type,
+                require_same_region=require_same_region,
+                require_same_club=require_same_club,
+                config=config,
+            ):
+                sampled[player_id] = candidate
+
+        if sampled:
+            return list(sampled.values())
+
+        # Fallback for small or highly constrained pools.
+        for player_id in source_ids:
+            candidate = self.by_id[player_id]
+            if self._valid_partner(
+                first_player,
+                candidate,
+                team_type,
+                require_same_region=require_same_region,
+                require_same_club=require_same_club,
+                config=config,
+            ):
+                sampled[player_id] = candidate
+                if len(sampled) >= sample_size:
+                    break
+        return list(sampled.values())
+
+    def _random_active_id(
+        self,
+        rng: random.Random,
+        source_ids: list[int],
+        predicate,
+    ) -> int | None:
+        if not source_ids:
+            return None
+        attempts = min(max(len(source_ids), 100), 1_000)
+        for _ in range(attempts):
+            player_id = source_ids[rng.randrange(len(source_ids))]
+            if player_id in self.active_ids and predicate(self.by_id[player_id]):
+                return player_id
+        for player_id in source_ids:
+            if player_id in self.active_ids and predicate(self.by_id[player_id]):
+                return player_id
+        return None
+
+    def _valid_partner(
+        self,
+        first_player: PlayerCandidate,
+        candidate: PlayerCandidate,
+        team_type: str,
+        *,
+        require_same_region: bool,
+        require_same_club: bool,
+        config: TeamFormationConfig,
+    ) -> bool:
+        return (
+            candidate.id != first_player.id
+            and candidate.id in self.active_ids
+            and _team_type_pair_allowed(first_player, candidate, team_type)
+            and abs(first_player.rating_value - candidate.rating_value)
+            <= config.rating_gap_max
+            and (
+                not require_same_region
+                or first_player.home_region_id is None
+                or candidate.home_region_id == first_player.home_region_id
+            )
+            and (
+                not require_same_club
+                or not first_player.club_ids
+                or bool(first_player.club_ids.intersection(candidate.club_ids))
+            )
+        )
+
+
 class TeamGenerator:
     """Generate point-in-time doubles teams for a monthly batch."""
 
@@ -239,7 +459,7 @@ class TeamGenerator:
         )
         team_type_sampler = WeightedSampler(config.team_type_weights)
         active_team_counts: dict[int, int] = {}
-        available = {candidate.id: candidate for candidate in candidates}
+        candidate_pool = TeamCandidatePool(candidates)
         teams: list[Team] = []
         membership_pairs: list[tuple[Team, PlayerCandidate, PlayerCandidate]] = []
 
@@ -248,18 +468,18 @@ class TeamGenerator:
         while len(teams) < target_team_count and attempts < max_attempts:
             attempts += 1
             team_type = str(team_type_sampler.choose(rng))
-            first_player = _choose_first_player(rng, available, team_type)
+            first_player = candidate_pool.choose_first(rng, team_type)
             if first_player is None:
                 continue
             partner = _choose_partner(
                 rng,
                 first_player=first_player,
-                available=available,
+                candidate_pool=candidate_pool,
                 team_type=team_type,
                 config=config,
             )
             if partner is None:
-                available.pop(first_player.id, None)
+                candidate_pool.deactivate(first_player.id)
                 continue
 
             team = Team(
@@ -272,8 +492,8 @@ class TeamGenerator:
             )
             teams.append(team)
             membership_pairs.append((team, first_player, partner))
-            _mark_player_used(first_player, available, active_team_counts, config)
-            _mark_player_used(partner, available, active_team_counts, config)
+            _mark_player_used(first_player, candidate_pool, active_team_counts, config)
+            _mark_player_used(partner, candidate_pool, active_team_counts, config)
 
         session.add_all(teams)
         session.flush()
@@ -307,7 +527,7 @@ class TeamGenerator:
             target_team_count=target_team_count,
             rows_loaded=len(teams),
             membership_rows_loaded=len(team_memberships),
-            leftover_player_count=len(available),
+            leftover_player_count=len(candidate_pool),
         )
 
 
@@ -316,15 +536,28 @@ def _eligible_players(
     generation_run_id: int,
     batch_month: date,
 ) -> list[PlayerCandidate]:
-    ratings: dict[int, Decimal] = {}
-    for player_id, rating_value in session.execute(
-        select(PlayerRatingHistory.player_id, PlayerRatingHistory.rating_value)
-        .where(PlayerRatingHistory.rating_date <= batch_month)
-        .order_by(PlayerRatingHistory.player_id, PlayerRatingHistory.rating_date.desc())
-    ):
-        ratings.setdefault(player_id, rating_value)
-    if not ratings:
-        raise ValueError("No rating snapshots are available for team formation")
+    latest_ratings = (
+        select(
+            PlayerRatingHistory.player_id.label("player_id"),
+            PlayerRatingHistory.rating_value.label("rating_value"),
+            func.row_number()
+            .over(
+                partition_by=PlayerRatingHistory.player_id,
+                order_by=(
+                    PlayerRatingHistory.rating_date.desc(),
+                    PlayerRatingHistory.id.desc(),
+                ),
+            )
+            .label("rating_rank"),
+        )
+        .join(Player, Player.id == PlayerRatingHistory.player_id)
+        .where(
+            Player.generation_run_id == generation_run_id,
+            Player.player_status == "ACTIVE",
+            PlayerRatingHistory.rating_date <= batch_month,
+        )
+        .subquery()
+    )
 
     club_ids_by_player: dict[int, set[int]] = {}
     for player_id, club_id in session.execute(
@@ -336,25 +569,30 @@ def _eligible_players(
     ):
         club_ids_by_player.setdefault(player_id, set()).add(club_id)
 
-    players = session.execute(
-        select(Player.id, Player.gender, Player.home_region_id)
-        .where(
-            Player.generation_run_id == generation_run_id,
-            Player.player_status == "ACTIVE",
-            Player.id.in_(ratings.keys()),
+    player_rows = session.execute(
+        select(
+            Player.id,
+            Player.gender,
+            Player.home_region_id,
+            latest_ratings.c.rating_value,
         )
+        .join(latest_ratings, latest_ratings.c.player_id == Player.id)
+        .where(latest_ratings.c.rating_rank == 1)
         .order_by(Player.id)
     )
-    return [
+    candidates = [
         PlayerCandidate(
             id=player_id,
             gender=gender,
             home_region_id=home_region_id,
-            rating_value=_decimal(ratings[player_id]),
+            rating_value=_decimal(rating_value),
             club_ids=frozenset(club_ids_by_player.get(player_id, set())),
         )
-        for player_id, gender, home_region_id in players
+        for player_id, gender, home_region_id, rating_value in player_rows
     ]
+    if not candidates:
+        raise ValueError("No rating snapshots are available for team formation")
+    return candidates
 
 
 def _target_team_count(config: TeamFormationConfig, eligible_player_count: int) -> int:
@@ -368,71 +606,24 @@ def _target_team_count(config: TeamFormationConfig, eligible_player_count: int) 
     return min(participating_players // 2, max_without_reuse)
 
 
-def _choose_first_player(
-    rng: random.Random,
-    available: dict[int, PlayerCandidate],
-    team_type: str,
-) -> PlayerCandidate | None:
-    candidates = [
-        candidate
-        for candidate in available.values()
-        if _player_allowed_for_team_type(candidate, team_type)
-    ]
-    if not candidates:
-        return None
-    return candidates[rng.randrange(len(candidates))]
-
-
 def _choose_partner(
     rng: random.Random,
     *,
     first_player: PlayerCandidate,
-    available: dict[int, PlayerCandidate],
+    candidate_pool: TeamCandidatePool,
     team_type: str,
     config: TeamFormationConfig,
 ) -> PlayerCandidate | None:
     require_same_club = _random_probability(rng) < config.same_club_team_rate
     require_same_region = _random_probability(rng) < config.same_region_team_rate
-    candidates = [
-        candidate
-        for candidate in available.values()
-        if candidate.id != first_player.id
-        and _team_type_pair_allowed(first_player, candidate, team_type)
-        and (
-            not require_same_region
-            or first_player.home_region_id is None
-            or candidate.home_region_id == first_player.home_region_id
-        )
-        and (
-            not require_same_club
-            or not first_player.club_ids
-            or bool(first_player.club_ids.intersection(candidate.club_ids))
-        )
-    ]
-    if not candidates and (require_same_club or require_same_region):
-        candidates = [
-            candidate
-            for candidate in available.values()
-            if candidate.id != first_player.id
-            and _team_type_pair_allowed(first_player, candidate, team_type)
-        ]
-    if not candidates:
-        return None
-    preferred_candidates = [
-        candidate
-        for candidate in candidates
-        if abs(first_player.rating_value - candidate.rating_value)
-        <= config.rating_gap_max
-    ]
-    if not preferred_candidates:
-        return None
-    candidates = preferred_candidates
-
-    weighted_candidates = [
-        (candidate, _partner_weight(first_player, candidate, config, rng))
-        for candidate in candidates
-    ]
-    return WeightedSampler(weighted_candidates).choose(rng)
+    return candidate_pool.choose_partner(
+        rng,
+        first_player=first_player,
+        team_type=team_type,
+        require_same_region=require_same_region,
+        require_same_club=require_same_club,
+        config=config,
+    )
 
 
 def _partner_weight(
@@ -490,7 +681,7 @@ def _team_type_pair_allowed(
 
 def _mark_player_used(
     player: PlayerCandidate,
-    available: dict[int, PlayerCandidate],
+    candidate_pool: TeamCandidatePool,
     active_team_counts: dict[int, int],
     config: TeamFormationConfig,
 ) -> None:
@@ -499,7 +690,7 @@ def _mark_player_used(
         not config.allow_multiple_active_teams_per_scope
         or active_team_counts[player.id] >= config.max_active_teams_per_player
     ):
-        available.pop(player.id, None)
+        candidate_pool.deactivate(player.id)
 
 
 def _initial_chemistry(
