@@ -170,6 +170,201 @@ class TeamCandidate:
     players: tuple[tuple[int, int, Decimal], ...]
 
 
+class MatchTeamPool:
+    """Indexed active team pool for scalable monthly matchmaking."""
+
+    def __init__(self, teams: list[TeamCandidate]) -> None:
+        self.by_id = {team.id: team for team in teams}
+        self.all_ids = [team.id for team in teams]
+        self.ids_by_region: dict[int, list[int]] = {}
+        self.ids_by_type: dict[str, list[int]] = {}
+        for team in teams:
+            if team.region_id is not None:
+                self.ids_by_region.setdefault(team.region_id, []).append(team.id)
+            self.ids_by_type.setdefault(team.team_type, []).append(team.id)
+
+    def choose_team(
+        self,
+        rng: random.Random,
+        *,
+        team_day_counts: dict[tuple[int, date], int],
+        match_date: date,
+        config: MatchGenerationConfig,
+    ) -> TeamCandidate | None:
+        team_id = self._random_available_id(
+            rng,
+            self.all_ids,
+            team_day_counts=team_day_counts,
+            match_date=match_date,
+            config=config,
+        )
+        return self.by_id[team_id] if team_id is not None else None
+
+    def choose_opponent(
+        self,
+        rng: random.Random,
+        *,
+        first_team: TeamCandidate,
+        match_date: date,
+        match_type: str,
+        team_day_counts: dict[tuple[int, date], int],
+        config: MatchGenerationConfig,
+    ) -> TeamCandidate | None:
+        band = _rating_band(match_type, config)
+        sampled = self._sample_opponents(
+            rng,
+            first_team=first_team,
+            source_ids=self._preferred_source_ids(first_team),
+            match_date=match_date,
+            band=band,
+            require_rating_band=True,
+            team_day_counts=team_day_counts,
+            config=config,
+        )
+        if not sampled:
+            sampled = self._sample_opponents(
+                rng,
+                first_team=first_team,
+                source_ids=self.all_ids,
+                match_date=match_date,
+                band=band,
+                require_rating_band=True,
+                team_day_counts=team_day_counts,
+                config=config,
+            )
+        if not sampled:
+            sampled = self._sample_opponents(
+                rng,
+                first_team=first_team,
+                source_ids=self.all_ids,
+                match_date=match_date,
+                band=band,
+                require_rating_band=False,
+                team_day_counts=team_day_counts,
+                config=config,
+            )
+        if not sampled:
+            return None
+
+        return _choose_weighted_opponent(
+            rng,
+            first_team=first_team,
+            candidates=sampled,
+            band=band,
+            config=config,
+        )
+
+    def _preferred_source_ids(self, first_team: TeamCandidate) -> list[int]:
+        if first_team.region_id is not None:
+            region_ids = self.ids_by_region.get(first_team.region_id, [])
+            if region_ids:
+                return region_ids
+        return self.ids_by_type.get(first_team.team_type, self.all_ids)
+
+    def _sample_opponents(
+        self,
+        rng: random.Random,
+        *,
+        first_team: TeamCandidate,
+        source_ids: list[int],
+        match_date: date,
+        band: Decimal,
+        require_rating_band: bool,
+        team_day_counts: dict[tuple[int, date], int],
+        config: MatchGenerationConfig,
+    ) -> list[TeamCandidate]:
+        sample_size = min(16, max(8, len(source_ids)))
+        sampled: dict[int, TeamCandidate] = {}
+        attempts = min(max(sample_size * 20, 100), max(len(source_ids) * 2, 100))
+        for _ in range(attempts):
+            if len(sampled) >= sample_size:
+                break
+            if not source_ids:
+                break
+            team_id = source_ids[rng.randrange(len(source_ids))]
+            if team_id in sampled:
+                continue
+            candidate = self.by_id[team_id]
+            if self._valid_opponent(
+                first_team,
+                candidate,
+                match_date=match_date,
+                band=band,
+                require_rating_band=require_rating_band,
+                team_day_counts=team_day_counts,
+                config=config,
+            ):
+                sampled[team_id] = candidate
+
+        if sampled:
+            return list(sampled.values())
+
+        # Fallback for small or saturated source pools.
+        for team_id in source_ids:
+            candidate = self.by_id[team_id]
+            if self._valid_opponent(
+                first_team,
+                candidate,
+                match_date=match_date,
+                band=band,
+                require_rating_band=require_rating_band,
+                team_day_counts=team_day_counts,
+                config=config,
+            ):
+                sampled[team_id] = candidate
+                if len(sampled) >= sample_size:
+                    break
+        return list(sampled.values())
+
+    def _random_available_id(
+        self,
+        rng: random.Random,
+        source_ids: list[int],
+        *,
+        team_day_counts: dict[tuple[int, date], int],
+        match_date: date,
+        config: MatchGenerationConfig,
+    ) -> int | None:
+        if not source_ids:
+            return None
+        attempts = min(max(len(source_ids), 100), 1_000)
+        for _ in range(attempts):
+            team_id = source_ids[rng.randrange(len(source_ids))]
+            if (
+                team_day_counts.get((team_id, match_date), 0)
+                < config.max_daily_matches_per_team
+            ):
+                return team_id
+        for team_id in source_ids:
+            if (
+                team_day_counts.get((team_id, match_date), 0)
+                < config.max_daily_matches_per_team
+            ):
+                return team_id
+        return None
+
+    def _valid_opponent(
+        self,
+        first_team: TeamCandidate,
+        candidate: TeamCandidate,
+        *,
+        match_date: date,
+        band: Decimal,
+        require_rating_band: bool,
+        team_day_counts: dict[tuple[int, date], int],
+        config: MatchGenerationConfig,
+    ) -> bool:
+        return (
+            candidate.id != first_team.id
+            and team_day_counts.get((candidate.id, match_date), 0)
+            < config.max_daily_matches_per_team
+            and (
+                not require_rating_band
+                or abs(candidate.average_rating - first_team.average_rating) <= band
+            )
+        )
+
+
 class MatchGenerator:
     """Generate scheduled matches and games for one monthly batch."""
 
@@ -221,6 +416,7 @@ class MatchGenerator:
         date_sampler = _date_sampler(batch.batch_month, config)
         match_type_sampler = WeightedSampler(config.match_type_weights)
         team_day_counts: dict[tuple[int, date], int] = {}
+        team_pool = MatchTeamPool(teams)
         matches: list[Match] = []
         pairings: list[tuple[Match, TeamCandidate, TeamCandidate, Decimal]] = []
         attempts = 0
@@ -230,13 +426,17 @@ class MatchGenerator:
             attempts += 1
             match_date = date_sampler.choose(rng)
             match_type = str(match_type_sampler.choose(rng))
-            first_team = _choose_team(rng, teams, team_day_counts, match_date, config)
+            first_team = team_pool.choose_team(
+                rng,
+                team_day_counts=team_day_counts,
+                match_date=match_date,
+                config=config,
+            )
             if first_team is None:
                 continue
-            second_team = _choose_opponent(
+            second_team = team_pool.choose_opponent(
                 rng,
                 first_team=first_team,
-                teams=teams,
                 match_date=match_date,
                 match_type=match_type,
                 team_day_counts=team_day_counts,
@@ -351,53 +551,86 @@ def _active_teams(
     generation_run_id: int,
     batch_month: date,
 ) -> list[TeamCandidate]:
-    ratings: dict[int, Decimal] = {}
-    for player_id, rating_value in session.execute(
-        select(PlayerRatingHistory.player_id, PlayerRatingHistory.rating_value)
-        .where(PlayerRatingHistory.rating_date <= batch_month)
-        .order_by(PlayerRatingHistory.player_id, PlayerRatingHistory.rating_date.desc())
-    ):
-        ratings.setdefault(player_id, _decimal(rating_value))
+    latest_ratings = (
+        select(
+            PlayerRatingHistory.player_id.label("player_id"),
+            PlayerRatingHistory.rating_value.label("rating_value"),
+            func.row_number()
+            .over(
+                partition_by=PlayerRatingHistory.player_id,
+                order_by=(
+                    PlayerRatingHistory.rating_date.desc(),
+                    PlayerRatingHistory.id.desc(),
+                ),
+            )
+            .label("rating_rank"),
+        )
+        .join(Player, Player.id == PlayerRatingHistory.player_id)
+        .where(
+            Player.generation_run_id == generation_run_id,
+            Player.player_status == "ACTIVE",
+            PlayerRatingHistory.rating_date <= batch_month,
+        )
+        .subquery()
+    )
 
-    teams = session.scalars(
-        select(Team)
+    team_rows: dict[int, dict[str, Any]] = {}
+    for (
+        team_id,
+        team_type,
+        player_id,
+        player_position,
+        home_region_id,
+        rating_value,
+    ) in session.execute(
+        select(
+            Team.id,
+            Team.team_type,
+            TeamMembership.player_id,
+            TeamMembership.player_position,
+            Player.home_region_id,
+            latest_ratings.c.rating_value,
+        )
+        .join(TeamMembership, TeamMembership.team_id == Team.id)
+        .join(Player, Player.id == TeamMembership.player_id)
+        .join(latest_ratings, latest_ratings.c.player_id == Player.id)
         .where(
             Team.generation_run_id == generation_run_id,
             Team.team_status == "active",
             Team.formation_date <= batch_month,
             or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
+            TeamMembership.joined_date <= batch_month,
+            or_(
+                TeamMembership.left_date.is_(None),
+                TeamMembership.left_date > batch_month,
+            ),
+            latest_ratings.c.rating_rank == 1,
         )
-        .order_by(Team.id)
-    )
+        .order_by(Team.id, TeamMembership.player_position)
+    ):
+        row = team_rows.setdefault(
+            team_id,
+            {
+                "team_type": team_type,
+                "region_id": home_region_id,
+                "players": [],
+            },
+        )
+        row["players"].append(
+            (player_id, player_position, _decimal(rating_value))
+        )
+
     candidates: list[TeamCandidate] = []
-    for team in teams:
-        active_memberships = [
-            membership
-            for membership in team.memberships
-            if membership.joined_date <= batch_month
-            and (membership.left_date is None or membership.left_date > batch_month)
-            and membership.player_id in ratings
-        ]
-        if len(active_memberships) != 2:
+    for team_id, row in team_rows.items():
+        if len(row["players"]) != 2:
             continue
-        players = tuple(
-            (
-                membership.player_id,
-                membership.player_position,
-                ratings[membership.player_id],
-            )
-            for membership in sorted(
-                active_memberships,
-                key=lambda membership: membership.player_position,
-            )
-        )
-        region_id = session.get(Player, players[0][0]).home_region_id
+        players = tuple(sorted(row["players"], key=lambda player: player[1]))
         average_rating = (players[0][2] + players[1][2]) / Decimal("2")
         candidates.append(
             TeamCandidate(
-                id=team.id,
-                team_type=team.team_type,
-                region_id=region_id,
+                id=team_id,
+                team_type=row["team_type"],
+                region_id=row["region_id"],
                 average_rating=average_rating,
                 players=players,
             )
@@ -426,58 +659,6 @@ def _date_sampler(
     return WeightedSampler(weighted_dates)
 
 
-def _choose_team(
-    rng: random.Random,
-    teams: list[TeamCandidate],
-    team_day_counts: dict[tuple[int, date], int],
-    match_date: date,
-    config: MatchGenerationConfig,
-) -> TeamCandidate | None:
-    candidates = [
-        team
-        for team in teams
-        if team_day_counts.get((team.id, match_date), 0)
-        < config.max_daily_matches_per_team
-    ]
-    if not candidates:
-        return None
-    return candidates[rng.randrange(len(candidates))]
-
-
-def _choose_opponent(
-    rng: random.Random,
-    *,
-    first_team: TeamCandidate,
-    teams: list[TeamCandidate],
-    match_date: date,
-    match_type: str,
-    team_day_counts: dict[tuple[int, date], int],
-    config: MatchGenerationConfig,
-) -> TeamCandidate | None:
-    candidates = [
-        team
-        for team in teams
-        if team.id != first_team.id
-        and team_day_counts.get((team.id, match_date), 0)
-        < config.max_daily_matches_per_team
-    ]
-    if not candidates:
-        return None
-    band = _rating_band(match_type, config)
-    preferred = [
-        team
-        for team in candidates
-        if abs(team.average_rating - first_team.average_rating) <= band
-    ]
-    if preferred:
-        candidates = preferred
-    weighted_candidates = [
-        (candidate, _opponent_weight(first_team, candidate, band, config, rng))
-        for candidate in candidates
-    ]
-    return WeightedSampler(weighted_candidates).choose(rng)
-
-
 def _opponent_weight(
     first_team: TeamCandidate,
     candidate: TeamCandidate,
@@ -494,6 +675,36 @@ def _opponent_weight(
     )
     noise = Decimal(str(rng.random())) * config.matchmaking_noise_factor
     return rating_score + locality_score * config.locality_weight + noise
+
+
+def _choose_weighted_opponent(
+    rng: random.Random,
+    *,
+    first_team: TeamCandidate,
+    candidates: list[TeamCandidate],
+    band: Decimal,
+    config: MatchGenerationConfig,
+) -> TeamCandidate:
+    weighted: list[tuple[TeamCandidate, float]] = []
+    total = 0.0
+    band_value = float(band or Decimal("1"))
+    locality_weight = float(config.locality_weight)
+    noise_scale = float(config.matchmaking_noise_factor)
+    for candidate in candidates:
+        rating_gap = abs(float(candidate.average_rating - first_team.average_rating))
+        rating_score = max(0.01, 1.0 - rating_gap / band_value)
+        locality_score = 1.0 if candidate.region_id == first_team.region_id else 0.25
+        weight = rating_score + locality_score * locality_weight + rng.random() * noise_scale
+        total += weight
+        weighted.append((candidate, weight))
+
+    threshold = rng.random() * total
+    cumulative = 0.0
+    for candidate, weight in weighted:
+        cumulative += weight
+        if cumulative >= threshold:
+            return candidate
+    return weighted[-1][0]
 
 
 def _rating_band(match_type: str, config: MatchGenerationConfig) -> Decimal:
