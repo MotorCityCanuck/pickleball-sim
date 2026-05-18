@@ -214,6 +214,7 @@
 | `score_noise_std_dev` | DECIMAL | 1.5 | 0.0-5.0 | points | Score outcome randomness |
 | `upset_probability_boost` | DECIMAL | 0.15 | 0.0-0.4 | probability_shift | Underdog win probability boost |
 | `win_by_two_rule_enabled` | BOOLEAN | true | true, false | - | Enforce win-by-two rule |
+| `win_by_two_extension_rate` | DECIMAL | 0.10 | 0.0-1.0 | probability | Likelihood that a generated game reaches a win-by-two extension beyond the target score |
 | `game_target_score` | INTEGER | 11 | 11-21 | points | Standard game winning score |
 
 ---

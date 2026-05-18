@@ -532,7 +532,8 @@ controlled noise.
 ## 16. Generate Games and Scores
 
 **Purpose:** Generate configured games per match, including plausible
-score lines, outcomes, upset probability, and score noise.
+score lines, rating-derived expected scores, outcomes, upset probability,
+and score noise.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
@@ -540,7 +541,8 @@ score lines, outcomes, upset probability, and score noise.
   **Inputs**                          match records; team ratings; game
                                       config
 
-  **Outputs**                         game records; game score metrics
+  **Outputs**                         game records; expected score metrics;
+                                      actual score metrics
 
   **Must run after**                  Pair Teams into Matches
 
@@ -555,6 +557,9 @@ score lines, outcomes, upset probability, and score noise.
 - Scores are legal.
 
 - Winner and score are consistent.
+
+- Expected raw scores and expected score share are populated for each
+  game before actual score noise is applied.
 
 ## 17. Apply Rating Updates Chronologically
 

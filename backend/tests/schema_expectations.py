@@ -158,7 +158,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
     },
     "match_team_players": {"chk_player_position"},
     "match_teams": {"chk_team_number"},
-    "matches": {"chk_match_type"},
+    "matches": {"chk_match_predicted_winning_team", "chk_match_type"},
     "monthly_batches": {"chk_batch_type", "chk_processing_status"},
     "player_assessment_history": {"chk_assessment_confidence"},
     "player_rating_history": {"chk_confidence_score", "chk_rating_value"},

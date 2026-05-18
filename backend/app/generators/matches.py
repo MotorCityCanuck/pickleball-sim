@@ -15,7 +15,6 @@ from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.db.session import session_scope
 from app.models import (
     Match,
-    MatchGame,
     MatchTeam,
     MatchTeamPlayer,
     MonthlyBatch,
@@ -25,6 +24,7 @@ from app.models import (
     TeamMembership,
 )
 
+from .games import games_per_match, generate_match_games
 from .players import WeightedSampler, _decimal
 
 
@@ -44,6 +44,8 @@ class MatchGenerationConfig:
     locality_weight: Decimal
     games_per_match: dict[str, int]
     game_target_score: int
+    win_by_two_rule_enabled: bool
+    win_by_two_extension_rate: Decimal
     score_noise_std_dev: Decimal
     upset_probability_boost: Decimal
 
@@ -130,6 +132,11 @@ class MatchGenerationConfig:
                 ).items()
             },
             game_target_score=game_target_score,
+            win_by_two_rule_enabled=bool(games.get("win_by_two_rule_enabled", True)),
+            win_by_two_extension_rate=_probability(
+                games.get("win_by_two_extension_rate", 0.10),
+                "win_by_two_extension_rate",
+            ),
             score_noise_std_dev=_positive_decimal(
                 games.get("score_noise_std_dev", 1.5),
                 "score_noise_std_dev",
@@ -248,6 +255,13 @@ class MatchGenerator:
                 match_type=match_type,
                 court_type="standard",
                 match_format=_match_format(match_type, config),
+                predicted_winning_team_number=(
+                    1 if expected_win_probability >= Decimal("0.5") else 2
+                ),
+                predicted_win_probability=max(
+                    expected_win_probability,
+                    Decimal("1") - expected_win_probability,
+                ),
                 expected_competitiveness=_competitiveness(expected_win_probability),
                 simulation_noise_factor=_noise_value(rng, config.matchmaking_noise_factor),
                 batch_id=batch_id,
@@ -266,9 +280,9 @@ class MatchGenerator:
 
         match_teams: list[MatchTeam] = []
         match_team_players: list[MatchTeamPlayer] = []
-        games: list[MatchGame] = []
+        games = []
         for match, first_team, second_team, expected_prob in pairings:
-            first_games_won, second_games_won, match_games = _generate_games(
+            generated_games = generate_match_games(
                 rng,
                 match=match,
                 expected_team_one_win_probability=expected_prob,
@@ -278,21 +292,22 @@ class MatchGenerator:
             team_one = MatchTeam(
                 match_id=match.id,
                 team_number=1,
-                team_score=first_games_won,
+                team_score=generated_games.team_one_games_won,
                 expected_win_probability=expected_prob,
                 average_team_rating=first_team.average_rating,
             )
             team_two = MatchTeam(
                 match_id=match.id,
                 team_number=2,
-                team_score=second_games_won,
+                team_score=generated_games.team_two_games_won,
                 expected_win_probability=Decimal("1") - expected_prob,
                 average_team_rating=second_team.average_rating,
             )
             match_teams.extend([team_one, team_two])
-            games.extend(match_games)
+            games.extend(generated_games.games)
             match.total_points_played = sum(
-                game.team_one_score + game.team_two_score for game in match_games
+                game.team_one_score + game.team_two_score
+                for game in generated_games.games
             )
 
         session.add_all(match_teams)
@@ -490,18 +505,8 @@ def _rating_band(match_type: str, config: MatchGenerationConfig) -> Decimal:
 
 
 def _match_format(match_type: str, config: MatchGenerationConfig) -> str:
-    games = _games_per_match(match_type, config)
+    games = games_per_match(match_type, config)
     return "single_game" if games == 1 else f"best_of_{games}"
-
-
-def _games_per_match(match_type: str, config: MatchGenerationConfig) -> int:
-    if match_type in config.games_per_match:
-        return config.games_per_match[match_type]
-    if match_type in {"tournament"}:
-        return config.games_per_match.get("tournament", 3)
-    if match_type in {"league", "ladder"}:
-        return config.games_per_match.get("league", 2)
-    return config.games_per_match.get("recreational", 1)
 
 
 def _expected_win_probability(rating_one: Decimal, rating_two: Decimal) -> Decimal:
@@ -518,100 +523,6 @@ def _competitiveness(expected_win_probability: Decimal) -> Decimal:
 def _noise_value(rng: random.Random, scale: Decimal) -> Decimal:
     return (Decimal(str(rng.random())) * scale).quantize(
         Decimal("0.001"),
-        rounding=ROUND_HALF_UP,
-    )
-
-
-def _generate_games(
-    rng: random.Random,
-    *,
-    match: Match,
-    expected_team_one_win_probability: Decimal,
-    match_type: str,
-    config: MatchGenerationConfig,
-) -> tuple[int, int, list[MatchGame]]:
-    game_count = _games_per_match(match_type, config)
-    team_one_games_won = 0
-    team_two_games_won = 0
-    games: list[MatchGame] = []
-    for game_number in range(1, game_count + 1):
-        adjusted_probability = _adjusted_game_probability(
-            rng,
-            expected_team_one_win_probability,
-            config,
-        )
-        team_one_wins = Decimal(str(rng.random())) < adjusted_probability
-        if team_one_wins:
-            team_one_games_won += 1
-        else:
-            team_two_games_won += 1
-        team_one_score, team_two_score = _game_score(
-            rng,
-            team_one_wins=team_one_wins,
-            expected_probability=adjusted_probability,
-            config=config,
-        )
-        games.append(
-            MatchGame(
-                match_id=match.id,
-                game_number=game_number,
-                team_one_score=team_one_score,
-                team_two_score=team_two_score,
-                winning_team_number=1 if team_one_wins else 2,
-                target_score=config.game_target_score,
-                win_by=2,
-                expected_team_one_score_share=adjusted_probability,
-                actual_team_one_score_share=_score_share(
-                    team_one_score,
-                    team_two_score,
-                ),
-                score_noise_factor=_noise_value(rng, config.score_noise_std_dev),
-            )
-        )
-    return team_one_games_won, team_two_games_won, games
-
-
-def _adjusted_game_probability(
-    rng: random.Random,
-    expected_probability: Decimal,
-    config: MatchGenerationConfig,
-) -> Decimal:
-    upset_noise = (
-        Decimal(str(rng.random())) - Decimal("0.5")
-    ) * config.upset_probability_boost
-    adjusted = expected_probability + upset_noise
-    adjusted = max(Decimal("0.05"), min(Decimal("0.95"), adjusted))
-    return adjusted.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-
-
-def _game_score(
-    rng: random.Random,
-    *,
-    team_one_wins: bool,
-    expected_probability: Decimal,
-    config: MatchGenerationConfig,
-) -> tuple[int, int]:
-    target = config.game_target_score
-    closeness = Decimal("1") - abs(expected_probability - Decimal("0.5")) * 2
-    max_loser_score = max(0, target - 2)
-    min_loser_score = max(0, target - 8)
-    center = min_loser_score + int(float(closeness) * (max_loser_score - min_loser_score))
-    spread = max(1, int(float(config.score_noise_std_dev)))
-    loser_score = max(
-        0,
-        min(max_loser_score, center + rng.randint(-spread, spread)),
-    )
-    if team_one_wins:
-        return target, loser_score
-    return loser_score, target
-
-
-def _score_share(team_one_score: int, team_two_score: int) -> Decimal:
-    total = team_one_score + team_two_score
-    if total == 0:
-        return Decimal("0.5000")
-    return (Decimal(team_one_score) / Decimal(total)).quantize(
-        Decimal("0.0001"),
         rounding=ROUND_HALF_UP,
     )
 

@@ -304,6 +304,7 @@ Suggested groups:
     },
     "game_target_score": 11,
     "win_by_two_rule_enabled": true,
+    "win_by_two_extension_rate": 0.10,
     "score_noise_std_dev": 1.5,
     "upset_probability_boost": 0.15
   },

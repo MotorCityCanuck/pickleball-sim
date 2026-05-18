@@ -92,6 +92,8 @@ EXPECTED_KEY_COLUMNS = {
         "court_type",
         "match_format",
         "winning_team_id",
+        "predicted_winning_team_number",
+        "predicted_win_probability",
         "total_points_played",
         "expected_competitiveness",
         "simulation_noise_factor",

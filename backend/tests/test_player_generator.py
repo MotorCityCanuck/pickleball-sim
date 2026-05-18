@@ -4804,10 +4804,10 @@ def test_payload_generation_batch_error_message(session):
         )
 
 
-def test_payload_generation_module_works_with_config_version_two_player_limit():
+def test_payload_generation_module_works_with_current_config_version_player_limit():
     from app.core.default_configuration import DEFAULT_CONFIG_VERSION_NUMBER
 
-    assert DEFAULT_CONFIG_VERSION_NUMBER == 2
+    assert DEFAULT_CONFIG_VERSION_NUMBER == 3
 
 
 def test_payload_generation_player_count_override_can_be_used_for_db_smoke(session):
@@ -4990,10 +4990,10 @@ def test_payload_generation_default_limit_is_documented_by_constant():
     assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 50000
 
 
-def test_payload_generation_current_default_version_is_two():
+def test_payload_generation_current_default_version_is_three():
     from app.core.default_configuration import DEFAULT_CONFIG_VERSION_NUMBER
 
-    assert DEFAULT_CONFIG_VERSION_NUMBER == 2
+    assert DEFAULT_CONFIG_VERSION_NUMBER == 3
 
 
 def test_payload_generation_simple_smoke(session):

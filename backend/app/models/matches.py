@@ -20,6 +20,8 @@ class Match(Base, TimestampMixin):
     court_type = Column(String(50))
     match_format = Column(String(50))
     winning_team_id = Column(BigInteger)
+    predicted_winning_team_number = Column(Integer)
+    predicted_win_probability = Column(Numeric(8, 4))
     total_points_played = Column(Integer)
     expected_competitiveness = Column(Numeric(8, 3))
     simulation_noise_factor = Column(Numeric(8, 3))
@@ -41,5 +43,9 @@ class Match(Base, TimestampMixin):
         CheckConstraint(
             "match_type IN ('recreational', 'league', 'ladder', 'tournament', 'challenge', 'clinic', 'open_play')",
             name='chk_match_type'
+        ),
+        CheckConstraint(
+            'predicted_winning_team_number IS NULL OR predicted_winning_team_number IN (1, 2)',
+            name='chk_match_predicted_winning_team',
         ),
     )

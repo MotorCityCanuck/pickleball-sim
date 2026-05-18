@@ -178,6 +178,8 @@ def session_factory():
                 court_type varchar(50),
                 match_format varchar(50),
                 winning_team_id bigint,
+                predicted_winning_team_number integer,
+                predicted_win_probability numeric(8, 4),
                 total_points_played integer,
                 expected_competitiveness numeric(8, 3),
                 simulation_noise_factor numeric(8, 3),
@@ -227,6 +229,8 @@ def session_factory():
                 win_by integer not null default 2,
                 expected_team_one_score_share numeric(8, 4),
                 actual_team_one_score_share numeric(8, 4),
+                expected_team_one_score numeric(8, 3),
+                expected_team_two_score numeric(8, 3),
                 score_noise_factor numeric(8, 3),
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
@@ -341,6 +345,16 @@ def test_generate_for_batch_creates_matches_teams_players_and_games(session):
     assert all(match.match_date.month == 1 for match in session.query(Match))
     assert all(len(match.match_teams) == 2 for match in session.query(Match))
     assert all(len(match.games) == 1 for match in session.query(Match))
+    assert all(
+        match.predicted_winning_team_number in {1, 2}
+        for match in session.query(Match)
+    )
+    assert all(match.predicted_win_probability is not None for match in session.query(Match))
+    assert all(
+        game.expected_team_one_score is not None
+        and game.expected_team_two_score is not None
+        for game in session.query(MatchGame)
+    )
     assert {team.team_number for team in session.query(MatchTeam)} == {1, 2}
     session.refresh(batch)
     assert batch.match_count_generated == 4
@@ -419,6 +433,27 @@ def test_config_validates_game_target_score():
 
     with pytest.raises(ValueError, match="game_target_score"):
         MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_win_by_two_extension_rate():
+    payload = test_payload()
+    payload["games_and_scores"]["win_by_two_extension_rate"] = 1.2
+
+    with pytest.raises(ValueError, match="win_by_two_extension_rate"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_generate_for_batch_uses_win_by_two_extension_rate(session):
+    payload = test_payload()
+    payload["games_and_scores"]["win_by_two_extension_rate"] = 1.0
+    _, batch = seed_match_data(session, payload=payload, team_count=8)
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    assert all(
+        max(game.team_one_score, game.team_two_score) > game.target_score
+        for game in session.query(MatchGame)
+    )
 
 
 def _match_snapshot(session):

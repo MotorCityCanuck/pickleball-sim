@@ -770,12 +770,14 @@ scores, and ties each game to a stable match id and monthly batch.
   **Primary inputs**                  match rows; team rating snapshots;
                                       games per match config
 
-  **Primary outputs**                 game rows; game score metrics
+  **Primary outputs**                 game rows; expected score metrics;
+                                      actual score metrics
 
   **Dependencies**                    matchmaking_engine; rating_engine
 
   **Configuration keys**              games_per_match; score_noise;
-                                      upset_probability; win_by_two_rule
+                                      upset_probability; win_by_two_rule;
+                                      win_by_two_extension_rate
   -----------------------------------------------------------------------
 
 ### Required Behavior
@@ -784,8 +786,15 @@ scores, and ties each game to a stable match id and monthly batch.
 
 - Generate plausible pickleball scores and winners.
 
+- Persist rating-derived expected score share and expected raw scores for
+  both teams on each game.
+
 - Include enough stochastic noise to reduce deterministic
   rating-to-score mapping.
+
+- When `win_by_two_rule_enabled` is true, use
+  `win_by_two_extension_rate` to control how often generated games extend
+  beyond the target score before a team wins by two.
 
 ### Failure Handling and Logging
 
@@ -826,10 +835,10 @@ and noise controls.
 
 - Process results in chronological order within the monthly batch.
 
-- Compute expected score from team rating difference, then apply actual
-  score differential.
+- Compute expected score from the rating-derived game expectations, then
+  apply actual score differential.
 
-- Create new assessment history records rather than mutating historical
+- Create new rating history records rather than mutating historical
   records.
 
 ### Failure Handling and Logging

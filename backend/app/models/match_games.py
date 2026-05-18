@@ -40,6 +40,8 @@ class MatchGame(Base, TimestampMixin):
     )
     expected_team_one_score_share = Column(Numeric(8, 4))
     actual_team_one_score_share = Column(Numeric(8, 4))
+    expected_team_one_score = Column(Numeric(8, 3))
+    expected_team_two_score = Column(Numeric(8, 3))
     score_noise_factor = Column(Numeric(8, 3))
 
     # Relationships

@@ -344,6 +344,10 @@ Stores match-level metadata.
 
 \| winning_team_id \| BIGINT \|
 
+\| predicted_winning_team_number \| INTEGER \|
+
+\| predicted_win_probability \| NUMERIC(8,4) \|
+
 \| total_points_played \| INTEGER \|
 
 \| expected_competitiveness \| NUMERIC(8,3) \|
@@ -876,6 +880,10 @@ match_format VARCHAR(50),
 
 winning_team_id BIGINT,
 
+predicted_winning_team_number INTEGER,
+
+predicted_win_probability NUMERIC(8,4),
+
 total_points_played INTEGER,
 
 expected_competitiveness NUMERIC(8,3),
@@ -888,7 +896,9 @@ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_match_type CHECK (match_type IN ('recreational', 'league', 'ladder', 'tournament', 'challenge', 'clinic', 'open_play'))
+CONSTRAINT chk_match_type CHECK (match_type IN ('recreational', 'league', 'ladder', 'tournament', 'challenge', 'clinic', 'open_play')),
+
+CONSTRAINT chk_match_predicted_winning_team CHECK (predicted_winning_team_number IS NULL OR predicted_winning_team_number IN (1, 2))
 
 );
 
@@ -917,6 +927,10 @@ win_by INTEGER NOT NULL DEFAULT 2,
 expected_team_one_score_share NUMERIC(8,4),
 
 actual_team_one_score_share NUMERIC(8,4),
+
+expected_team_one_score NUMERIC(8,3),
+
+expected_team_two_score NUMERIC(8,3),
 
 score_noise_factor NUMERIC(8,3),
 

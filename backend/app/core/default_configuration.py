@@ -6,7 +6,7 @@ from typing import Any
 
 
 DEFAULT_CONFIG_PROFILE_NAME = "default"
-DEFAULT_CONFIG_VERSION_NUMBER = 2
+DEFAULT_CONFIG_VERSION_NUMBER = 3
 DEFAULT_CONFIG_SCHEMA_VERSION = "1.0"
 DEFAULT_CONFIG_CREATED_BY = "system"
 
@@ -251,6 +251,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         },
         "game_target_score": 11,
         "win_by_two_rule_enabled": True,
+        "win_by_two_extension_rate": 0.10,
         "score_noise_std_dev": 1.5,
         "upset_probability_boost": 0.15,
     },
