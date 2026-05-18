@@ -120,6 +120,10 @@
 | `club_size_distribution_mega` | DECIMAL | 0.01 | 0.0-1.0 | probability | Mega clubs (500+ members) |
 | `club_assignment_noise_std_dev` | DECIMAL | 0.10 | 0.0-0.5 | probability_shift | Club assignment randomness |
 | `unaffiliated_player_rate` | DECIMAL | 0.12 | 0.0-0.30 | probability | Players without primary club |
+| `multi_club_membership_rate` | DECIMAL | 0.06 | 0.0-0.20 | probability | Affiliated players with secondary club memberships |
+| `min_club_memberships_per_affiliated_player` | INTEGER | 1 | 1-3 | memberships | Minimum club memberships for affiliated players |
+| `max_club_memberships_per_player` | INTEGER | 3 | 1-5 | memberships | Maximum active club memberships for any player |
+| `secondary_membership_same_region_rate` | DECIMAL | 0.85 | 0.0-1.0 | probability | Share of secondary club memberships constrained to the player's primary region |
 
 ---
 
@@ -289,6 +293,10 @@ regional:
 clubs:
   clubs_per_75k_population: 1.0
   unaffiliated_player_rate: 0.12
+  multi_club_membership_rate: 0.06
+  min_club_memberships_per_affiliated_player: 1
+  max_club_memberships_per_player: 3
+  secondary_membership_same_region_rate: 0.85
 
 match_scheduling:
   monthly_matches_per_active_player_mean: 8.0

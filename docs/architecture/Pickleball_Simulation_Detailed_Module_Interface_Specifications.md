@@ -467,7 +467,12 @@ random noise.
 
   **Configuration keys**              club_assignment_noise;
                                       club_size_power_law_alpha;
-                                      max_club_fill_ratio
+                                      max_club_fill_ratio;
+                                      unaffiliated_player_rate;
+                                      multi_club_membership_rate;
+                                      min_club_memberships_per_affiliated_player;
+                                      max_club_memberships_per_player;
+                                      secondary_membership_same_region_rate
   -----------------------------------------------------------------------
 
 ### Required Behavior
@@ -480,6 +485,14 @@ random noise.
 
 - Bias assignments toward larger clubs but include noise to prevent
   deterministic sorting.
+
+- Leave the configured share of players unaffiliated with no
+  `club_memberships` rows.
+
+- Assign exactly one active primary membership to affiliated players.
+
+- Assign secondary memberships only to the configured multi-club share,
+  bounded by the configured minimum and maximum membership counts.
 
 ### Failure Handling and Logging
 
