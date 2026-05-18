@@ -67,16 +67,11 @@ pickleball-sim/
 │   │   ├── core/              # Configuration and settings
 │   │   ├── db/                # Database session management
 │   │   ├── models/            # SQLAlchemy ORM models
-│   │   ├── repositories/      # Data access layer
+│   │   ├── generation/        # Generation run and monthly pipeline orchestration
 │   │   ├── generators/        # Data generation modules
-│   │   ├── simulations/       # Simulation engines
-│   │   ├── batch_processing/  # Monthly batch orchestration
-│   │   ├── analytics/         # Analytics computations
-│   │   ├── exports/           # Parquet export logic
-│   │   ├── validation/        # Data quality validation
 │   │   ├── web/               # FastAPI web interface
 │   │   └── utils/             # Shared utilities
-│   ├── scripts/               # ORM schema recreation/export scripts
+│   ├── scripts/               # ORM, seed, and generation CLI utilities
 │   ├── tests/                 # Test suite
 │   └── requirements.txt       # Python dependencies
 ├── data/                      # Data storage

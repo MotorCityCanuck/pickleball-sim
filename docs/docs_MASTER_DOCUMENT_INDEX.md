@@ -136,7 +136,21 @@ editing, payload validation, and run snapshot creation.
 
 ---
 
-### 2.3 Team Formation
+### 2.3 Monthly Generation Pipeline
+**File**: `generation_logic/monthly_generation_pipeline.md`
+**Purpose**: Implemented orchestration layer for one to twelve successive monthly batches
+**Key Sections**:
+- Pipeline execution order
+- Multi-month looping behavior
+- Existing-data skip behavior
+- CLI usage
+- Current scope and extension points
+
+**When to Reference**: Running end-to-end monthly generation, resume behavior, pipeline CLI usage
+
+---
+
+### 2.4 Team Formation
 **File**: `generation_logic/pickleball_team_determination_logic_v2.md`  
 **Purpose**: Team persistence, partner continuity, chemistry modeling  
 **Key Sections**:

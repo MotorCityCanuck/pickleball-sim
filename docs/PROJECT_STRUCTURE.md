@@ -71,7 +71,8 @@ pickleball-sim/
 │   │   ├── 📂 generation/                          # Batch planning and orchestration
 │   │   │   ├── 📄 __init__.py
 │   │   │   ├── 📄 control_plane.py                 # Generation run/batch creation
-│   │   │   └── 📄 orchestrator.py                  # Module orchestration
+│   │   │   ├── 📄 orchestrator.py                  # Initial generation planning
+│   │   │   └── 📄 monthly_pipeline.py              # End-to-end monthly pipeline
 │   │   │
 │   │   ├── 📂 generators/                          # Data generation modules
 │   │   │   ├── 📄 __init__.py
@@ -141,7 +142,8 @@ pickleball-sim/
 │   ├── 📄 generate_club_memberships.py             # Generate club memberships
 │   ├── 📄 generate_teams.py                        # Determine point-in-time teams
 │   ├── 📄 generate_matches.py                      # Generate matches, teams, players, and games
-│   └── 📄 generate_ratings.py                      # Generate rating history and update logs
+│   ├── 📄 generate_ratings.py                      # Generate rating history and update logs
+│   └── 📄 run_monthly_pipeline.py                  # Run 1-12 monthly batches end to end
 │
 ├── 📂 docs/                                        # Additional documentation
 │   └── (Created during design review)
