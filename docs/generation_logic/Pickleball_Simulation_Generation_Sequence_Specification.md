@@ -577,21 +577,26 @@ extensions, upset probability, and score noise.
 
 ## 17. Apply Rating Updates Chronologically
 
-**Purpose:** Process game/match results by date and sequence, calculate
-expected results, apply actual outcomes, and append rating history.
+**Purpose:** Process match results by date and sequence, calculate
+expected results, apply actual outcomes, append rating history, and write
+per-player rating update audit rows.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Inputs**                          game records; prior ratings; rating
+  **Inputs**                          match games; match teams; match
+                                      players; prior ratings; rating
                                       update config
 
-  **Outputs**                         rating history updates
+  **Outputs**                         player_rating_history rows;
+                                      ratings_update_log rows
 
   **Must run after**                  Generate Games and Scores
 
-  **Success criteria**                Ratings reflect all completed games
-                                      in chronological order.
+  **Success criteria**                Ratings reflect all completed
+                                      matches in chronological order,
+                                      with one audit row per player per
+                                      match.
   -----------------------------------------------------------------------
 
 ### Validation Gates
@@ -601,6 +606,12 @@ expected results, apply actual outcomes, and append rating history.
 - Rating deltas are within tolerance.
 
 - Missing prior rating is blocker.
+
+- `ratings_update_log` row count equals the number of player-match
+  participant rows processed.
+
+- `rating_delta` equals `rating_after - rating_before` within numeric
+  rounding tolerance.
 
 ## 18. Update Confidence History
 

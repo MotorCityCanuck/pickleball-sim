@@ -153,7 +153,7 @@ Configuration → Monthly Batch Processor
 - [x] Match scheduling (weekend-weighted)
 - [x] Matchmaking engine
 - [x] Game and score generation
-- [ ] Rating calculation engine
+- [x] Rating calculation engine with per-match update logs
 
 ### 🔜 Phase 4: Monthly Batch Processing
 - [ ] Batch orchestration
@@ -180,11 +180,11 @@ Configuration → Monthly Batch Processor
 
 ## Database Schema
 
-33 ORM-backed tables organized into layers:
+34 ORM-backed tables organized into layers:
 
 - **Bronze**: Raw ingestion and staging (`uploaded_files`, `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases`)
 - **Silver**: Validated entities (`players`, `clubs`, `teams`, `regions`)
-- **Gold**: Analytics-ready (`player_rating_history`, `matches`, `match_games`, `monthly_batches`)
+- **Gold**: Analytics-ready (`player_rating_history`, `ratings_update_log`, `matches`, `match_games`, `monthly_batches`)
 - **Operational**: Platform metadata (`generation_runs`, `validation_results`, `job_status`)
 - **Configuration Repository**: Versioned generation settings (`configuration_profiles`, `configuration_profile_versions`)
 

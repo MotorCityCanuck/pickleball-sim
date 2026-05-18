@@ -28,7 +28,7 @@ The project uses an ORM-first database strategy during active development.
 
 ## Current Live Model Scope
 
-The current live schema and ORM define 33 tables: 23 core platform tables,
+The current live schema and ORM define 34 tables: 24 core platform tables,
 8 raw seed-data staging tables, and 2 configuration repository tables.
 
 1. `generation_runs`
@@ -36,34 +36,35 @@ The current live schema and ORM define 33 tables: 23 core platform tables,
 3. `monthly_batches`
 4. `players`
 5. `player_rating_history`
-6. `player_assessment_history`
-7. `player_registrations`
-8. `clubs`
-9. `club_memberships`
-10. `teams`
-11. `team_memberships`
-12. `tournaments`
-13. `matches`
-14. `match_games`
-15. `match_teams`
-16. `match_team_players`
-17. `first_names`
-18. `last_names`
-19. `batch_runs`
-20. `uploaded_files`
-21. `export_runs`
-22. `validation_results`
-23. `job_status`
-24. `raw_seed_load_runs`
-25. `raw_seed_load_errors`
-26. `raw_metro_areas`
-27. `raw_pickleball_club_names`
-28. `raw_pickleball_club_distributions`
-29. `raw_first_names`
-30. `raw_last_names`
-31. `raw_state_prov_biases`
-32. `configuration_profiles`
-33. `configuration_profile_versions`
+6. `ratings_update_log`
+7. `player_assessment_history`
+8. `player_registrations`
+9. `clubs`
+10. `club_memberships`
+11. `teams`
+12. `team_memberships`
+13. `tournaments`
+14. `matches`
+15. `match_games`
+16. `match_teams`
+17. `match_team_players`
+18. `first_names`
+19. `last_names`
+20. `batch_runs`
+21. `uploaded_files`
+22. `export_runs`
+23. `validation_results`
+24. `job_status`
+25. `raw_seed_load_runs`
+26. `raw_seed_load_errors`
+27. `raw_metro_areas`
+28. `raw_pickleball_club_names`
+29. `raw_pickleball_club_distributions`
+30. `raw_first_names`
+31. `raw_last_names`
+32. `raw_state_prov_biases`
+33. `configuration_profiles`
+34. `configuration_profile_versions`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

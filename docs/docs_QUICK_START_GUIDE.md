@@ -73,7 +73,7 @@ Graduate students will:
               │
 ┌─────────────▼───────────────────────┐
 │   PostgreSQL Database               │
-│   - 33 ORM-backed tables            │
+│   - 34 ORM-backed tables            │
 │   - Historical rating tracking      │
 │   - Monthly batch metadata          │
 └─────────────┬───────────────────────┘

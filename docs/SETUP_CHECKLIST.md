@@ -3,7 +3,7 @@
 **Pickleball Simulation Platform - Development Setup Checklist**
 
 **Current status note (2026-05-18):** The foundation work described here is
-complete in the live repository. The active codebase now includes 33 ORM-backed
+complete in the live repository. The active codebase now includes 34 ORM-backed
 tables, ORM schema recreation/export scripts, configuration profiles, raw seed
 loading/normalization, player generation, club memberships, team determination,
 match generation, and game generation. Use this file as an environment setup
@@ -129,13 +129,13 @@ python backend/scripts/export_schema_from_orm.py
 docker exec -it pickleball-postgres psql -U postgres -d pickleball
 ```
 ```sql
-\dt                    -- List all tables (should see 33)
+\dt                    -- List all tables (should see 34)
 \d players             -- Describe players table
 \d+ players            -- Detailed view with constraints
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 \q
 ```
-- [x] All 33 ORM-backed tables created
+- [x] All 34 ORM-backed tables created
 - [x] Constraints applied correctly
 - [x] Indexes created
 - [x] Foreign keys established
@@ -392,8 +392,8 @@ Foundation setup is complete when:
 - [x] Python virtual environment created
 - [x] All dependencies installed
 - [x] `backend/schema.sql` generated from ORM metadata
-- [x] All 33 SQLAlchemy models created
-- [x] Schema applied to database (all 33 tables exist)
+- [x] All 34 SQLAlchemy models created
+- [x] Schema applied to database (all 34 tables exist)
 - [x] Database session management working
 - [x] Configuration system working
 - [x] Basic tests passing

@@ -822,34 +822,47 @@ scores, and ties each game to a stable match id and monthly batch.
 
 ## rating_engine
 
-**Purpose:** Updates player assessment history after each match/game
-using expected score, actual performance, K-factor logic, confidence,
-and noise controls.
+**Purpose:** Updates player rating history after each match using
+expected score, actual performance, K-factor logic, confidence, and audit
+logging.
 
   -----------------------------------------------------------------------
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
-  **Primary inputs**                  game results; prior rating
-                                      snapshot; rating config
+  **Primary inputs**                  match games; match teams; match
+                                      players; prior rating snapshot;
+                                      rating config
 
-  **Primary outputs**                 new rating history records; rating
+  **Primary outputs**                 new player_rating_history records;
+                                      ratings_update_log records; rating
                                       movement metrics
 
   **Dependencies**                    game_generation_engine
 
-  **Configuration keys**              k_factor_base; rating_noise_std_dev;
-                                      confidence_weight; rating_decay
+  **Configuration keys**              k_factor_new_player;
+                                      k_factor_established;
+                                      k_factor_elite;
+                                      rating_min; rating_max;
+                                      confidence_max
   -----------------------------------------------------------------------
 
 ### Required Behavior
 
 - Process results in chronological order within the monthly batch.
 
-- Compute expected score from the rating-derived game expectations, then
-  apply actual score differential.
+- Aggregate each match's game-level expected and actual score shares to
+  one per-player, per-match update.
+
+- Compute rating deltas from `actual_score_share -
+  expected_score_share`, using the applicable K-factor.
 
 - Create new rating history records rather than mutating historical
   records.
+
+- Write one `ratings_update_log` row for each player in each processed
+  match, including match number, before/after ratings, rating delta,
+  expected/actual score share, expected/actual raw points, games played,
+  games won, match result, K-factor, and confidence movement.
 
 ### Failure Handling and Logging
 
@@ -865,6 +878,9 @@ and noise controls.
   processing.
 
 - Historical records are append-only.
+
+- Rating update log row count equals match participant count for the
+  processed batch.
 
 ## confidence_engine
 

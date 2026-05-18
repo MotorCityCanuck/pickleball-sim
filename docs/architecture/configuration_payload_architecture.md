@@ -51,7 +51,7 @@ Suggested groups:
 
 | Group | Included Tables |
 |-------|-----------------|
-| `student_core` | `players`, `player_registrations`, `player_rating_history`, `player_assessment_history`, `clubs`, `club_memberships`, `teams`, `team_memberships`, `matches`, `match_games`, `match_teams`, `match_team_players`, `tournaments`, `monthly_batches` |
+| `student_core` | `players`, `player_registrations`, `player_rating_history`, `ratings_update_log`, `player_assessment_history`, `clubs`, `club_memberships`, `teams`, `team_memberships`, `matches`, `match_games`, `match_teams`, `match_team_players`, `tournaments`, `monthly_batches` |
 | `reference` | `regions`, `first_names`, `last_names` |
 | `operational` | `generation_runs`, `batch_runs`, `export_runs`, `validation_results`, `job_status`, `uploaded_files` |
 | `raw_seed` | `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases` |

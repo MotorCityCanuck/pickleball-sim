@@ -9,7 +9,7 @@
 > Historical note: this document captures the original Alembic-removal decision.
 > The active workflow is now ORM-first: SQLAlchemy metadata is the schema source
 > of truth, `backend/schema.sql` is generated from ORM metadata, and the live
-> schema currently contains 33 ORM-backed tables.
+> schema currently contains 34 ORM-backed tables.
 
 ---
 
@@ -33,7 +33,7 @@ Alembic added unnecessary complexity for this project because:
 
 ---
 
-## New Approach: Hybrid DDL + SQLAlchemy
+## Original New Approach: Hybrid DDL + SQLAlchemy
 
 ### Schema Management
 - **Source of truth**: SQLAlchemy ORM metadata under `backend/app/models`
@@ -41,9 +41,9 @@ Alembic added unnecessary complexity for this project because:
 - **File**: `backend/schema.sql` (generated from ORM metadata)
 
 ### SQLAlchemy Usage
-- **Purpose**: Queries and data access only
-- **Not used for**: Schema creation or management
-- **Models**: Define for ORM convenience, but DDL is authoritative
+- **Purpose**: Schema definition, development schema creation, queries, and data access
+- **Not used for**: Production migration management in the current workflow
+- **Models**: Authoritative schema source; reference SQL is generated from ORM metadata
 
 ---
 
@@ -142,7 +142,7 @@ docker exec -i pickleball-postgres psql -U postgres -d pickleball < backend/sche
 
 ```bash
 docker exec -it pickleball-postgres psql -U postgres -d pickleball << EOF
--- Should show 33 tables in the current ORM-backed schema
+-- Should show 34 tables in the current ORM-backed schema
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 
 -- List all tables
@@ -185,7 +185,7 @@ def test_database_schema_exists():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 33, f"Expected 33 tables, found {len(tables)}"
+    assert len(tables) == 34, f"Expected 34 tables, found {len(tables)}"
     assert 'players' in tables
     assert 'player_rating_history' in tables
     assert 'monthly_batches' in tables

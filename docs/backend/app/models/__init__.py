@@ -5,6 +5,7 @@ from .regions import Region
 from .monthly_batches import MonthlyBatch
 from .players import Player
 from .player_rating_history import PlayerRatingHistory
+from .ratings_update_log import RatingsUpdateLog
 from .player_assessment_history import PlayerAssessmentHistory
 from .player_registrations import PlayerRegistration
 from .clubs import Club
@@ -41,6 +42,7 @@ __all__ = [
     'MonthlyBatch',
     'Player',
     'PlayerRatingHistory',
+    'RatingsUpdateLog',
     'PlayerAssessmentHistory',
     'PlayerRegistration',
     'Club',

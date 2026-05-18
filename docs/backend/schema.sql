@@ -2,8 +2,8 @@
 -- Pickleball Simulation Platform - Database Schema
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
--- Total Tables: 33
--- Explicit Indexes: 86
+-- Total Tables: 34
+-- Explicit Indexes: 90
 -- PostgreSQL 16+
 -- ============================================
 
@@ -623,6 +623,50 @@ CREATE TABLE match_team_players (
 	FOREIGN KEY(player_id) REFERENCES players (id)
 );
 
+CREATE TABLE ratings_update_log (
+	id BIGSERIAL NOT NULL, 
+	generation_run_id BIGINT NOT NULL, 
+	batch_id BIGINT NOT NULL, 
+	match_id BIGINT NOT NULL, 
+	match_number INTEGER NOT NULL, 
+	match_date DATE NOT NULL, 
+	player_id BIGINT NOT NULL, 
+	match_team_id BIGINT NOT NULL, 
+	team_number INTEGER NOT NULL, 
+	rating_type VARCHAR(50) NOT NULL, 
+	rating_before NUMERIC(8, 3) NOT NULL, 
+	rating_after NUMERIC(8, 3) NOT NULL, 
+	rating_delta NUMERIC(8, 3) NOT NULL, 
+	expected_score_share NUMERIC(8, 4) NOT NULL, 
+	actual_score_share NUMERIC(8, 4) NOT NULL, 
+	expected_raw_points NUMERIC(8, 3) NOT NULL, 
+	actual_raw_points NUMERIC(8, 3) NOT NULL, 
+	games_played INTEGER NOT NULL, 
+	games_won INTEGER NOT NULL, 
+	match_won INTEGER NOT NULL, 
+	k_factor NUMERIC(8, 3) NOT NULL, 
+	confidence_before NUMERIC(8, 3), 
+	confidence_after NUMERIC(8, 3), 
+	calculation_version VARCHAR(50), 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_rating_log_match_number CHECK (match_number >= 1), 
+	CONSTRAINT chk_rating_log_team_number CHECK (team_number IN (1, 2)), 
+	CONSTRAINT chk_rating_log_games_played CHECK (games_played >= 1), 
+	CONSTRAINT chk_rating_log_games_won CHECK (games_won >= 0), 
+	CONSTRAINT chk_rating_log_match_won CHECK (match_won IN (0, 1)), 
+	CONSTRAINT chk_rating_log_before CHECK (rating_before >= 0 AND rating_before <= 5000), 
+	CONSTRAINT chk_rating_log_after CHECK (rating_after >= 0 AND rating_after <= 5000), 
+	CONSTRAINT chk_rating_log_expected_share CHECK (expected_score_share >= 0 AND expected_score_share <= 1), 
+	CONSTRAINT chk_rating_log_actual_share CHECK (actual_score_share >= 0 AND actual_score_share <= 1), 
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id), 
+	FOREIGN KEY(match_id) REFERENCES matches (id), 
+	FOREIGN KEY(player_id) REFERENCES players (id), 
+	FOREIGN KEY(match_team_id) REFERENCES match_teams (id)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -679,6 +723,10 @@ CREATE INDEX idx_rating_batch ON player_rating_history (batch_id);
 CREATE INDEX idx_rating_date_type ON player_rating_history (rating_date, rating_type);
 CREATE INDEX idx_rating_player_date ON player_rating_history (player_id, rating_date DESC);
 CREATE INDEX idx_rating_value ON player_rating_history (rating_value);
+CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log (batch_id);
+CREATE INDEX idx_ratings_update_log_match ON ratings_update_log (match_id);
+CREATE INDEX idx_ratings_update_log_player ON ratings_update_log (player_id);
+CREATE INDEX idx_ratings_update_log_player_date ON ratings_update_log (player_id, match_date);
 CREATE INDEX idx_raw_club_distributions_country_state ON raw_pickleball_club_distributions (country_code, state_province_code);
 CREATE INDEX idx_raw_club_distributions_load_run ON raw_pickleball_club_distributions (load_run_id);
 CREATE INDEX idx_raw_club_names_country_state ON raw_pickleball_club_names (country_code, state_province_code);

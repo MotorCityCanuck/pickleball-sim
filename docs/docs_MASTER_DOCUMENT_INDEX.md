@@ -49,11 +49,11 @@ This index provides a hierarchical guide to all authoritative design documents f
 **Purpose**: Authoritative schema definition and data model  
 **Key Sections**:
 - Complete DDL for the core schema, with ORM-generated reference SQL covering
-  33 live tables
-- 86 explicit ORM indexes in the generated reference SQL
-- Live check constraints are verified by `backend/tests/schema_expectations.py`
-- 12 unique constraints in the live ORM expectations
-- 35 validation rules
+  34 live tables
+- 90 explicit ORM indexes in the generated reference SQL
+- 63 live check constraints verified by `backend/tests/schema_expectations.py`
+- 14 unique constraints in the live ORM expectations
+- Validation rules and constraints are kept aligned with the ORM consistency tests
 - Parquet export strategy
 - Medallion architecture (Bronze/Silver/Gold)
 - Critical design prohibitions

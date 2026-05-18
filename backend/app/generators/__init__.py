@@ -8,6 +8,7 @@ from .club_memberships import (
 from .games import GeneratedGames, generate_match_games
 from .matches import MatchGenerationConfig, MatchGenerationResult, MatchGenerator
 from .players import PlayerGenerator, PlayerGenerationResult
+from .ratings import RatingUpdateConfig, RatingUpdateGenerator, RatingUpdateResult
 from .teams import TeamFormationConfig, TeamGenerationResult, TeamGenerator
 
 __all__ = [
@@ -20,6 +21,9 @@ __all__ = [
     "MatchGenerator",
     "PlayerGenerationResult",
     "PlayerGenerator",
+    "RatingUpdateConfig",
+    "RatingUpdateGenerator",
+    "RatingUpdateResult",
     "TeamFormationConfig",
     "TeamGenerationResult",
     "TeamGenerator",

@@ -1023,7 +1023,7 @@ New staging and tracking tables proposed by this spec:
 - `raw_state_prov_biases`
 
 These tables are implemented in the ORM and included in the current
-33-table schema.
+34-table schema.
 
 Production table changes tracked by this spec:
 

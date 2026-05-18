@@ -104,6 +104,8 @@ Primary entities:
 
 - player_rating_history
 
+- ratings_update_log
+
 - player_assessment_history
 
 - player_registrations
@@ -858,7 +860,7 @@ CONSTRAINT chk_confidence_score CHECK (confidence_score >= 0 AND confidence_scor
 
 );
 
-\-\--
+---
 
 ## 11.3 matches
 
@@ -1001,6 +1003,89 @@ CONSTRAINT chk_player_position CHECK (player_position IN (1, 2)),
 UNIQUE (match_team_id, player_id)
 
 );
+
+\-\--
+
+## 11.5a ratings_update_log
+
+CREATE TABLE ratings_update_log (
+
+id BIGSERIAL PRIMARY KEY,
+
+generation_run_id BIGINT NOT NULL REFERENCES generation_runs(id),
+
+batch_id BIGINT NOT NULL REFERENCES monthly_batches(id),
+
+match_id BIGINT NOT NULL REFERENCES matches(id),
+
+match_number INTEGER NOT NULL,
+
+match_date DATE NOT NULL,
+
+player_id BIGINT NOT NULL REFERENCES players(id),
+
+match_team_id BIGINT NOT NULL REFERENCES match_teams(id),
+
+team_number INTEGER NOT NULL,
+
+rating_type VARCHAR(50) NOT NULL,
+
+rating_before NUMERIC(8,3) NOT NULL,
+
+rating_after NUMERIC(8,3) NOT NULL,
+
+rating_delta NUMERIC(8,3) NOT NULL,
+
+expected_score_share NUMERIC(8,4) NOT NULL,
+
+actual_score_share NUMERIC(8,4) NOT NULL,
+
+expected_raw_points NUMERIC(8,3) NOT NULL,
+
+actual_raw_points NUMERIC(8,3) NOT NULL,
+
+games_played INTEGER NOT NULL,
+
+games_won INTEGER NOT NULL,
+
+match_won INTEGER NOT NULL,
+
+k_factor NUMERIC(8,3) NOT NULL,
+
+confidence_before NUMERIC(8,3),
+
+confidence_after NUMERIC(8,3),
+
+calculation_version VARCHAR(50),
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+CONSTRAINT chk_rating_log_match_number CHECK (match_number >= 1),
+
+CONSTRAINT chk_rating_log_team_number CHECK (team_number IN (1, 2)),
+
+CONSTRAINT chk_rating_log_games_played CHECK (games_played >= 1),
+
+CONSTRAINT chk_rating_log_games_won CHECK (games_won >= 0),
+
+CONSTRAINT chk_rating_log_match_won CHECK (match_won IN (0, 1)),
+
+CONSTRAINT chk_rating_log_before CHECK (rating_before >= 0 AND rating_before <= 5000),
+
+CONSTRAINT chk_rating_log_after CHECK (rating_after >= 0 AND rating_after <= 5000),
+
+CONSTRAINT chk_rating_log_expected_share CHECK (expected_score_share >= 0 AND expected_score_share <= 1),
+
+CONSTRAINT chk_rating_log_actual_share CHECK (actual_score_share >= 0 AND actual_score_share <= 1)
+
+);
+
+The rating update log is an audit table with one row per player per
+processed match. `player_rating_history` remains the authoritative
+rating time series; `ratings_update_log` explains how each match changed
+each player's rating.
 
 \-\--
 
@@ -1578,6 +1663,12 @@ CREATE INDEX idx_rating_batch ON player_rating_history(batch_id);
 CREATE INDEX idx_rating_date_type ON player_rating_history(rating_date, rating_type);
 CREATE INDEX idx_rating_value ON player_rating_history(rating_value);
 
+-- ratings_update_log indexes
+CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log(batch_id);
+CREATE INDEX idx_ratings_update_log_match ON ratings_update_log(match_id);
+CREATE INDEX idx_ratings_update_log_player ON ratings_update_log(player_id);
+CREATE INDEX idx_ratings_update_log_player_date ON ratings_update_log(player_id, match_date);
+
 -- player_assessment_history indexes
 CREATE INDEX idx_assessment_player_date ON player_assessment_history(player_id, assessment_date DESC);
 CREATE INDEX idx_assessment_batch ON player_assessment_history(batch_id);
@@ -2146,6 +2237,8 @@ generation_runs
 ├── matches
 
 ├── player_rating_history
+
+├── ratings_update_log
 
 └── player_assessment_history
 

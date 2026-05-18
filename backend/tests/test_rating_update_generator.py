@@ -1,0 +1,484 @@
+"""Tests for match-driven rating updates."""
+from copy import deepcopy
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+import sys
+from uuid import UUID
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
+from app.generators import RatingUpdateGenerator  # noqa: E402
+from app.models import (  # noqa: E402
+    GenerationRun,
+    Match,
+    MatchGame,
+    MatchTeam,
+    MatchTeamPlayer,
+    MonthlyBatch,
+    Player,
+    PlayerRatingHistory,
+    RatingsUpdateLog,
+)
+
+
+@pytest.fixture()
+def session_factory():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE generation_runs (
+                id integer primary key,
+                generation_name varchar(255) not null,
+                seed_value bigint not null,
+                simulation_version varchar(100),
+                parameter_snapshot json,
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null default 'pending',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE monthly_batches (
+                id integer primary key,
+                generation_run_id bigint not null,
+                batch_month date not null,
+                batch_sequence integer not null,
+                batch_type varchar(30) not null default 'historical_initial',
+                active_player_count_start integer,
+                new_player_count integer,
+                active_player_count_end integer,
+                match_count_generated integer,
+                rating_update_count integer,
+                assessment_update_count integer,
+                processing_status varchar(30) not null default 'pending',
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE players (
+                id integer primary key,
+                external_player_key blob not null unique,
+                first_name varchar(100) not null,
+                last_name varchar(100) not null,
+                gender varchar(20),
+                birth_date date not null,
+                dominant_hand varchar(10),
+                home_region_id bigint,
+                registration_date date not null,
+                initial_skill_seed numeric(8, 4),
+                player_status varchar(30) not null default 'ACTIVE',
+                generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE player_rating_history (
+                id integer primary key,
+                player_id bigint not null,
+                rating_date date not null,
+                rating_type varchar(50) not null,
+                rating_value numeric(8, 3) not null,
+                confidence_score numeric(8, 3),
+                volatility_score numeric(8, 3),
+                expected_performance numeric(8, 3),
+                regional_adjustment_factor numeric(8, 4),
+                global_percentile numeric(5, 2),
+                match_count_used integer,
+                calculation_version varchar(50),
+                batch_id bigint not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE matches (
+                id integer primary key,
+                tournament_id bigint,
+                match_date date not null,
+                region_id bigint,
+                match_type varchar(50) not null,
+                court_type varchar(50),
+                match_format varchar(50),
+                winning_team_id bigint,
+                predicted_winning_team_number integer,
+                predicted_win_probability numeric(8, 4),
+                total_points_played integer,
+                expected_competitiveness numeric(8, 3),
+                simulation_noise_factor numeric(8, 3),
+                batch_id bigint not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE match_teams (
+                id integer primary key,
+                match_id bigint not null,
+                team_number integer not null,
+                team_score integer not null,
+                expected_win_probability numeric(8, 4),
+                average_team_rating numeric(8, 3),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE match_team_players (
+                id integer primary key,
+                match_team_id bigint not null,
+                player_id bigint not null,
+                player_position integer,
+                player_rating_at_match numeric(8, 3),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE match_games (
+                id integer primary key,
+                match_id bigint not null,
+                game_number integer not null,
+                team_one_score integer not null,
+                team_two_score integer not null,
+                winning_team_number integer not null,
+                target_score integer not null default 11,
+                win_by integer not null default 2,
+                expected_team_one_score_share numeric(8, 4),
+                actual_team_one_score_share numeric(8, 4),
+                expected_team_one_score numeric(8, 3),
+                expected_team_two_score numeric(8, 3),
+                score_noise_factor numeric(8, 3),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE ratings_update_log (
+                id integer primary key,
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                match_id bigint not null,
+                match_number integer not null,
+                match_date date not null,
+                player_id bigint not null,
+                match_team_id bigint not null,
+                team_number integer not null,
+                rating_type varchar(50) not null,
+                rating_before numeric(8, 3) not null,
+                rating_after numeric(8, 3) not null,
+                rating_delta numeric(8, 3) not null,
+                expected_score_share numeric(8, 4) not null,
+                actual_score_share numeric(8, 4) not null,
+                expected_raw_points numeric(8, 3) not null,
+                actual_raw_points numeric(8, 3) not null,
+                games_played integer not null,
+                games_won integer not null,
+                match_won integer not null,
+                k_factor numeric(8, 3) not null,
+                confidence_before numeric(8, 3),
+                confidence_after numeric(8, 3),
+                calculation_version varchar(50),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    return sessionmaker(bind=engine, autoflush=False, future=True)
+
+
+@pytest.fixture()
+def session(session_factory):
+    db_session = session_factory()
+    try:
+        yield db_session
+    finally:
+        db_session.close()
+
+
+def test_payload():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["ratings"]["k_factor_new_player"] = 48
+    payload["confidence"]["confidence_increment_per_match"] = 0.02
+    return payload
+
+
+test_payload.__test__ = False
+
+
+def seed_rating_match(session, *, payload=None):
+    generation_run = GenerationRun(
+        id=1,
+        generation_name="ratings",
+        seed_value=42,
+        simulation_version="test",
+        parameter_snapshot=payload or test_payload(),
+        status="pending",
+    )
+    batch = MonthlyBatch(
+        id=1,
+        generation_run_id=1,
+        batch_month=date(2024, 1, 1),
+        batch_sequence=1,
+        batch_type="historical_initial",
+        processing_status="pending",
+    )
+    players = [
+        Player(
+            id=player_id,
+            external_player_key=UUID(int=player_id),
+            first_name=f"Player{player_id}",
+            last_name="Rating",
+            gender="M",
+            birth_date=date(1980, 1, 1),
+            registration_date=date(2024, 1, 1),
+            player_status="ACTIVE",
+            generation_run_id=1,
+        )
+        for player_id in range(1, 5)
+    ]
+    ratings = [
+        PlayerRatingHistory(
+            id=index,
+            player_id=index,
+            rating_date=date(2024, 1, 1),
+            rating_type="initial",
+            rating_value=Decimal("1500.000"),
+            confidence_score=Decimal("0.200"),
+            batch_id=1,
+        )
+        for index in range(1, 5)
+    ]
+    match = Match(
+        id=1,
+        match_date=date(2024, 1, 15),
+        match_type="recreational",
+        match_format="single_game",
+        winning_team_id=1,
+        predicted_winning_team_number=1,
+        predicted_win_probability=Decimal("0.5000"),
+        total_points_played=16,
+        batch_id=1,
+    )
+    team_one = MatchTeam(
+        id=1,
+        match_id=1,
+        team_number=1,
+        team_score=1,
+        expected_win_probability=Decimal("0.5000"),
+        average_team_rating=Decimal("1500.000"),
+    )
+    team_two = MatchTeam(
+        id=2,
+        match_id=1,
+        team_number=2,
+        team_score=0,
+        expected_win_probability=Decimal("0.5000"),
+        average_team_rating=Decimal("1500.000"),
+    )
+    match_players = [
+        MatchTeamPlayer(
+            id=1,
+            match_team_id=1,
+            player_id=1,
+            player_position=1,
+            player_rating_at_match=Decimal("1500.000"),
+        ),
+        MatchTeamPlayer(
+            id=2,
+            match_team_id=1,
+            player_id=2,
+            player_position=2,
+            player_rating_at_match=Decimal("1500.000"),
+        ),
+        MatchTeamPlayer(
+            id=3,
+            match_team_id=2,
+            player_id=3,
+            player_position=1,
+            player_rating_at_match=Decimal("1500.000"),
+        ),
+        MatchTeamPlayer(
+            id=4,
+            match_team_id=2,
+            player_id=4,
+            player_position=2,
+            player_rating_at_match=Decimal("1500.000"),
+        ),
+    ]
+    game = MatchGame(
+        id=1,
+        match_id=1,
+        game_number=1,
+        team_one_score=11,
+        team_two_score=5,
+        winning_team_number=1,
+        target_score=11,
+        win_by=2,
+        expected_team_one_score_share=Decimal("0.5000"),
+        actual_team_one_score_share=Decimal("0.6875"),
+        expected_team_one_score=Decimal("11.000"),
+        expected_team_two_score=Decimal("9.000"),
+        score_noise_factor=Decimal("0.000"),
+    )
+    session.add(generation_run)
+    session.add(batch)
+    session.add_all(players)
+    session.add_all(ratings)
+    session.add(match)
+    session.add_all([team_one, team_two])
+    session.add_all(match_players)
+    session.add(game)
+    session.commit()
+    return batch
+
+
+def test_rating_updates_write_history_and_match_logs(session):
+    batch = seed_rating_match(session)
+
+    result = RatingUpdateGenerator().generate_for_batch(
+        batch_id=batch.id,
+        session=session,
+    )
+
+    assert result.match_count == 1
+    assert result.player_update_count == 4
+    assert result.rating_history_count == 4
+    assert result.log_count == 4
+    assert session.query(RatingsUpdateLog).count() == 4
+    assert session.query(PlayerRatingHistory).count() == 8
+    team_one_log = (
+        session.query(RatingsUpdateLog)
+        .filter(RatingsUpdateLog.player_id == 1)
+        .one()
+    )
+    team_two_log = (
+        session.query(RatingsUpdateLog)
+        .filter(RatingsUpdateLog.player_id == 3)
+        .one()
+    )
+    assert team_one_log.rating_before == Decimal("1500.000")
+    assert team_one_log.rating_after == Decimal("1509.000")
+    assert team_one_log.rating_delta == Decimal("9.000")
+    assert team_one_log.expected_score_share == Decimal("0.5000")
+    assert team_one_log.actual_score_share == Decimal("0.6875")
+    assert team_one_log.expected_raw_points == Decimal("11.000")
+    assert team_one_log.actual_raw_points == Decimal("11.000")
+    assert team_one_log.match_won == 1
+    assert team_two_log.rating_after == Decimal("1491.000")
+    assert team_two_log.rating_delta == Decimal("-9.000")
+    session.refresh(batch)
+    assert batch.rating_update_count == 4
+
+
+def test_rating_updates_aggregate_multiple_games(session):
+    batch = seed_rating_match(session)
+    session.add(
+        MatchGame(
+            id=2,
+            match_id=1,
+            game_number=2,
+            team_one_score=11,
+            team_two_score=9,
+            winning_team_number=1,
+            target_score=11,
+            win_by=2,
+            expected_team_one_score_share=Decimal("0.5000"),
+            actual_team_one_score_share=Decimal("0.5500"),
+            expected_team_one_score=Decimal("11.000"),
+            expected_team_two_score=Decimal("9.000"),
+            score_noise_factor=Decimal("0.000"),
+        )
+    )
+    session.commit()
+
+    result = RatingUpdateGenerator().generate_for_batch(
+        batch_id=batch.id,
+        session=session,
+    )
+
+    team_one_log = (
+        session.query(RatingsUpdateLog)
+        .filter(RatingsUpdateLog.player_id == 1)
+        .one()
+    )
+    assert result.match_count == 1
+    assert team_one_log.games_played == 2
+    assert team_one_log.games_won == 2
+    assert team_one_log.expected_score_share == Decimal("0.5000")
+    assert team_one_log.actual_score_share == Decimal("0.6188")
+    assert team_one_log.expected_raw_points == Decimal("22.000")
+    assert team_one_log.actual_raw_points == Decimal("22.000")
+    assert team_one_log.rating_delta == Decimal("5.702")
+    assert team_one_log.rating_after == Decimal("1505.702")
+
+
+def test_rating_updates_reject_rerun_for_same_batch(session):
+    batch = seed_rating_match(session)
+    generator = RatingUpdateGenerator()
+
+    generator.generate_for_batch(batch_id=batch.id, session=session)
+
+    with pytest.raises(ValueError, match="already has rating updates"):
+        generator.generate_for_batch(batch_id=batch.id, session=session)
+
+
+def test_rating_updates_require_prior_rating(session):
+    batch = seed_rating_match(session)
+    session.query(PlayerRatingHistory).filter(PlayerRatingHistory.player_id == 4).delete()
+    session.commit()
+
+    with pytest.raises(ValueError, match="Missing prior rating history"):
+        RatingUpdateGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+
+def test_rating_updates_require_game_expectations(session):
+    batch = seed_rating_match(session)
+    game = session.query(MatchGame).one()
+    game.expected_team_one_score_share = None
+    session.commit()
+
+    with pytest.raises(ValueError, match="expected_team_one_score_share"):
+        RatingUpdateGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+
+def test_rating_updates_reject_invalid_rating_bounds(session):
+    payload = test_payload()
+    payload["ratings"]["rating_min"] = 5000
+    payload["ratings"]["rating_max"] = 1000
+    batch = seed_rating_match(session, payload=payload)
+
+    with pytest.raises(ValueError, match="rating bounds"):
+        RatingUpdateGenerator().generate_for_batch(batch_id=batch.id, session=session)

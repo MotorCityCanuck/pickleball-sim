@@ -145,7 +145,7 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 - `validation_results` (NEW)
 - `job_status` (NEW)
 
-**Total Tables**: 33 ORM-backed tables: 23 core platform tables, 8
+**Current Total Tables**: 34 ORM-backed tables: 24 core platform tables, 8
 raw seed-data staging and tracking tables, and 2 configuration repository tables
 
 ---
@@ -197,7 +197,8 @@ CONSTRAINT chk_match_type CHECK (match_type IN (
 ### 10. ✅ **Validation Rules Catalog Created**
 
 **Problem**: Validation mentioned but rules undefined  
-**Resolution**: Added Section 16 to database design with 35 validation rules
+**Resolution**: Added Section 16 to database design and aligned live validation
+coverage with ORM consistency tests
 
 **Categories**:
 - Referential Integrity (5 rules)
@@ -344,7 +345,7 @@ data/parquet/
 1. **`database/Pickleball_Simulation_Database_Design_v3.md`**
    - 23 complete DDL statements (was 8)
    - 45+ indexes added (was 3)
-   - 35 validation rules cataloged (was 0)
+   - Live validation coverage cataloged and verified by ORM consistency tests
    - Parquet export strategy formalized
    - Medallion architecture defined
    - Critical prohibitions section added

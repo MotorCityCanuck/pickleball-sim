@@ -5,7 +5,7 @@ generation-design documents.
 
 ## Current ORM Scope
 
-The live ORM now defines 33 tables: 23 core platform tables, 8 raw seed-data
+The live ORM now defines 34 tables: 24 core platform tables, 8 raw seed-data
 staging tables, and 2 configuration repository tables. Before the
 `match_games` assessment, the live ORM
 defined these 22 core tables:
@@ -36,12 +36,16 @@ defined these 22 core tables:
 ## Current Required Gap
 
 The core persistence path for players, club memberships, teams, matches,
-match teams, match players, and games is now implemented. The next required
-modeling gap is not another table; it is the rating update engine that consumes
-`match_games.expected_team_one_score_share`, expected raw scores, actual scores,
-and prior `player_rating_history` rows to append new rating history records.
+match teams, match players, games, and rating update audit rows is now
+implemented. The next required gap is full monthly orchestration across these
+modules plus export/validation, not another immediate core table.
 
-`match_games` is implemented as the 23rd core ORM table and now stores:
+The rating update engine consumes `match_games.expected_team_one_score_share`,
+expected raw scores, actual scores, and prior `player_rating_history` rows to
+append new rating history records and one `ratings_update_log` row per player
+per match.
+
+`match_games` is implemented and stores:
 
 - game number within a match
 - per-game team scores
@@ -63,6 +67,7 @@ The following documented concepts already have ORM coverage:
 - player identity: `players`
 - new player intake: `player_registrations`
 - rating snapshots and movement: `player_rating_history`
+- per-match rating update audit: `ratings_update_log`
 - assessment snapshots: `player_assessment_history`
 - regions: `regions`
 - clubs and memberships: `clubs`, `club_memberships`
@@ -109,7 +114,7 @@ remain optional or deferred:
 
 ## Recommended Next Reassessment
 
-Reassess whether the rating update engine can use the existing expected score
-and actual score fields without adding rating-event audit tables. Team
-chemistry history, hidden truth state, session tracking, and tournament bracket
-tables should remain secondary until rating updates are implemented and tested.
+Reassess monthly orchestration, export validation, team chemistry history,
+hidden truth state, session tracking, and tournament bracket tables after the
+current players, clubs, teams, matches, games, and rating update path is stable
+under end-to-end monthly batch generation.

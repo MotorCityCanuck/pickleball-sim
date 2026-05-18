@@ -32,7 +32,7 @@ pickleball-sim/
 │   │   │   ├── 📄 __init__.py
 │   │   │   └── 📄 session.py                       # SQLAlchemy engine/session scope
 │   │   │
-│   │   ├── 📂 models/                              # SQLAlchemy ORM models (33 total)
+│   │   ├── 📂 models/                              # SQLAlchemy ORM models (34 total)
 │   │   │   ├── 📄 __init__.py
 │   │   │   ├── 📄 base.py                          # Base model + mixins
 │   │   │   ├── 📄 generation_runs.py               # Generation control
@@ -40,6 +40,7 @@ pickleball-sim/
 │   │   │   ├── 📄 regions.py                       # Geographic regions
 │   │   │   ├── 📄 players.py                       # Player identity
 │   │   │   ├── 📄 player_rating_history.py         # Rating time-series
+│   │   │   ├── 📄 ratings_update_log.py            # Per-match rating update audit
 │   │   │   ├── 📄 player_assessment_history.py     # Assessment metrics
 │   │   │   ├── 📄 player_registrations.py          # New player intake
 │   │   │   ├── 📄 clubs.py                         # Club entities
@@ -78,7 +79,8 @@ pickleball-sim/
 │   │   │   ├── 📄 club_memberships.py              # Player-club memberships
 │   │   │   ├── 📄 teams.py                         # Point-in-time team determination
 │   │   │   ├── 📄 matches.py                       # Match scheduling and pairing
-│   │   │   └── 📄 games.py                         # Game scores and expected score metrics
+│   │   │   ├── 📄 games.py                         # Game scores and expected score metrics
+│   │   │   └── 📄 ratings.py                       # Rating updates and audit logging
 │   │   │
 │   │   ├── 📂 web/                                 # Web interface (Phase 5)
 │   │   │   ├── 📄 __init__.py
@@ -138,7 +140,8 @@ pickleball-sim/
 │   ├── 📄 generate_players.py                      # Generate players and initial ratings
 │   ├── 📄 generate_club_memberships.py             # Generate club memberships
 │   ├── 📄 generate_teams.py                        # Determine point-in-time teams
-│   └── 📄 generate_matches.py                      # Generate matches, teams, players, and games
+│   ├── 📄 generate_matches.py                      # Generate matches, teams, players, and games
+│   └── 📄 generate_ratings.py                      # Generate rating history and update logs
 │
 ├── 📂 docs/                                        # Additional documentation
 │   └── (Created during design review)
@@ -178,7 +181,7 @@ pickleball-sim/
 |-----------|---------|----------|--------|
 | `backend/app/core/` | Configuration and settings | 🔴 Critical | Implemented |
 | `backend/app/db/` | Database session management | 🔴 Critical | Implemented |
-| `backend/app/models/` | SQLAlchemy ORM models (33 tables) | 🔴 Critical | Implemented |
+| `backend/app/models/` | SQLAlchemy ORM models (34 tables) | 🔴 Critical | Implemented |
 | `backend/app/generation/` | Generation run planning and orchestration | 🟠 High | Implemented |
 | `backend/app/generators/` | Data generation modules | 🟠 High | In progress |
 | `backend/app/seed_data_ingest/` | Raw seed loading | 🟠 High | Implemented |
@@ -194,7 +197,7 @@ pickleball-sim/
 
 ### Phase 1: Foundation
 1. ✅ Project structure created
-2. ✅ Database models (33 tables)
+2. ✅ Database models (34 tables)
 3. ✅ ORM schema recreation scripts
 4. ✅ Session management
 5. ✅ Configuration system
@@ -211,7 +214,7 @@ pickleball-sim/
 12. ✅ Matchmaking
 13. ✅ Game and score generation
 14. ✅ Predicted winner and expected score fields
-15. ⏭️ Rating calculation
+15. ✅ Rating calculation and audit logging
 
 ### Phase 4: Batch Processing
 16. ✅ Generation run and batch creation
@@ -258,13 +261,13 @@ pickleball-sim/
    python backend/scripts/recreate_db_from_orm.py
    ```
 
-4. Maintain all 33 SQLAlchemy models in `backend/app/models/`
+4. Maintain all 34 SQLAlchemy models in `backend/app/models/`
 
 5. Generate reference SQL from ORM metadata
 
 ---
 
 **Last Updated**: 2026-05-18  
-**Current Phase**: Match simulation and rating engine buildout  
+**Current Phase**: Monthly orchestration and export buildout
 **Progress**: Core ORM, seed loading, players, clubs, teams, matches,
-and games implemented; rating update engine remains next.
+games, and rating updates implemented.

@@ -14,7 +14,7 @@
 - Alembic is not part of the active schema workflow.
 - `backend/schema.sql` is generated from ORM metadata and must not be edited by
   hand.
-- The live ORM currently defines 33 tables: 23 core platform tables, 8 raw
+- The live ORM currently defines 34 tables: 24 core platform tables, 8 raw
   seed-data staging tables, and 2 configuration repository tables.
 - Consistency expectations live in `backend/tests/schema_expectations.py`.
 - Use `../.venv/bin/python -m pytest -q` from `backend/` for the normal test
@@ -117,7 +117,7 @@ docker exec -it pickleball-postgres psql -U postgres -d pickleball -c "SELECT CO
 ```
 
 **Historical expected output**: 22 tables at the time of this checklist.
-Current ORM-backed schema expectation: 33 tables.
+Current ORM-backed schema expectation: 34 tables.
 
 ### Action 4: Fix Priority 2 Models (10 minutes)
 
@@ -209,12 +209,13 @@ def test_all_tables_exist():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    assert len(tables) == 33, f"Expected 33 tables, found {len(tables)}: {tables}"
+    assert len(tables) == 34, f"Expected 34 tables, found {len(tables)}: {tables}"
     
     # Check key tables
     expected_tables = [
         'generation_runs', 'regions', 'monthly_batches',
-        'players', 'player_rating_history', 'player_assessment_history', 'player_registrations',
+        'players', 'player_rating_history', 'ratings_update_log',
+        'player_assessment_history', 'player_registrations',
         'clubs', 'club_memberships', 'teams', 'team_memberships',
         'matches', 'match_teams', 'match_team_players', 'tournaments',
         'first_names', 'last_names',
@@ -272,7 +273,7 @@ pytest tests/test_database_setup.py -v
 - [ ] Create `backend/schema.sql` from database design doc
 - [ ] Drop and recreate database
 - [ ] Apply schema (`psql -f schema.sql`)
-- [ ] Verify 33 tables exist
+- [ ] Verify 34 tables exist
 - [ ] Test Priority 1+2 model imports
 - [ ] Create `backend/app/db/session.py`
 - [ ] Create `backend/app/db/__init__.py`
@@ -288,7 +289,7 @@ pytest tests/test_database_setup.py -v
 When complete, you should have:
 
 ✅ Clean architecture (no Alembic)  
-✅ 33 database tables created via ORM metadata  
+✅ 34 database tables created via ORM metadata
 ✅ SQLAlchemy models that work with existing schema  
 ✅ Database session management  
 ✅ Passing tests  
