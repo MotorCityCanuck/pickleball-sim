@@ -7,7 +7,7 @@ Proposed specification for review.
 ## Purpose
 
 This document defines the structure, scope, and governance rules for
-student-facing analytical datasets generated from the NAPA simulation platform.
+student-facing analytical datasets generated from the NAPA simulation database.
 
 The purpose of the student-facing datasets is to provide realistic,
 large-scale sports analytics data suitable for graduate-level data science,
@@ -25,6 +25,7 @@ The datasets should support:
 - Monte Carlo simulations
 - tournament forecasting
 - player and team performance analysis
+- student-built dimensional modeling and analytical mart creation
 
 The datasets should NOT expose:
 
@@ -35,6 +36,7 @@ The datasets should NOT expose:
 - actual hidden ratings
 - privileged simulation state
 - generator implementation logic
+- instructor-only benchmark or answer-key fields
 
 ---
 
@@ -44,14 +46,35 @@ The student-facing datasets should resemble operational sports analytics data
 that an external consulting organization might realistically receive from a
 sports governing body.
 
+The student release should mirror the approved operational database tables as
+closely as possible, excluding only those tables and columns that are internal
+to the data generator, privileged to the instructor, unsafe for student access,
+or not intended for release.
+
+The export should not pre-build a clean dimensional model for students. Instead,
+students should receive operational-style table extracts and be expected to
+perform their own data engineering work, including:
+
+- schema inspection
+- relationship discovery
+- data profiling
+- data quality assessment
+- entity understanding
+- dimensional model design
+- fact and dimension construction
+- analytical feature engineering
+- business-friendly data mart creation
+
 Students should receive:
 
-- imperfect but analytically useful data
+- imperfect but analytically useful data in parquet format
+- database-like table structures
 - longitudinal match history
 - observable player outcomes
 - rating histories and movement
 - realistic noise and variance
 - partial visibility into underlying performance
+- enough normalized source structure to require meaningful data engineering
 
 Students should NOT receive:
 
@@ -60,8 +83,10 @@ Students should NOT receive:
 - hidden confidence metrics
 - exact generation assumptions
 - internal causal mechanics
+- pre-modeled dimensional marts that remove the need for student pipeline design
 
-The system should intentionally preserve uncertainty.
+The system should intentionally preserve uncertainty and require students to
+create analytical structures rather than simply consume pre-aggregated outputs.
 
 ---
 
@@ -82,10 +107,13 @@ release_2027_01/
 This release should establish the historical baseline used by students for:
 
 - feature engineering
+- data quality assessment
+- business objectives validation
 - model training
 - exploratory analysis
 - initial rankings
 - baseline tournament forecasting
+- development of student-owned dimensional models and analytical marts
 
 ---
 
@@ -109,6 +137,7 @@ Monthly releases should support:
 - rolling forecasting
 - retraining workflows
 - simulation of operational analytics environments
+- incremental data engineering pipeline execution
 
 ---
 
@@ -125,6 +154,7 @@ Reasons:
 - compatibility with Spark/Pandas/Polars/DuckDB
 - realistic enterprise analytics workflow
 - efficient storage size
+- strong fit for local analytical database workflows
 
 Compression should use:
 
@@ -140,14 +170,58 @@ unless future benchmarking suggests otherwise.
 
 ## Core Release Folder
 
+The release folder should avoid pre-labeled `dimensions`, `facts`, and `derived`
+folders because those classifications are part of the student data engineering
+assignment. Instead, released tables should be organized as operational table
+extracts with supporting metadata and documentation.
+
 ```text
 release_YYYY_MM/
   metadata/
-  dimensions/
-  facts/
-  derived/
+  tables/
   documentation/
 ```
+
+## Tables Folder
+
+The `tables/` folder contains student-approved parquet exports that mirror the
+approved operational database tables.
+
+Example:
+
+```text
+release_2027_01/
+  tables/
+    players.parquet
+    clubs.parquet
+    regions.parquet
+    teams.parquet
+    team_memberships.parquet
+    matches.parquet
+    games.parquet
+    rating_history.parquet
+    tournaments.parquet
+```
+
+The file name should normally match the source database table name unless a
+safe rename is required for clarity or to avoid exposing internal naming.
+
+## Design Rule
+
+Do not export instructor-prepared analytical constructs such as:
+
+- `dim_players.parquet`
+- `dim_clubs.parquet`
+- `dim_regions.parquet`
+- `dim_teams.parquet`
+- `fact_matches.parquet`
+- `fact_games.parquet`
+- `fact_rating_history.parquet`
+- `monthly_player_summary.parquet`
+- `monthly_region_summary.parquet`
+
+Students should create those dimensional, fact, and summary structures as part
+of their own data engineering pipeline.
 
 ---
 
@@ -169,13 +243,13 @@ Allowed fields:
 - release_month
 - release_created_at
 - historical_months_included
+- table_count
 - match_count
 - player_count
 - team_count
+- release_type
 
----
-
-## data_dictionary.parquet
+### data_dictionary.parquet
 
 Contains field definitions and dataset descriptions.
 
@@ -185,231 +259,51 @@ Allowed fields:
 - column_name
 - data_type
 - description
+- nullable_indicator
+- student_visibility_notes
+
+### table_relationships.parquet
+
+Contains a student-visible relationship guide without giving away analytical
+modeling choices.
+
+Allowed fields:
+
+- source_table
+- source_column
+- target_table
+- target_column
+- relationship_type
+- notes
+
+This file may identify operational foreign-key-style relationships, but it
+should not prescribe a final star schema or dimensional model.
 
 ---
 
-# Dimensions Folder
-
-## dim_players.parquet
-
-Student-visible player reference information.
-
-### Allowed Fields
-
-- player_id
-- first_name
-- last_name
-- country_code
-- region_code
-- metro_area
-- club_id
-- dominant_hand
-- gender
-- age_band
-- first_active_month
-- current_visible_rating
-- current_visible_confidence
-- player_status
-
-### Hidden / Excluded Fields
-
-DO NOT expose:
-
-- actual_rating
-- hidden_skill_rating
-- latent_performance_rating
-- generator_noise_coefficients
-- injury_probability
-- fatigue_recovery_coefficients
-- hidden_growth_potential
-- hidden_consistency_scores
-- internal archetype classifications
-
----
-
-## dim_clubs.parquet
-
-### Allowed Fields
-
-- club_id
-- club_name
-- country_code
-- region_code
-- metro_area
-- estimated_member_size_band
-- club_type
-
----
-
-## dim_regions.parquet
-
-### Allowed Fields
-
-- region_code
-- region_name
-- country_code
-- estimated_population_band
-
----
-
-# Facts Folder
-
-## fact_matches.parquet
-
-Primary analytical match-level dataset.
-
-### Allowed Fields
-
-- match_id
-- match_date
-- tournament_id
-- tournament_type
-- event_type
-- match_format
-- best_of_games
-- winning_team_id
-- losing_team_id
-- winning_team_score
-- losing_team_score
-- match_duration_band
-- surface_type
-- environment_type
-- crowd_band
-
-### Excluded Fields
-
-DO NOT expose:
-
-- hidden match difficulty
-- generated randomness values
-- fatigue calculations
-- hidden momentum factors
-- hidden pressure modifiers
-- hidden matchup advantage scores
-
----
-
-## fact_games.parquet
-
-### Allowed Fields
-
-- game_id
-- match_id
-- game_sequence
-- winning_team_score
-- losing_team_score
-
----
-
-## fact_team_memberships.parquet
-
-### Allowed Fields
-
-- team_id
-- player_id
-- start_month
-- end_month
-- partnership_duration_matches
-- partnership_duration_months
-
----
-
-## fact_rating_history.parquet
-
-This dataset is intentionally critical to the educational experience.
-
-Students should observe rating movement over time without access to the
-underlying true skill model.
-
-### Allowed Fields
-
-- player_id
-- rating_month
-- visible_rating
-- visible_rating_delta
-- visible_confidence
-- matches_played_month
-- wins_month
-- losses_month
-
-### Important Design Principle
-
-The visible rating should NOT equal the actual hidden skill rating.
-
-The visible rating system should intentionally contain:
-
-- observational lag
-- bounded noise
-- imperfect estimation
-- delayed adaptation
-- confidence uncertainty
-
-This allows students to:
-
-- reverse-engineer rating behavior
-- design alternative rating systems
-- compare ranking methodologies
-- analyze stability and predictive quality
-
-without directly exposing the underlying simulation truth.
-
----
-
-# Derived Folder
-
-## Purpose
-
-Contains pre-aggregated analytical helper datasets.
-
-These should reduce unnecessary student engineering overhead while still
-requiring meaningful analytical work.
-
----
-
-## Suggested Derived Datasets
-
-### monthly_player_summary.parquet
-
-Suggested fields:
-
-- player_id
-- month
-- matches_played
-- wins
-- losses
-- visible_rating
-- visible_rating_delta
-- partner_count
-- opponent_count
-
----
-
-## monthly_region_summary.parquet
-
-Suggested fields:
-
-- region_code
-- month
-- active_players
-- active_teams
-- matches_played
-- average_visible_rating
-
----
-
-# Tournament Data
-
-## tournament_events.parquet
-
-### Allowed Fields
-
-- tournament_id
-- tournament_name
-- start_date
-- end_date
-- tournament_type
-- region_code
-- event_category
+# Student Analytical Modeling Expectation
+
+The released dataset should intentionally require students to build analytical
+structures from operational-style inputs.
+
+Students are expected to determine how to model:
+
+- player dimensions
+- club dimensions
+- region dimensions
+- tournament dimensions
+- team dimensions
+- match facts
+- game facts
+- rating history facts
+- monthly player summaries
+- monthly region summaries
+- performance features
+- forecasting features
+
+The instructor-provided release should therefore expose clean enough operational
+data to support the assignment, but not so much pre-modeled structure that the
+student data engineering challenge is removed.
 
 ---
 
@@ -430,8 +324,6 @@ Do not expose:
 - hidden matchmaking rules
 - simulation probability models
 
----
-
 ## Operational Metadata
 
 Do not expose:
@@ -445,13 +337,12 @@ Do not expose:
 - validation logs
 - internal error logs
 
----
-
 ## Hidden Ratings And Truth Signals
 
 Do not expose:
 
 - actual_rating
+- true_skill_rating
 - hidden_skill_rating
 - internal confidence
 - projected future growth
@@ -494,8 +385,6 @@ Potential design characteristics:
 
 This creates a more realistic analytics environment.
 
----
-
 ## Optional Educational Variants
 
 The instructor may optionally:
@@ -506,15 +395,11 @@ Expose visible ratings only.
 
 Students develop alternative rating methodologies independently.
 
----
-
 ### Variant B
 
 Expose visible ratings and visible deltas.
 
 Students evaluate rating quality and predictive capability.
-
----
 
 ### Variant C
 
@@ -536,9 +421,15 @@ Examples:
 - sparse edge cases
 - small observational noise
 - imperfect confidence indicators
+- inconsistent operational coding that students must standardize
 
 The datasets should remain analytically usable while resembling operational
 sports data environments.
+
+Data quality issues should be injected into student-facing parquet outputs only
+after high-quality source data has been generated in the database. Data quality
+issue injection must not violate database ORM rules, primary-key uniqueness, or
+foreign-key referential integrity.
 
 ---
 
@@ -568,8 +459,10 @@ Each release should include:
 - data dictionary
 - known limitations
 - schema descriptions
+- operational table relationship notes
 - analytical assumptions visible to students
 - excluded-field explanations where appropriate
+- clear statement that students are responsible for building dimensional and analytical marts
 
 ---
 
@@ -587,6 +480,11 @@ The datasets should support:
 
 without requiring distributed infrastructure for standard coursework usage.
 
+DuckDB is the recommended student analysis engine because it can query parquet
+files directly, supports SQL-oriented data engineering workflows, and provides a
+realistic local analytical database experience without requiring server-based
+infrastructure.
+
 ---
 
 # Suggested Initial Scope
@@ -600,8 +498,7 @@ Recommended scale:
 - millions of matches
 - realistic regional distributions
 - realistic club distributions
-
----
+- operational-style table extracts rather than pre-modeled dimensional outputs
 
 ## Monthly Release Scope
 
@@ -610,42 +507,7 @@ Recommended cadence:
 - one incremental month per release
 - append-style historical progression
 - no retroactive historical rewrites
-
----
-
-# Future Enhancement Backlog
-
-## Educational Enhancements
-
-- hidden advanced challenge datasets
-- anomaly-injection scenarios
-- synthetic fraud/collusion scenarios
-- injury-event analytical datasets
-- weather/environmental datasets
-- player-travel datasets
-
----
-
-## Technical Enhancements
-
-- partitioned parquet optimization
-- Iceberg/Delta Lake support
-- release lineage metadata
-- reproducibility manifests
-- release signing/checksums
-
----
-
-## Instructor Enhancements
-
-- instructor-only truth datasets
-- hidden benchmark scoring datasets
-- automated assignment evaluation datasets
-- student leaderboard datasets
-- controlled hidden holdout datasets
-
----
-
+- schema compatibility across monthly releases whenever possible
 
 ---
 
@@ -807,7 +669,7 @@ Exclude columns such as:
 ## Raw Seed And Source Data Fields
 
 Exclude raw seed data tables and columns unless deliberately transformed into
-safe dimensions.
+safe student-facing operational tables.
 
 Examples to exclude:
 
@@ -841,6 +703,7 @@ tables:
   table_name:
     classification: included | excluded | instructor_only | future_candidate
     student_export_name: optional_export_file_name
+    mirror_source_table: true | false
     rationale: explanation of inclusion or exclusion
     columns:
       column_name:
@@ -857,6 +720,7 @@ The export job must fail validation if:
 - a hidden truth column is present in the student export
 - generator configuration fields are present in the student export
 - operational metadata fields are present in the student export
+- a table is renamed into a dimensional or fact naming pattern without explicit approval
 
 ---
 
@@ -867,21 +731,45 @@ following classification establishes the intended first release posture.
 
 ## Included Student-Facing Tables
 
-These tables or projections should be included in the student-facing release.
+These approved operational database tables should be included in the
+student-facing release. Export file names should generally mirror the source
+database table names.
 
 ```text
-players -> dim_players.parquet
-clubs -> dim_clubs.parquet
-regions -> dim_regions.parquet
-teams -> dim_teams.parquet or fact_team_memberships.parquet
-team_memberships -> fact_team_memberships.parquet
-matches -> fact_matches.parquet
-games -> fact_games.parquet
-rating_history -> fact_rating_history.parquet
-tournaments -> tournament_events.parquet, if implemented
-monthly_player_summary -> monthly_player_summary.parquet, if implemented
-monthly_region_summary -> monthly_region_summary.parquet, if implemented
+players -> players.parquet
+clubs -> clubs.parquet
+regions -> regions.parquet
+teams -> teams.parquet
+team_memberships -> team_memberships.parquet
+matches -> matches.parquet
+games -> games.parquet
+rating_history -> rating_history.parquet
+tournaments -> tournaments.parquet, if implemented
 ```
+
+## Not Included As Prebuilt Student Outputs
+
+The following tables/files should not be provided as instructor-created parquet
+outputs because students should create these structures themselves as part of
+their data engineering pipeline.
+
+```text
+dim_players
+dim_clubs
+dim_regions
+dim_teams
+fact_matches
+fact_games
+fact_rating_history
+fact_team_memberships
+monthly_player_summary
+monthly_region_summary
+other pre-aggregated analytical marts
+```
+
+If these structures exist internally for instructor testing, benchmarking, or
+solution validation, they must be classified as `instructor_only` and excluded
+from student release folders.
 
 ## Excluded Operational / Configuration Tables
 
@@ -918,18 +806,18 @@ raw_state_prov_biases_us
 raw_state_prov_biases_ca
 ```
 
-Students may receive transformed region, club, and player dimensions, but not
-raw seed inputs.
+Students may receive transformed operational tables such as players, clubs, and
+regions, but not raw seed inputs.
 
 ---
 
 # Included Table Column Classification
 
 The following sections define the initial student-facing projection for included
-tables. Actual implementation must reconcile these projections against the
-current ORM schema.
+operational tables. Actual implementation must reconcile these projections
+against the current ORM schema.
 
-## players -> dim_players.parquet
+## players -> players.parquet
 
 ### Include
 
@@ -981,9 +869,7 @@ current ORM schema.
 - internal_club_assignment_reason -> exclude
 - internal_region_assignment_weight -> exclude
 
----
-
-## clubs -> dim_clubs.parquet
+## clubs -> clubs.parquet
 
 ### Include
 
@@ -1011,9 +897,7 @@ current ORM schema.
 
 - exact_member_count -> estimated_member_size_band
 
----
-
-## regions -> dim_regions.parquet
+## regions -> regions.parquet
 
 ### Include
 
@@ -1037,12 +921,7 @@ current ORM schema.
 
 - exact_population -> estimated_population_band
 
----
-
-## teams -> dim_teams.parquet or fact_team_memberships.parquet
-
-If a separate team dimension is exported, include only stable student-facing
-team identifiers and descriptive fields.
+## teams -> teams.parquet
 
 ### Include
 
@@ -1067,9 +946,7 @@ team identifiers and descriptive fields.
 - created_at_internal
 - updated_at_internal
 
----
-
-## team_memberships -> fact_team_memberships.parquet
+## team_memberships -> team_memberships.parquet
 
 ### Include
 
@@ -1091,9 +968,7 @@ team identifiers and descriptive fields.
 - created_at_internal
 - updated_at_internal
 
----
-
-## matches -> fact_matches.parquet
+## matches -> matches.parquet
 
 ### Include
 
@@ -1142,9 +1017,7 @@ team identifiers and descriptive fields.
 - exact_match_duration_minutes -> match_duration_band
 - exact_crowd_count -> crowd_band
 
----
-
-## games -> fact_games.parquet
+## games -> games.parquet
 
 ### Include
 
@@ -1166,9 +1039,12 @@ team identifiers and descriptive fields.
 - created_at_internal
 - updated_at_internal
 
----
+## rating_history -> rating_history.parquet
 
-## rating_history -> fact_rating_history.parquet
+This table is intentionally critical to the educational experience.
+
+Students should observe rating movement over time without access to the
+underlying true skill model.
 
 ### Include
 
@@ -1212,9 +1088,7 @@ team identifiers and descriptive fields.
 - detailed_rating_reason -> exclude
 - internal_rating_formula_component_json -> exclude
 
----
-
-## tournaments -> tournament_events.parquet
+## tournaments -> tournaments.parquet
 
 ### Include
 
@@ -1238,62 +1112,6 @@ team identifiers and descriptive fields.
 
 ---
 
-## monthly_player_summary -> monthly_player_summary.parquet
-
-### Include
-
-- player_id
-- month
-- matches_played
-- wins
-- losses
-- visible_rating
-- visible_rating_delta
-- partner_count
-- opponent_count
-
-### Exclude
-
-- actual_rating
-- true_skill_rating
-- hidden_skill_rating
-- k_factor
-- hidden_confidence
-- internal_confidence
-- generator_config_id
-- generation_run_id
-- monthly_batch_id
-- created_at_internal
-- updated_at_internal
-
----
-
-## monthly_region_summary -> monthly_region_summary.parquet
-
-### Include
-
-- region_code
-- month
-- active_players
-- active_teams
-- matches_played
-- average_visible_rating
-
-### Exclude
-
-- average_actual_rating
-- average_true_skill_rating
-- regional_bias_factor
-- regional_generation_weight
-- hidden_strength_index
-- generator_config_id
-- generation_run_id
-- monthly_batch_id
-- created_at_internal
-- updated_at_internal
-
----
-
 # Export Validation Requirements For Full Coverage
 
 The student dataset export process must perform schema coverage validation before
@@ -1310,6 +1128,11 @@ Required validation checks:
    parquet file.
 6. Confirm student-facing parquet schemas match the data dictionary.
 7. Confirm instructor-only files are not placed in the student release folder.
+8. Confirm no prebuilt dimensional, fact, or summary mart file is exported to
+   the student release unless explicitly approved as part of a later assignment
+   variant.
+9. Confirm exported parquet file names align to approved operational table names
+   or explicitly approved safe aliases.
 
 A release must fail validation if any table or included-table column is
 unclassified.
@@ -1336,7 +1159,7 @@ optional data quality injection
         ↓
 post-export validation
         ↓
-parquet write
+parquet write using approved operational table name
 ```
 
 The default behavior for an unknown table or column must be:
@@ -1347,12 +1170,464 @@ exclude and fail validation for review
 
 Never default to exporting newly discovered columns.
 
+Codex should also avoid generating instructor-prepared dimensional marts,
+fact-table projections, or monthly summary outputs for the student release. If
+those structures are needed for instructor validation, they should be written to
+an instructor-only location and excluded from the student release package.
+
+---
+
+
+
+---
+
+# Data Quality Injection Strategy
+
+## Purpose
+
+Prior to creation of student-facing parquet files, the export pipeline should
+intentionally inject realistic data quality issues into approved student-facing
+datasets.
+
+The purpose of this process is to simulate realistic operational analytics
+environments where data is often incomplete, inconsistent, delayed, noisy, or
+imperfectly governed.
+
+The data quality injection process is intended to strengthen the educational
+value of the datasets by requiring participants to:
+- identify data quality problems
+- implement cleansing and validation logic
+- develop robust analytical pipelines
+- assess trustworthiness of data
+- manage uncertainty
+- design resilient analytical workflows
+
+The student-facing datasets should remain analytically usable while reflecting
+realistic enterprise data quality conditions.
+
+---
+
+# Injection Timing
+
+Data quality injection should occur only after:
+
+```text
+simulation generation complete
+        ↓
+ORM/database validation complete
+        ↓
+student-safe export projection complete
+        ↓
+data quality injection
+        ↓
+parquet file creation
+```
+
+This design is intentional.
+
+The operational simulation database should remain internally consistent and
+fully valid. Data quality issues should be introduced only into the
+student-facing analytical release artifacts.
+
+This approach preserves:
+- ORM integrity
+- referential integrity
+- simulation consistency
+- operational reproducibility
+- instructor-side truth validation
+
+while still providing realistic analytical challenges for participants.
+
+---
+
+# Data Quality Injection Principles
+
+Injected issues must:
+- preserve parquet readability
+- preserve basic analytical usability
+- avoid catastrophic corruption
+- avoid breaking foreign-key relationships
+- avoid invalidating historical chronology
+- avoid creating impossible match outcomes
+- avoid exposing hidden simulation mechanics
+
+Injected issues should resemble realistic operational sports analytics problems
+that might occur in decentralized and manually managed competitive environments.
+
+---
+
+# Configurable Injection Levels
+
+The export process should support configurable data quality severity levels.
+
+Suggested levels:
+
+```text
+low
+medium
+high
+very_high
+```
+
+Higher severity levels should increase:
+- frequency of issues
+- breadth of affected datasets
+- ambiguity of values
+- inconsistency rates
+- delayed data visibility
+- observational uncertainty
+
+The instructor should be able to configure injection levels independently for:
+- development environments
+- coursework releases
+- advanced cohorts
+- challenge datasets
+
+---
+
+# High-Level Categories Of Injected Data Quality Issues
+
+## Missing Values
+
+Examples:
+- missing club assignments
+- incomplete demographic values
+- missing crowd classifications
+- missing environment labels
+- delayed tournament metadata
+
+Purpose:
+Simulates incomplete operational reporting and delayed manual data entry.
+
+---
+
+## Inconsistent Categorical Values
+
+Examples:
+- inconsistent capitalization
+- abbreviated region names
+- alternate tournament labels
+- inconsistent gender encoding
+- mixed formatting conventions
+
+Purpose:
+Simulates decentralized data entry practices across independently managed clubs
+and tournament organizations.
+
+---
+
+## Delayed Updates
+
+Examples:
+- delayed rating updates
+- late-arriving tournament records
+- delayed partnership changes
+- postponed status changes
+
+Purpose:
+Simulates operational lag and asynchronous reporting cycles commonly found in
+real-world sports organizations.
+
+---
+
+## Duplicate And Near-Duplicate Records
+
+Examples:
+- duplicate tournament registrations
+- duplicate player records
+- near-duplicate club names
+- repeated match submissions
+
+Purpose:
+Simulates fragmented operational systems lacking centralized master-data
+governance.
+
+---
+
+## Observational Noise
+
+Examples:
+- small score inconsistencies
+- approximate duration bands
+- coarse classifications
+- imprecise environmental descriptors
+
+Purpose:
+Simulates imperfect observational capture and human-entered operational data.
+
+---
+
+## Sparse Edge Cases
+
+Examples:
+- regions with minimal activity
+- infrequent tournament formats
+- low-frequency partnership combinations
+- rare event categories
+
+Purpose:
+Encourages robust analytical design capable of handling sparse and imbalanced
+data distributions.
+
+---
+
+## Slowly Drifting Reference Values
+
+Examples:
+- evolving club classifications
+- changing region descriptions
+- revised tournament naming conventions
+- gradual operational standardization changes
+
+Purpose:
+Simulates real organizations where operational definitions evolve over time.
+
+---
+
+# Explicitly Prohibited Data Quality Injection
+
+The export process must never inject issues that:
+- break parquet readability
+- break referential integrity
+- create impossible score outcomes
+- expose hidden truth labels
+- reveal generator configuration
+- corrupt chronological sequencing
+- invalidate match relationships
+- create structurally unreadable datasets
+
+The educational objective is controlled realism, not unusable corruption.
+
+---
+
+# Instructor Configuration Guidance
+
+The export pipeline should support configuration-driven control over:
+- issue categories enabled
+- issue frequency
+- affected datasets
+- affected columns
+- temporal distribution of issues
+- deterministic versus randomized injection
+- release-specific injection profiles
+
+Suggested future configuration location:
+
+```text
+backend/app/export/student_dataset_dq_profiles.yaml
+```
+
+
+
+
+---
+
+# Operational Dataset Scope Configuration
+
+## Configurable Historical Scope
+
+The operational date ranges and duration of the student-facing analytical
+datasets should be controlled through configurable export settings rather than
+hardcoded logic.
+
+The export process should support configuration of:
+- historical start dates
+- historical end dates
+- number of historical months included
+- monthly release cadence
+- incremental release windows
+- rolling retention periods
+- future release scheduling
+
+This allows instructors and administrators to:
+- create smaller pilot datasets
+- generate large enterprise-scale historical releases
+- support phased coursework progression
+- simulate long-running operational environments
+- vary analytical complexity between cohorts
+
+Example configurable scenarios may include:
+- 3-month introductory datasets
+- 12-month historical enterprise datasets
+- multi-year advanced analytical datasets
+- rolling operational release windows
+
+Suggested future configuration location:
+
+```text
+backend/app/export/student_dataset_release_profiles.yaml
+```
+
+---
+
+# Export Process Orchestration
+
+The parquet generation and export process should be initiated through the data
+generation orchestration web application.
+
+The orchestration interface should allow authorized users to:
+- select export profiles
+- configure release scope
+- configure data quality injection severity
+- select included release periods
+- trigger export generation
+- monitor export status
+- review validation outcomes
+- review export statistics
+- publish finalized student-facing releases
+
+The orchestration workflow should conceptually follow:
+
+```text
+simulation generation orchestration
+        ↓
+operational database validation
+        ↓
+student-safe export projection
+        ↓
+data quality injection
+        ↓
+parquet file generation
+        ↓
+release validation
+        ↓
+release publication
+```
+
+The orchestration layer should provide centralized operational visibility and
+administrative control over the educational dataset release lifecycle.
+
+
+
+
+---
+
+# Referential Integrity Requirements
+
+The student-facing datasets must preserve referential integrity across all
+approved exposed tables.
+
+Although data quality issues may be intentionally injected into the parquet
+releases, the export process must ensure that exposed relational structures
+remain joinable and analytically usable.
+
+This requirement is critical because participants will be expected to:
+- join datasets across multiple entities
+- construct analytical pipelines
+- build dimensional models
+- create feature engineering workflows
+- generate reporting datasets
+- perform longitudinal analysis
+- develop predictive models
+- support tournament forecasting and simulation
+
+Examples of required preserved relationships include:
+- matches to teams
+- teams to players
+- players to clubs
+- clubs to regions
+- games to matches
+- tournaments to regions
+- rating history to players
+
+The export process must therefore ensure:
+- valid exposed foreign-key relationships
+- stable identifiers across releases
+- consistent entity references
+- reproducible joins
+- chronologically coherent relationships
+
+Data quality injection may introduce realistic analytical imperfections, but it
+must not create structurally unusable datasets.
+
+The educational objective is to simulate realistic enterprise analytical
+environments where data may be imperfect but remains operationally usable.
+
+---
+
+# Bronze Layer Educational Positioning
+
+The student-facing parquet releases should conceptually represent the bronze
+(raw) layer of the participant analytical environment.
+
+The datasets are intentionally designed to resemble operational raw analytical
+extracts rather than fully curated enterprise reporting models.
+
+Participants are therefore expected to perform downstream analytical engineering
+activities including:
+- data profiling
+- data quality assessment
+- cleansing and standardization
+- schema harmonization
+- entity resolution
+- dimensional modeling
+- feature engineering
+- aggregation design
+- analytical transformation
+- gold-layer analytical dataset construction
+
+The student-facing releases should not provide fully curated dimensional models,
+prebuilt star schemas, or highly aggregated analytical outputs beyond limited
+educational convenience datasets explicitly approved for release.
+
+This design is intentional.
+
+The educational objective is to require participants to construct meaningful
+data engineering and analytical workflows similar to those expected within
+modern enterprise analytics environments.
+
+The bronze-layer positioning also supports:
+- medallion architecture education
+- incremental pipeline design
+- reproducible transformation workflows
+- operational data engineering practices
+- analytical governance concepts
+- lineage and traceability exercises
+
+Participants should therefore treat the parquet releases as operational raw
+analytical inputs rather than finalized reporting-ready datasets.
+
+
 # Recommendation
 
 The student-facing datasets should intentionally resemble realistic operational
-sports analytics releases rather than perfectly transparent simulation outputs.
+sports analytics releases rather than perfectly transparent simulation outputs
+or prebuilt analytical marts.
 
-The educational objective is not to expose the simulation engine itself, but to
-provide a rich analytical environment where students must reason under
-uncertainty, derive insight from incomplete observability, and develop
-defensible analytical methodologies.
+The educational objective is not to expose the simulation engine itself, nor to
+provide students with an already-modeled dimensional warehouse. The objective is
+to provide a rich operational data environment where students must reason under
+uncertainty, design their own analytical data structures, derive insight from
+incomplete observability, and develop defensible analytical methodologies.
+
+---
+
+# Future Enhancement Backlog
+
+## Educational Enhancements
+
+- hidden advanced challenge datasets
+- anomaly-injection scenarios
+- synthetic fraud/collusion scenarios
+- injury-event analytical datasets
+- weather/environmental datasets
+- player-travel datasets
+- optional advanced cohort release with ratings fully hidden
+
+## Technical Enhancements
+
+- partitioned parquet optimization
+- Iceberg/Delta Lake support
+- release lineage metadata
+- reproducibility manifests
+- release signing/checksums
+- automated schema drift detection against ORM metadata
+
+## Instructor Enhancements
+
+- instructor-only truth datasets
+- hidden benchmark scoring datasets
+- automated assignment evaluation datasets
+- student leaderboard datasets
+- controlled hidden holdout datasets
+- instructor-only reference dimensional model for grading and comparison
