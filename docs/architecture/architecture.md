@@ -587,18 +587,21 @@ Job states:
 ```text
 pending
 running
-completed
+succeeded
 failed
-cancelled
 ```
 
 The UI should read status from a durable status source, preferably the database.
 
-A simple first implementation may run jobs synchronously or through background tasks. If workloads grow, move job execution to a worker pattern.
+A simple first implementation should register pending work in the database,
+commit that launch state, and then run jobs through local background execution.
+Request handlers should not keep long-running jobs on the request thread. If
+workloads grow, move job execution to a more durable worker pattern.
 
 Future options:
 
 - FastAPI BackgroundTasks
+- application-owned thread pool
 - Python multiprocessing
 - Celery
 - RQ

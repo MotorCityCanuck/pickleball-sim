@@ -279,17 +279,18 @@ class ControlPanelQueries:
         generation_run_id: int,
     ) -> JobSummary | None:
         statement = (
-            select(JobStatus)
-            .join(JobStageProgress, JobStageProgress.job_status_id == JobStatus.id)
-            .where(JobStageProgress.generation_run_id == generation_run_id)
-            .distinct()
-            .order_by(
-                case((JobStatus.status == "running", 0), else_=1),
-                JobStatus.started_at.desc(),
-                JobStatus.created_at.desc(),
-                JobStatus.id.desc(),
-            )
-            .limit(1)
+                select(JobStatus)
+                .join(JobStageProgress, JobStageProgress.job_status_id == JobStatus.id)
+                .where(JobStageProgress.generation_run_id == generation_run_id)
+                .distinct()
+                .order_by(
+                    case((JobStatus.status == "running", 0), else_=1),
+                    case((JobStatus.status == "pending", 1), else_=2),
+                    JobStatus.started_at.desc(),
+                    JobStatus.created_at.desc(),
+                    JobStatus.id.desc(),
+                )
+                .limit(1)
         )
         return _job_summary(session.scalar(statement))
 
@@ -300,6 +301,7 @@ class ControlPanelQueries:
                 .where(JobStatus.job_type.in_(("raw_seed_ingest", "seed_normalization", "seed_refresh")))
                 .order_by(
                     case((JobStatus.status == "running", 0), else_=1),
+                    case((JobStatus.status == "pending", 1), else_=2),
                     JobStatus.started_at.desc(),
                     JobStatus.created_at.desc(),
                     JobStatus.id.desc(),
@@ -564,11 +566,11 @@ class ControlPanelQueries:
         seed_blockers: list[str] = []
         if config_summary is None:
             seed_blockers.append("A single valid configuration is required.")
-        if generation_run is not None and generation_run.status == "running":
+        if generation_run is not None and generation_run.status in {"not_started", "running"}:
             seed_blockers.append("Seed preparation cannot run while a generation run is running.")
-        if active_job is not None and active_job.status == "running":
+        if active_job is not None and active_job.status in {"pending", "running"}:
             seed_blockers.append("Another write-heavy generation job is still running.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
             seed_blockers.append("A seed preparation job is already running.")
 
         start_blockers: list[str] = []
@@ -576,11 +578,11 @@ class ControlPanelQueries:
             start_blockers.append("A single valid configuration is required.")
         if not seed_summary.is_ready:
             start_blockers.append("Seed/reference data must be prepared before synthetic generation can start.")
-        if generation_run is not None and generation_run.status == "running":
+        if generation_run is not None and generation_run.status in {"not_started", "running"}:
             start_blockers.append("A generation run is already running.")
-        if active_job is not None and active_job.status == "running":
+        if active_job is not None and active_job.status in {"pending", "running"}:
             start_blockers.append("A generation job is still running.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
             start_blockers.append("Seed preparation must finish before synthetic generation can start.")
 
         student_blockers: list[str] = []
@@ -592,14 +594,17 @@ class ControlPanelQueries:
             student_blockers.append("Seed/reference readiness must be restored before student dataset generation.")
         if any(batch.processing_status != "succeeded" for batch in batch_summaries):
             student_blockers.append("All monthly batches must be succeeded before student dataset generation.")
-        if active_job is not None and active_job.status == "running":
+        if active_job is not None and active_job.status in {"pending", "running"}:
             student_blockers.append("No write-heavy job can be active during student dataset generation.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
             student_blockers.append("No seed preparation job can be active during student dataset generation.")
 
         can_edit_config = (
-            (generation_run is None or generation_run.status != "running")
-            and (seed_summary.latest_seed_job is None or seed_summary.latest_seed_job.status != "running")
+            (generation_run is None or generation_run.status not in {"not_started", "running"})
+            and (
+                seed_summary.latest_seed_job is None
+                or seed_summary.latest_seed_job.status not in {"pending", "running"}
+            )
         )
         return AllowedActions(
             can_edit_config=can_edit_config,

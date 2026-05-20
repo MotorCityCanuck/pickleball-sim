@@ -46,6 +46,11 @@ NORMALIZATION_REQUIREMENTS = {
     ),
 }
 SEED_JOB_TYPES = frozenset({"raw_seed_ingest", "seed_normalization", "seed_refresh"})
+SEED_JOB_PHASES = {
+    "load": "raw_seed_ingest",
+    "normalize": "seed_normalization",
+    "refresh": "seed_refresh",
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,15 @@ class SeedRefreshResult:
     job_status: JobStatus
     raw_load_results: tuple[RawSeedLoadResult, ...]
     normalize_results: tuple[SeedNormalizeResult, ...]
+
+
+@dataclass(frozen=True)
+class SeedRefreshRegistration:
+    """Pending job records created before background execution starts."""
+
+    configuration_version: ConfigurationProfileVersion
+    job_status: JobStatus
+    mode: str
 
 
 class SeedRefreshService:
@@ -74,6 +88,67 @@ class SeedRefreshService:
         self.load_dataset_fn = load_dataset_fn or load_raw_seed_dataset
         self.normalize_dataset_fn = normalize_dataset_fn or normalize_seed_dataset
 
+    def register_seed_refresh(
+        self,
+        *,
+        session: Session | None = None,
+    ) -> SeedRefreshRegistration:
+        """Create a pending full seed refresh job."""
+        if session is not None:
+            return self._register_seed_job("refresh", session=session)
+
+        with session_scope() as active_session:
+            return self._register_seed_job("refresh", session=active_session)
+
+    def register_raw_seed_ingest(
+        self,
+        *,
+        session: Session | None = None,
+    ) -> SeedRefreshRegistration:
+        """Create a pending raw-ingest-only job."""
+        if session is not None:
+            return self._register_seed_job("load", session=session)
+
+        with session_scope() as active_session:
+            return self._register_seed_job("load", session=active_session)
+
+    def register_seed_normalization(
+        self,
+        *,
+        session: Session | None = None,
+    ) -> SeedRefreshRegistration:
+        """Create a pending normalization-only job."""
+        if session is not None:
+            return self._register_seed_job("normalize", session=session)
+
+        with session_scope() as active_session:
+            return self._register_seed_job("normalize", session=active_session)
+
+    def execute_registered_seed_job(
+        self,
+        *,
+        config_version_id: int,
+        job_status_id: int,
+        mode: str,
+        session: Session | None = None,
+    ) -> SeedRefreshResult:
+        """Run a previously registered seed job."""
+        if session is not None:
+            return self._execute_registered_seed_job(
+                config_version_id=config_version_id,
+                job_status_id=job_status_id,
+                mode=mode,
+                session=session,
+            )
+
+        with session_scope() as active_session:
+            return self._execute_registered_seed_job(
+                config_version_id=config_version_id,
+                job_status_id=job_status_id,
+                mode=mode,
+                session=active_session,
+            )
+
     def refresh_seed_data(
         self,
         *,
@@ -81,10 +156,22 @@ class SeedRefreshService:
     ) -> SeedRefreshResult:
         """Run full Stage 1: raw ingest followed by normalization."""
         if session is not None:
-            return self._refresh_seed_data(session)
+            registration = self._register_seed_job("refresh", session=session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=session,
+            )
 
         with session_scope() as active_session:
-            return self._refresh_seed_data(active_session)
+            registration = self._register_seed_job("refresh", session=active_session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=active_session,
+            )
 
     def load_raw_seed_data(
         self,
@@ -93,10 +180,22 @@ class SeedRefreshService:
     ) -> SeedRefreshResult:
         """Run only raw seed ingest."""
         if session is not None:
-            return self._load_raw_seed_data(session)
+            registration = self._register_seed_job("load", session=session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=session,
+            )
 
         with session_scope() as active_session:
-            return self._load_raw_seed_data(active_session)
+            registration = self._register_seed_job("load", session=active_session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=active_session,
+            )
 
     def normalize_seed_data(
         self,
@@ -105,84 +204,151 @@ class SeedRefreshService:
     ) -> SeedRefreshResult:
         """Run only seed normalization from staged raw rows."""
         if session is not None:
-            return self._normalize_seed_data(active_session=session)
+            registration = self._register_seed_job("normalize", session=session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=session,
+            )
 
         with session_scope() as active_session:
-            return self._normalize_seed_data(active_session=active_session)
+            registration = self._register_seed_job("normalize", session=active_session)
+            return self._execute_registered_seed_job(
+                config_version_id=registration.configuration_version.id,
+                job_status_id=registration.job_status.id,
+                mode=registration.mode,
+                session=active_session,
+            )
 
-    def _refresh_seed_data(self, session: Session) -> SeedRefreshResult:
+    def _register_seed_job(
+        self,
+        mode: str,
+        *,
+        session: Session,
+    ) -> SeedRefreshRegistration:
         config_version = self._resolve_single_valid_config(session)
         payload = config_version.config_payload or {}
         raw_datasets = _raw_datasets_from_payload(payload)
         normalize_datasets = _normalization_datasets_from_raw(raw_datasets)
-        if not raw_datasets:
+        if mode in {"load", "refresh"} and not raw_datasets:
             raise ValueError("No raw seed datasets are configured for ingestion.")
-        if not normalize_datasets:
+        if mode in {"normalize", "refresh"} and not normalize_datasets:
             raise ValueError("No seed normalization datasets are configured.")
         self._ensure_no_active_seed_job(session)
 
+        job_type = {
+            "load": "raw_seed_ingest",
+            "normalize": "seed_normalization",
+            "refresh": "seed_refresh",
+        }[mode]
         job_status = self._create_job_status(
             session,
-            job_type="seed_refresh",
-            initial_phase="initialize",
-            initial_message="Preparing seed refresh.",
+            job_type=job_type,
+            initial_message={
+                "load": "Queued raw seed ingest.",
+                "normalize": "Queued seed normalization.",
+                "refresh": "Queued seed refresh.",
+            }[mode],
         )
-        raw_stage = self._create_stage_row(
+        if mode in {"load", "refresh"}:
+            self._create_stage_row(
+                session,
+                job_status=job_status,
+                stage_name="raw_seed_ingest",
+                stage_sequence=1,
+                progress_total=len(raw_datasets),
+            )
+        if mode == "refresh":
+            stage_sequence = 2
+        else:
+            stage_sequence = 1
+        if mode in {"normalize", "refresh"}:
+            self._create_stage_row(
+                session,
+                job_status=job_status,
+                stage_name="seed_normalization",
+                stage_sequence=stage_sequence,
+                progress_total=len(normalize_datasets),
+            )
+
+        self.configuration_lifecycle.mark_version_used(
             session,
-            job_status=job_status,
-            stage_name="raw_seed_ingest",
-            stage_sequence=1,
-            progress_total=len(raw_datasets),
+            version_id=config_version.id,
         )
-        normalize_stage = self._create_stage_row(
-            session,
+        session.flush()
+        return SeedRefreshRegistration(
+            configuration_version=config_version,
             job_status=job_status,
-            stage_name="seed_normalization",
-            stage_sequence=2,
-            progress_total=len(normalize_datasets),
+            mode=mode,
         )
 
+    def _execute_registered_seed_job(
+        self,
+        *,
+        config_version_id: int,
+        job_status_id: int,
+        mode: str,
+        session: Session,
+    ) -> SeedRefreshResult:
+        config_version = session.get(ConfigurationProfileVersion, config_version_id)
+        if config_version is None:
+            raise ValueError(f"Configuration profile version {config_version_id} does not exist.")
+        job_status = session.get(JobStatus, job_status_id)
+        if job_status is None:
+            raise ValueError(f"Job status {job_status_id} does not exist.")
+        if job_status.status != "pending":
+            raise ValueError(
+                f"Seed job {job_status.job_id} is already {job_status.status}; "
+                "background execution requires a pending job."
+            )
+
+        payload = config_version.config_payload or {}
+        raw_datasets = _raw_datasets_from_payload(payload)
+        normalize_datasets = _normalization_datasets_from_raw(raw_datasets)
         raw_results: list[RawSeedLoadResult] = []
         normalize_results: list[SeedNormalizeResult] = []
+
         try:
-            self.configuration_lifecycle.mark_version_used(
-                session,
-                version_id=config_version.id,
-            )
-            self._set_job_status(
-                job_status,
-                status="running",
-                phase="raw_seed_ingest",
-                message="Loading configured raw seed datasets.",
-                started=True,
-            )
-            raw_results = self._run_raw_ingest_stage(
-                session,
-                job_status=job_status,
-                stage_row=raw_stage,
-                datasets=raw_datasets,
-            )
-            self._set_job_status(
-                job_status,
-                status="running",
-                phase="seed_normalization",
-                message="Normalizing staged seed datasets into reference tables.",
-            )
-            normalize_results = self._run_normalization_stage(
-                session,
-                job_status=job_status,
-                stage_row=normalize_stage,
-                datasets=normalize_datasets,
-                config_payload=payload,
-            )
+            if mode in {"load", "refresh"}:
+                self._set_job_status(
+                    job_status,
+                    status="running",
+                    phase="raw_seed_ingest",
+                    message="Loading configured raw seed datasets.",
+                    started=True,
+                )
+                raw_results = self._run_raw_ingest_stage(
+                    session,
+                    job_status=job_status,
+                    stage_name="raw_seed_ingest",
+                    datasets=raw_datasets,
+                )
+
+            if mode in {"normalize", "refresh"}:
+                self._set_job_status(
+                    job_status,
+                    status="running",
+                    phase="seed_normalization",
+                    message="Normalizing staged seed datasets into reference tables.",
+                    started=mode == "normalize",
+                )
+                normalize_results = self._run_normalization_stage(
+                    session,
+                    job_status=job_status,
+                    stage_name="seed_normalization",
+                    datasets=normalize_datasets,
+                    config_payload=payload,
+                )
+
             self._set_job_status(
                 job_status,
                 status="succeeded",
                 phase="completed",
-                message=(
-                    "Seed refresh completed successfully. "
-                    f"Ingested {len(raw_results)} raw datasets and normalized "
-                    f"{len(normalize_results)} production datasets."
+                message=_completion_message_for_mode(
+                    mode,
+                    raw_count=len(raw_results),
+                    normalize_count=len(normalize_results),
                 ),
                 percent_complete=Decimal("100.00"),
                 completed=True,
@@ -195,141 +361,7 @@ class SeedRefreshService:
                 normalize_results=tuple(normalize_results),
             )
         except Exception as exc:
-            self._fail_incomplete_stages(raw_stage, normalize_stage)
-            self._set_job_status(
-                job_status,
-                status="failed",
-                phase="failed",
-                message=str(exc),
-                completed=True,
-            )
-            raise
-
-    def _load_raw_seed_data(self, session: Session) -> SeedRefreshResult:
-        config_version = self._resolve_single_valid_config(session)
-        raw_datasets = _raw_datasets_from_payload(config_version.config_payload or {})
-        if not raw_datasets:
-            raise ValueError("No raw seed datasets are configured for ingestion.")
-        self._ensure_no_active_seed_job(session)
-
-        job_status = self._create_job_status(
-            session,
-            job_type="raw_seed_ingest",
-            initial_phase="initialize",
-            initial_message="Preparing raw seed ingest.",
-        )
-        raw_stage = self._create_stage_row(
-            session,
-            job_status=job_status,
-            stage_name="raw_seed_ingest",
-            stage_sequence=1,
-            progress_total=len(raw_datasets),
-        )
-        try:
-            self.configuration_lifecycle.mark_version_used(
-                session,
-                version_id=config_version.id,
-            )
-            self._set_job_status(
-                job_status,
-                status="running",
-                phase="raw_seed_ingest",
-                message="Loading configured raw seed datasets.",
-                started=True,
-            )
-            raw_results = self._run_raw_ingest_stage(
-                session,
-                job_status=job_status,
-                stage_row=raw_stage,
-                datasets=raw_datasets,
-            )
-            self._set_job_status(
-                job_status,
-                status="succeeded",
-                phase="completed",
-                message=f"Raw seed ingest completed for {len(raw_results)} datasets.",
-                percent_complete=Decimal("100.00"),
-                completed=True,
-            )
-            session.flush()
-            return SeedRefreshResult(
-                configuration_version=config_version,
-                job_status=job_status,
-                raw_load_results=tuple(raw_results),
-                normalize_results=(),
-            )
-        except Exception as exc:
-            self._fail_incomplete_stages(raw_stage)
-            self._set_job_status(
-                job_status,
-                status="failed",
-                phase="failed",
-                message=str(exc),
-                completed=True,
-            )
-            raise
-
-    def _normalize_seed_data(self, *, active_session: Session) -> SeedRefreshResult:
-        config_version = self._resolve_single_valid_config(active_session)
-        payload = config_version.config_payload or {}
-        normalize_datasets = _normalization_datasets_from_raw(
-            _raw_datasets_from_payload(payload)
-        )
-        if not normalize_datasets:
-            raise ValueError("No seed normalization datasets are configured.")
-        self._ensure_no_active_seed_job(active_session)
-
-        job_status = self._create_job_status(
-            active_session,
-            job_type="seed_normalization",
-            initial_phase="initialize",
-            initial_message="Preparing seed normalization.",
-        )
-        normalize_stage = self._create_stage_row(
-            active_session,
-            job_status=job_status,
-            stage_name="seed_normalization",
-            stage_sequence=1,
-            progress_total=len(normalize_datasets),
-        )
-        try:
-            self.configuration_lifecycle.mark_version_used(
-                active_session,
-                version_id=config_version.id,
-            )
-            self._set_job_status(
-                job_status,
-                status="running",
-                phase="seed_normalization",
-                message="Normalizing staged seed datasets into reference tables.",
-                started=True,
-            )
-            normalize_results = self._run_normalization_stage(
-                active_session,
-                job_status=job_status,
-                stage_row=normalize_stage,
-                datasets=normalize_datasets,
-                config_payload=payload,
-            )
-            self._set_job_status(
-                job_status,
-                status="succeeded",
-                phase="completed",
-                message=(
-                    f"Seed normalization completed for {len(normalize_results)} datasets."
-                ),
-                percent_complete=Decimal("100.00"),
-                completed=True,
-            )
-            active_session.flush()
-            return SeedRefreshResult(
-                configuration_version=config_version,
-                job_status=job_status,
-                raw_load_results=(),
-                normalize_results=tuple(normalize_results),
-            )
-        except Exception as exc:
-            self._fail_incomplete_stages(normalize_stage)
+            self._fail_incomplete_stages(session, job_status.id)
             self._set_job_status(
                 job_status,
                 status="failed",
@@ -344,9 +376,14 @@ class SeedRefreshService:
         session: Session,
         *,
         job_status: JobStatus,
-        stage_row: JobStageProgress,
+        stage_name: str,
         datasets: tuple[str, ...],
     ) -> list[RawSeedLoadResult]:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status.id,
+            stage_name=stage_name,
+        )
         results: list[RawSeedLoadResult] = []
         for index, dataset in enumerate(datasets, start=1):
             self._update_stage_progress(
@@ -368,6 +405,7 @@ class SeedRefreshService:
                 message=f"Loading {dataset} ({index}/{len(datasets)})",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
+            session.flush()
             result = self.load_dataset_fn(dataset, session=session)
             results.append(result)
             self._update_stage_progress(
@@ -413,10 +451,15 @@ class SeedRefreshService:
         session: Session,
         *,
         job_status: JobStatus,
-        stage_row: JobStageProgress,
+        stage_name: str,
         datasets: tuple[str, ...],
         config_payload: dict[str, object],
     ) -> list[SeedNormalizeResult]:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status.id,
+            stage_name=stage_name,
+        )
         results: list[SeedNormalizeResult] = []
         for index, dataset in enumerate(datasets, start=1):
             self._update_stage_progress(
@@ -438,6 +481,7 @@ class SeedRefreshService:
                 message=f"Normalizing {dataset} ({index}/{len(datasets)})",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
+            session.flush()
             result = self.normalize_dataset_fn(
                 dataset,
                 replace_production=True,
@@ -503,14 +547,15 @@ class SeedRefreshService:
             select(JobStatus)
             .where(
                 JobStatus.job_type.in_(tuple(SEED_JOB_TYPES)),
-                JobStatus.status == "running",
+                JobStatus.status.in_(("pending", "running")),
             )
             .order_by(JobStatus.id.desc())
             .limit(1)
         )
         if active_job is not None:
             raise ValueError(
-                f"Seed job {active_job.job_id} is already running; concurrent seed jobs are blocked."
+                f"Seed job {active_job.job_id} is already {active_job.status}; "
+                "concurrent seed jobs are blocked."
             )
 
     def _create_job_status(
@@ -518,14 +563,13 @@ class SeedRefreshService:
         session: Session,
         *,
         job_type: str,
-        initial_phase: str,
         initial_message: str,
     ) -> JobStatus:
         job = JobStatus(
             job_type=job_type,
             job_id=f"{job_type}-{uuid4().hex[:8]}",
             status="pending",
-            current_phase=initial_phase,
+            current_phase="initialize",
             percent_complete=Decimal("0.00"),
             current_message=initial_message,
         )
@@ -541,22 +585,41 @@ class SeedRefreshService:
         stage_name: str,
         stage_sequence: int,
         progress_total: int,
-    ) -> JobStageProgress:
-        stage_row = JobStageProgress(
-            job_status_id=job_status.id,
-            generation_run_id=None,
-            batch_id=None,
-            stage_name=stage_name,
-            stage_sequence=stage_sequence,
-            status="pending",
-            progress_current=0,
-            progress_total=progress_total,
-            progress_unit="dataset",
-            progress_percent=Decimal("0.00"),
-            progress_message="Pending execution.",
+    ) -> None:
+        session.add(
+            JobStageProgress(
+                job_status_id=job_status.id,
+                generation_run_id=None,
+                batch_id=None,
+                stage_name=stage_name,
+                stage_sequence=stage_sequence,
+                status="pending",
+                progress_current=0,
+                progress_total=progress_total,
+                progress_unit="dataset",
+                progress_percent=Decimal("0.00"),
+                progress_message="Pending execution.",
+            )
         )
-        session.add(stage_row)
         session.flush()
+
+    def _get_stage_row(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        stage_name: str,
+    ) -> JobStageProgress:
+        stage_row = session.scalar(
+            select(JobStageProgress).where(
+                JobStageProgress.job_status_id == job_status_id,
+                JobStageProgress.stage_name == stage_name,
+            )
+        )
+        if stage_row is None:
+            raise ValueError(
+                f"Missing job_stage_progress row for job={job_status_id}, stage={stage_name}."
+            )
         return stage_row
 
     def _update_stage_progress(
@@ -589,19 +652,26 @@ class SeedRefreshService:
             stage_row.started_at = stage_row.started_at or now
             stage_row.completed_at = now
 
-    def _fail_incomplete_stages(self, *stage_rows: JobStageProgress) -> None:
-        for stage_row in stage_rows:
-            if stage_row.status in {"succeeded", "failed"}:
+    def _fail_incomplete_stages(self, session: Session, job_status_id: int) -> None:
+        rows = list(
+            session.scalars(
+                select(JobStageProgress).where(
+                    JobStageProgress.job_status_id == job_status_id
+                )
+            )
+        )
+        for row in rows:
+            if row.status in {"succeeded", "failed"}:
                 continue
             self._update_stage_progress(
-                stage_row,
+                row,
                 status="failed",
-                progress_current=stage_row.progress_current or 0,
-                progress_total=stage_row.progress_total or 1,
-                progress_message=stage_row.progress_message or "Stage failed.",
-                metadata=stage_row.metadata_json if isinstance(stage_row.metadata_json, dict) else None,
+                progress_current=row.progress_current or 0,
+                progress_total=row.progress_total or 1,
+                progress_message=row.progress_message or "Stage failed.",
+                metadata=row.metadata_json if isinstance(row.metadata_json, dict) else None,
             )
-            stage_row.error_message = "Stage failed."
+            row.error_message = "Stage failed."
 
     def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:
         total_rows = session.scalar(
@@ -643,7 +713,9 @@ class SeedRefreshService:
 
 def _raw_datasets_from_payload(payload: dict[str, object]) -> tuple[str, ...]:
     raw_config = payload.get("raw_seed_data")
-    configured = raw_config.get("supported_datasets", []) if isinstance(raw_config, dict) else []
+    configured = (
+        raw_config.get("supported_datasets", []) if isinstance(raw_config, dict) else []
+    )
     configured_set = {item for item in configured if isinstance(item, str)}
     return tuple(dataset for dataset in RAW_DATASET_ORDER if dataset in configured_set)
 
@@ -654,6 +726,22 @@ def _normalization_datasets_from_raw(raw_datasets: tuple[str, ...]) -> tuple[str
         dataset
         for dataset in NORMALIZATION_ORDER
         if raw_dataset_set.intersection(NORMALIZATION_REQUIREMENTS[dataset])
+    )
+
+
+def _completion_message_for_mode(
+    mode: str,
+    *,
+    raw_count: int,
+    normalize_count: int,
+) -> str:
+    if mode == "load":
+        return f"Raw seed ingest completed for {raw_count} datasets."
+    if mode == "normalize":
+        return f"Seed normalization completed for {normalize_count} datasets."
+    return (
+        "Seed refresh completed successfully. "
+        f"Ingested {raw_count} raw datasets and normalized {normalize_count} production datasets."
     )
 
 

@@ -408,12 +408,23 @@ class FakeGenerationRunService:
         self.error = error
         self.calls: list[str] = []
 
-    def launch_generation_run(self, generation_name: str, *, session=None):
+    def register_generation_run(self, generation_name: str, *, session=None):
         del session
         self.calls.append(generation_name)
         if self.error is not None:
             raise ValueError(self.error)
-        return object()
+        return type(
+            "Registration",
+            (),
+            {
+                "configuration_version": type("ConfigVersion", (), {"id": 1})(),
+                "generation_run": type("GenerationRun", (), {"id": 2})(),
+                "job_status": type("JobStatus", (), {"id": 3})(),
+            },
+        )()
+
+    def execute_registered_generation_run(self, **kwargs):
+        return kwargs
 
 
 class FakeSeedRefreshService:
@@ -421,26 +432,62 @@ class FakeSeedRefreshService:
         self.error = error
         self.calls: list[str] = []
 
-    def load_raw_seed_data(self, *, session=None):
+    def register_raw_seed_ingest(self, *, session=None):
         del session
         self.calls.append("load")
         if self.error is not None:
             raise ValueError(self.error)
-        return type("Result", (), {"raw_load_results": (1, 2), "normalize_results": ()})()
+        return type(
+            "Registration",
+            (),
+            {
+                "configuration_version": type("ConfigVersion", (), {"id": 10})(),
+                "job_status": type("JobStatus", (), {"id": 11})(),
+                "mode": "load",
+            },
+        )()
 
-    def normalize_seed_data(self, *, session=None):
+    def register_seed_normalization(self, *, session=None):
         del session
         self.calls.append("normalize")
         if self.error is not None:
             raise ValueError(self.error)
-        return type("Result", (), {"raw_load_results": (), "normalize_results": (1, 2, 3)})()
+        return type(
+            "Registration",
+            (),
+            {
+                "configuration_version": type("ConfigVersion", (), {"id": 10})(),
+                "job_status": type("JobStatus", (), {"id": 11})(),
+                "mode": "normalize",
+            },
+        )()
 
-    def refresh_seed_data(self, *, session=None):
+    def register_seed_refresh(self, *, session=None):
         del session
         self.calls.append("refresh")
         if self.error is not None:
             raise ValueError(self.error)
-        return type("Result", (), {"raw_load_results": (1, 2), "normalize_results": (1, 2, 3)})()
+        return type(
+            "Registration",
+            (),
+            {
+                "configuration_version": type("ConfigVersion", (), {"id": 10})(),
+                "job_status": type("JobStatus", (), {"id": 11})(),
+                "mode": "refresh",
+            },
+        )()
+
+    def execute_registered_seed_job(self, **kwargs):
+        return kwargs
+
+
+class FakeBackgroundRunner:
+    def __init__(self) -> None:
+        self.submissions: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+    def submit(self, fn, /, *args, **kwargs):
+        self.submissions.append((fn, args, kwargs))
+        return object()
 
 
 def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
@@ -611,6 +658,7 @@ def test_control_panel_generation_start_requires_destructive_confirmation(sessio
     routes = _route_map(app)
     session = session_factory()
     fake_service = FakeGenerationRunService()
+    fake_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/generation/start"](
             request=_request("/control/generation/start", method="POST"),
@@ -619,6 +667,7 @@ def test_control_panel_generation_start_requires_destructive_confirmation(sessio
             session=session,
             queries=ControlPanelQueries(),
             run_service=fake_service,
+            background_runner=fake_runner,
         )
     finally:
         session.close()
@@ -635,20 +684,23 @@ def test_control_panel_seed_refresh_launches_when_allowed(session_factory):
     routes = _route_map(app)
     session = session_factory()
     fake_service = FakeSeedRefreshService()
+    fake_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/seed/refresh"](
             request=_request("/control/seed/refresh", method="POST"),
             session=session,
             queries=ControlPanelQueries(),
             seed_service=fake_service,
+            background_runner=fake_runner,
         )
     finally:
         session.close()
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Full seed refresh completed successfully" in body
+    assert "Full seed refresh started in background." in body
     assert fake_service.calls == ["refresh"]
+    assert len(fake_runner.submissions) == 1
 
 
 def test_control_panel_seed_refresh_surfaces_service_failure(session_factory):
@@ -657,12 +709,14 @@ def test_control_panel_seed_refresh_surfaces_service_failure(session_factory):
     routes = _route_map(app)
     session = session_factory()
     fake_service = FakeSeedRefreshService(error="seed refresh failed")
+    fake_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/seed/normalize"](
             request=_request("/control/seed/normalize", method="POST"),
             session=session,
             queries=ControlPanelQueries(),
             seed_service=fake_service,
+            background_runner=fake_runner,
         )
     finally:
         session.close()
@@ -679,6 +733,7 @@ def test_control_panel_generation_start_launches_run_when_allowed(session_factor
     routes = _route_map(app)
     session = session_factory()
     fake_service = FakeGenerationRunService()
+    fake_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/generation/start"](
             request=_request("/control/generation/start", method="POST"),
@@ -687,15 +742,17 @@ def test_control_panel_generation_start_launches_run_when_allowed(session_factor
             session=session,
             queries=ControlPanelQueries(),
             run_service=fake_service,
+            background_runner=fake_runner,
         )
     finally:
         session.close()
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "completed successfully" in body
+    assert "started in background" in body
     assert "UI launch" in body
     assert fake_service.calls == ["UI launch"]
+    assert len(fake_runner.submissions) == 1
 
 
 def test_control_panel_generation_start_surfaces_service_failure(session_factory):
@@ -704,6 +761,7 @@ def test_control_panel_generation_start_surfaces_service_failure(session_factory
     routes = _route_map(app)
     session = session_factory()
     fake_service = FakeGenerationRunService(error="pipeline failed")
+    fake_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/generation/start"](
             request=_request("/control/generation/start", method="POST"),
@@ -712,6 +770,7 @@ def test_control_panel_generation_start_surfaces_service_failure(session_factory
             session=session,
             queries=ControlPanelQueries(),
             run_service=fake_service,
+            background_runner=fake_runner,
         )
     finally:
         session.close()

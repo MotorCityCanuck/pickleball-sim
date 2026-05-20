@@ -82,6 +82,15 @@ class GenerationRunLaunchResult:
     pipeline_result: MultiMonthPipelineResult
 
 
+@dataclass(frozen=True)
+class GenerationRunRegistration:
+    """Pending generation run created before background execution starts."""
+
+    configuration_version: ConfigurationProfileVersion
+    generation_run: GenerationRun
+    job_status: JobStatus
+
+
 class GenerationRunService:
     """Core service for launching operator-facing generation runs."""
 
@@ -102,6 +111,44 @@ class GenerationRunService:
             control_plane=self.control_plane
         )
 
+    def register_generation_run(
+        self,
+        generation_name: str,
+        *,
+        session: Session | None = None,
+    ) -> GenerationRunRegistration:
+        """Create a pending generation run and job before background execution."""
+        if session is not None:
+            return self._register_generation_run(generation_name, session=session)
+
+        with session_scope() as active_session:
+            return self._register_generation_run(generation_name, session=active_session)
+
+    def execute_registered_generation_run(
+        self,
+        *,
+        config_version_id: int,
+        generation_run_id: int,
+        job_status_id: int,
+        session: Session | None = None,
+    ) -> GenerationRunLaunchResult:
+        """Run a previously registered generation job."""
+        if session is not None:
+            return self._execute_registered_generation_run(
+                config_version_id=config_version_id,
+                generation_run_id=generation_run_id,
+                job_status_id=job_status_id,
+                session=session,
+            )
+
+        with session_scope() as active_session:
+            return self._execute_registered_generation_run(
+                config_version_id=config_version_id,
+                generation_run_id=generation_run_id,
+                job_status_id=job_status_id,
+                session=active_session,
+            )
+
     def launch_generation_run(
         self,
         generation_name: str,
@@ -110,17 +157,32 @@ class GenerationRunService:
     ) -> GenerationRunLaunchResult:
         """Launch a full destructive generation run from the current valid config."""
         if session is not None:
-            return self._launch_generation_run(generation_name, session=session)
+            registration = self._register_generation_run(generation_name, session=session)
+            return self._execute_registered_generation_run(
+                config_version_id=registration.configuration_version.id,
+                generation_run_id=registration.generation_run.id,
+                job_status_id=registration.job_status.id,
+                session=session,
+            )
 
         with session_scope() as active_session:
-            return self._launch_generation_run(generation_name, session=active_session)
+            registration = self._register_generation_run(
+                generation_name,
+                session=active_session,
+            )
+            return self._execute_registered_generation_run(
+                config_version_id=registration.configuration_version.id,
+                generation_run_id=registration.generation_run.id,
+                job_status_id=registration.job_status.id,
+                session=active_session,
+            )
 
-    def _launch_generation_run(
+    def _register_generation_run(
         self,
         generation_name: str,
         *,
         session: Session,
-    ) -> GenerationRunLaunchResult:
+    ) -> GenerationRunRegistration:
         config_version = self._resolve_single_valid_config(session)
         validation = self.configuration_lifecycle.validate_working_copy(
             config_version.config_payload,
@@ -132,12 +194,9 @@ class GenerationRunService:
                 "Current valid configuration payload failed validation: "
                 + "; ".join(validation.errors)
             )
-        self._ensure_no_active_generation_run(session)
+        self._ensure_no_active_generation_job(session)
 
-        first_batch_month = _parse_first_batch_month(validation.normalized_payload)
-        month_count = _parse_month_count(validation.normalized_payload)
         parameter_snapshot = validation.normalized_payload
-
         generation_run = self.control_plane.create_generation_run(
             generation_name,
             seed_value=validation.settings.default_seed_value,
@@ -146,13 +205,66 @@ class GenerationRunService:
             session=session,
         )
         job_status = self._create_job_status(session, generation_run)
+        self._create_setup_stage_row(
+            session,
+            job_status=job_status,
+            generation_run=generation_run,
+        )
+        self.configuration_lifecycle.mark_version_used(
+            session,
+            version_id=config_version.id,
+        )
+        session.flush()
+        return GenerationRunRegistration(
+            configuration_version=config_version,
+            generation_run=generation_run,
+            job_status=job_status,
+        )
+
+    def _execute_registered_generation_run(
+        self,
+        *,
+        config_version_id: int,
+        generation_run_id: int,
+        job_status_id: int,
+        session: Session,
+    ) -> GenerationRunLaunchResult:
+        config_version = session.get(ConfigurationProfileVersion, config_version_id)
+        if config_version is None:
+            raise ValueError(f"Configuration profile version {config_version_id} does not exist.")
+        generation_run = session.get(GenerationRun, generation_run_id)
+        if generation_run is None:
+            raise ValueError(f"Generation run {generation_run_id} does not exist.")
+        job_status = session.get(JobStatus, job_status_id)
+        if job_status is None:
+            raise ValueError(f"Job status {job_status_id} does not exist.")
+        if job_status.status != "pending":
+            raise ValueError(
+                f"Generation job {job_status.job_id} is already {job_status.status}; "
+                "background execution requires a pending job."
+            )
+        if generation_run.status != "not_started":
+            raise ValueError(
+                f"Generation run {generation_run.id} is already {generation_run.status}; "
+                "background execution requires a not_started run."
+            )
+
+        validation = self.configuration_lifecycle.validate_working_copy(
+            generation_run.parameter_snapshot or {},
+            profile_name=config_version.profile.profile_name,
+            profile_version=config_version.version_number,
+        )
+        if not validation.is_valid or validation.settings is None:
+            raise ValueError(
+                "Registered generation configuration payload failed validation: "
+                + "; ".join(validation.errors)
+            )
+
+        first_batch_month = _parse_first_batch_month(validation.normalized_payload)
+        month_count = _parse_month_count(validation.normalized_payload)
 
         try:
             self.control_plane.start_generation_run(generation_run.id, session=session)
-            self.configuration_lifecycle.mark_version_used(
-                session,
-                version_id=config_version.id,
-            )
             self._set_job_status(
                 job_status,
                 status="running",
@@ -160,7 +272,18 @@ class GenerationRunService:
                 message="Deleting generated data from previous runs.",
                 started=True,
             )
-            self._perform_destructive_reset(session)
+            self._mark_setup_stage_running(
+                session,
+                job_status_id=job_status.id,
+            )
+            self._perform_destructive_reset(
+                session,
+                preserve_job_status_id=job_status.id,
+            )
+            self._mark_setup_stage_succeeded(
+                session,
+                job_status_id=job_status.id,
+            )
 
             monthly_batches = self._create_monthly_batches(
                 session,
@@ -179,6 +302,7 @@ class GenerationRunService:
                 status="running",
                 phase="generation_pipeline",
                 message="Running monthly generation pipeline.",
+                percent_complete=self._overall_percent_complete(session, job_status.id),
             )
 
             pipeline_result = self.pipeline.run_months(
@@ -214,6 +338,7 @@ class GenerationRunService:
                 pipeline_result=pipeline_result,
             )
         except Exception as exc:
+            self._fail_incomplete_stages(session, job_status.id)
             self.control_plane.fail_generation_run(generation_run.id, session=session)
             self._set_job_status(
                 job_status,
@@ -239,18 +364,43 @@ class GenerationRunService:
             )
         return valid_versions[0]
 
-    def _ensure_no_active_generation_run(self, session: Session) -> None:
+    def _ensure_no_active_generation_job(self, session: Session) -> None:
         active_run = session.scalar(
-            select(GenerationRun).where(GenerationRun.status == "running")
+            select(GenerationRun).where(GenerationRun.status.in_(("not_started", "running")))
         )
         if active_run is not None:
             raise ValueError(
-                f"Generation run {active_run.id} is already running; concurrent runs are blocked."
+                f"Generation run {active_run.id} is already {active_run.status}; "
+                "concurrent runs are blocked."
+            )
+        active_job = session.scalar(
+            select(JobStatus)
+            .where(
+                JobStatus.job_type == "generation_run",
+                JobStatus.status.in_(("pending", "running")),
+            )
+            .order_by(JobStatus.id.desc())
+            .limit(1)
+        )
+        if active_job is not None:
+            raise ValueError(
+                f"Generation job {active_job.job_id} is already {active_job.status}; "
+                "concurrent runs are blocked."
             )
 
-    def _perform_destructive_reset(self, session: Session) -> None:
+    def _perform_destructive_reset(
+        self,
+        session: Session,
+        *,
+        preserve_job_status_id: int,
+    ) -> None:
         for model in DELETE_MODELS_IN_ORDER:
-            session.execute(delete(model))
+            statement = delete(model)
+            if model is JobStageProgress:
+                statement = statement.where(
+                    JobStageProgress.job_status_id != preserve_job_status_id
+                )
+            session.execute(statement)
         session.flush()
 
     def _create_monthly_batches(
@@ -285,11 +435,69 @@ class GenerationRunService:
             status="pending",
             current_phase="initialize",
             percent_complete=Decimal("0.00"),
-            current_message="Preparing generation run.",
+            current_message="Queued generation run.",
         )
         session.add(job)
         session.flush()
         return job
+
+    def _create_setup_stage_row(
+        self,
+        session: Session,
+        *,
+        job_status: JobStatus,
+        generation_run: GenerationRun,
+    ) -> None:
+        session.add(
+            JobStageProgress(
+                job_status_id=job_status.id,
+                generation_run_id=generation_run.id,
+                batch_id=None,
+                stage_name="destructive_reset",
+                stage_sequence=0,
+                status="pending",
+                progress_current=0,
+                progress_total=1,
+                progress_unit="stage",
+                progress_percent=Decimal("0.00"),
+                progress_message="Pending destructive reset.",
+            )
+        )
+        session.flush()
+
+    def _mark_setup_stage_running(self, session: Session, *, job_status_id: int) -> None:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status_id,
+            batch_id=None,
+            stage_name="destructive_reset",
+        )
+        now = _utc_now()
+        stage_row.status = "running"
+        stage_row.started_at = stage_row.started_at or now
+        stage_row.last_heartbeat_at = now
+        stage_row.progress_message = "Deleting generated data from previous runs."
+        stage_row.progress_current = 0
+        stage_row.progress_total = 1
+        stage_row.progress_percent = Decimal("0.00")
+        session.flush()
+
+    def _mark_setup_stage_succeeded(self, session: Session, *, job_status_id: int) -> None:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status_id,
+            batch_id=None,
+            stage_name="destructive_reset",
+        )
+        now = _utc_now()
+        stage_row.status = "succeeded"
+        stage_row.completed_at = now
+        stage_row.last_heartbeat_at = now
+        stage_row.progress_message = "Generated data reset completed."
+        stage_row.progress_current = 1
+        stage_row.progress_total = 1
+        stage_row.progress_percent = Decimal("100.00")
+        session.flush()
 
     def _seed_stage_progress(
         self,
@@ -325,18 +533,12 @@ class GenerationRunService:
         job_status: JobStatus,
         event: PipelineProgressEvent,
     ) -> None:
-        stage_row = session.scalar(
-            select(JobStageProgress).where(
-                JobStageProgress.job_status_id == job_status.id,
-                JobStageProgress.batch_id == event.batch_id,
-                JobStageProgress.stage_name == event.step,
-            )
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status.id,
+            batch_id=event.batch_id,
+            stage_name=event.step,
         )
-        if stage_row is None:
-            raise ValueError(
-                f"Missing job_stage_progress row for job={job_status.id}, "
-                f"batch={event.batch_id}, step={event.step}."
-            )
 
         stage_row.status = event.status
         stage_row.progress_message = _format_progress_message(event)
@@ -378,6 +580,48 @@ class GenerationRunService:
                 message=f"{event.batch_month}: {stage_row.error_message}",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
+        session.flush()
+
+    def _get_stage_row(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        batch_id: int | None,
+        stage_name: str,
+    ) -> JobStageProgress:
+        statement = select(JobStageProgress).where(
+            JobStageProgress.job_status_id == job_status_id,
+            JobStageProgress.stage_name == stage_name,
+        )
+        if batch_id is None:
+            statement = statement.where(JobStageProgress.batch_id.is_(None))
+        else:
+            statement = statement.where(JobStageProgress.batch_id == batch_id)
+        stage_row = session.scalar(statement)
+        if stage_row is None:
+            raise ValueError(
+                f"Missing job_stage_progress row for job={job_status_id}, "
+                f"batch={batch_id}, step={stage_name}."
+            )
+        return stage_row
+
+    def _fail_incomplete_stages(self, session: Session, job_status_id: int) -> None:
+        rows = list(
+            session.scalars(
+                select(JobStageProgress).where(
+                    JobStageProgress.job_status_id == job_status_id
+                )
+            )
+        )
+        for row in rows:
+            if row.status in {"succeeded", "failed"}:
+                continue
+            row.status = "failed"
+            row.completed_at = _utc_now()
+            row.last_heartbeat_at = _utc_now()
+            row.error_message = row.error_message or "Stage failed."
+            row.progress_percent = Decimal("0.00")
         session.flush()
 
     def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:

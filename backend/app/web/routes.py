@@ -10,6 +10,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.background_jobs import (
+    BackgroundJobRunner,
+    get_default_background_job_runner,
+)
 from app.core import ConfigurationLifecycleService, diff_config_payloads
 from app.db.session import get_session
 from app.generation import GenerationRunService, SeedRefreshService
@@ -49,6 +53,11 @@ def get_generation_run_service() -> GenerationRunService:
 def get_seed_refresh_service() -> SeedRefreshService:
     """Return the seed refresh service."""
     return SeedRefreshService()
+
+
+def get_background_job_runner() -> BackgroundJobRunner:
+    """Return the local background job runner."""
+    return get_default_background_job_runner()
 
 
 def build_control_panel_router() -> APIRouter:
@@ -173,12 +182,14 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         return _run_seed_action(
             request,
             session=session,
             queries=queries,
             seed_service=seed_service,
+            background_runner=background_runner,
             action="load",
             templates=templates,
         )
@@ -189,12 +200,14 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         return _run_seed_action(
             request,
             session=session,
             queries=queries,
             seed_service=seed_service,
+            background_runner=background_runner,
             action="normalize",
             templates=templates,
         )
@@ -205,12 +218,14 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         return _run_seed_action(
             request,
             session=session,
             queries=queries,
             seed_service=seed_service,
+            background_runner=background_runner,
             action="refresh",
             templates=templates,
         )
@@ -223,6 +238,7 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         run_service: GenerationRunService = Depends(get_generation_run_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         snapshot = queries.get_control_panel_snapshot(session)
         launch_message = None
@@ -239,10 +255,21 @@ def build_control_panel_router() -> APIRouter:
         else:
             requested_name = generation_name.strip() or _default_generation_name(snapshot)
             try:
-                run_service.launch_generation_run(requested_name, session=session)
+                registration = run_service.register_generation_run(
+                    requested_name,
+                    session=session,
+                )
                 session.commit()
+                background_runner.submit(
+                    run_service.execute_registered_generation_run,
+                    config_version_id=registration.configuration_version.id,
+                    generation_run_id=registration.generation_run.id,
+                    job_status_id=registration.job_status.id,
+                )
                 snapshot = queries.get_control_panel_snapshot(session)
-                launch_message = f"Generation run '{requested_name}' completed successfully."
+                launch_message = (
+                    f"Generation run '{requested_name}' started in background."
+                )
             except Exception as exc:
                 session.rollback()
                 snapshot = queries.get_control_panel_snapshot(session)
@@ -444,6 +471,7 @@ def _run_seed_action(
     session: Session,
     queries: ControlPanelQueries,
     seed_service: SeedRefreshService,
+    background_runner: BackgroundJobRunner,
     action: str,
     templates: Jinja2Templates,
 ) -> HTMLResponse:
@@ -460,25 +488,35 @@ def _run_seed_action(
     else:
         try:
             if action == "load":
-                result = seed_service.load_raw_seed_data(session=session)
-                seed_launch_message = (
-                    "Raw seed ingest completed successfully for "
-                    f"{len(result.raw_load_results)} datasets."
+                registration = seed_service.register_raw_seed_ingest(session=session)
+                session.commit()
+                background_runner.submit(
+                    seed_service.execute_registered_seed_job,
+                    config_version_id=registration.configuration_version.id,
+                    job_status_id=registration.job_status.id,
+                    mode=registration.mode,
                 )
+                seed_launch_message = "Raw seed ingest started in background."
             elif action == "normalize":
-                result = seed_service.normalize_seed_data(session=session)
-                seed_launch_message = (
-                    "Seed normalization completed successfully for "
-                    f"{len(result.normalize_results)} datasets."
+                registration = seed_service.register_seed_normalization(session=session)
+                session.commit()
+                background_runner.submit(
+                    seed_service.execute_registered_seed_job,
+                    config_version_id=registration.configuration_version.id,
+                    job_status_id=registration.job_status.id,
+                    mode=registration.mode,
                 )
+                seed_launch_message = "Seed normalization started in background."
             else:
-                result = seed_service.refresh_seed_data(session=session)
-                seed_launch_message = (
-                    "Full seed refresh completed successfully: "
-                    f"{len(result.raw_load_results)} ingested, "
-                    f"{len(result.normalize_results)} normalized."
+                registration = seed_service.register_seed_refresh(session=session)
+                session.commit()
+                background_runner.submit(
+                    seed_service.execute_registered_seed_job,
+                    config_version_id=registration.configuration_version.id,
+                    job_status_id=registration.job_status.id,
+                    mode=registration.mode,
                 )
-            session.commit()
+                seed_launch_message = "Full seed refresh started in background."
             snapshot = queries.get_control_panel_snapshot(session)
         except Exception as exc:
             session.rollback()

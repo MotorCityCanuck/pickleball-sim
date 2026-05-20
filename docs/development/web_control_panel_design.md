@@ -440,11 +440,11 @@ orchestration system.
 - Seed/reference data changes only through an explicit raw ingest and seed
   normalization workflow.
 - Seed preparation and synthetic generation are separate operator actions.
-- Seed preparation may run independently when no synthetic generation job is active.
+- Seed preparation may run independently when no synthetic generation job is pending or active.
 - Only the web control panel may start a generation run.
 - A generation run may start only from the current valid configuration version.
 - A generation run may start only when seed/reference readiness checks pass.
-- Only one generation run may be `running` at a time.
+- Only one generation run may be `pending` or `running` at a time.
 - Every generation run starts from the beginning.
 - Every generation run is destructive to generated domain data.
 - Generation runs must not delete seed/reference data or saved configuration versions.
@@ -458,8 +458,8 @@ This stage prepares or refreshes the reference data needed by synthetic
 generation jobs.
 
 - This stage can run independently of synthetic generation.
-- This stage must not run when player/match generation is active.
-- This stage should be blocked when another write-heavy seed preparation job is already running.
+- This stage must not run when player/match generation is pending or active.
+- This stage should be blocked when another write-heavy seed preparation job is already pending or running.
 - Version 1 should treat normalized seed/reference data as fixed operational
   input once prepared. The system does not need seed dataset version lineage for
   the first implementation.
@@ -557,9 +557,15 @@ The generation service should own the full run lifecycle:
 ```text
 validate current configuration
         ↓
+create pending job_status row
+        ↓
 create generation run record
         ↓
 freeze parameter_snapshot
+        ↓
+commit pending launch state
+        ↓
+start background worker execution
         ↓
 destructively reset generated data
         ↓
@@ -570,8 +576,9 @@ execute generation stages from the beginning
 mark generation run succeeded or failed
 ```
 
-Web routes should call this service and poll job status. They should not contain
-their own independent lifecycle logic.
+Web routes should register the pending launch, commit it, enqueue background
+execution, and then return immediately. They should poll job status and must
+not contain their own independent lifecycle logic.
 
 ### Full Generation Run Controls
 
@@ -594,7 +601,7 @@ Generation start rules:
 
 - A run may start only when the current configuration version is valid.
 - A run may start only when Stage 1 seed/reference readiness checks pass.
-- A run may start only when no generation run is currently `running`.
+- A run may start only when no generation run or generation job is currently `pending` or `running`.
 - A run must use seed, first generated month, generated month count, player scale,
   and all other runtime generation settings from the current valid configuration.
 - The workflow orchestration UI must not allow one-off overrides for generation
@@ -1318,10 +1325,17 @@ Recommended server flow:
 
 1. User submits a workload action.
 2. Server creates a `job_status` row with `pending`.
-3. Server starts background execution.
-4. Background worker updates `job_status`.
-5. UI polls a status endpoint with HTMX.
-6. UI renders progress, current phase, and logs.
+3. Server creates any other required pending orchestration rows such as `generation_runs`.
+4. Server commits the pending launch state.
+5. Server starts background execution.
+6. Background worker updates `job_status`.
+7. UI polls status endpoints with HTMX.
+8. UI renders progress, current phase, and logs.
+
+For the current implementation, local background execution uses an in-process
+thread pool. The request handler owns validation and durable registration of
+pending work, but it does not own the runtime of the long-running job after
+that commit.
 
 The existing `job_status` table already supports:
 
@@ -1759,9 +1773,13 @@ backend/app/web/
 
 ### Job Execution
 
-For local development, FastAPI `BackgroundTasks` is acceptable for the first version.
+For local development, an in-process FastAPI background execution model is
+acceptable for the first version. This may use `BackgroundTasks` or a small
+application-owned thread pool.
 
-If jobs need cancellation, restart durability, or multiple workers, move to a real queue later. The design should avoid assuming that request handlers own the job lifecycle.
+If jobs need cancellation, restart durability, or multiple workers, move to a
+real queue later. The design should avoid assuming that request handlers own
+the job lifecycle.
 
 ### Frontend
 
