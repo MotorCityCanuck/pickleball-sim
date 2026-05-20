@@ -1,0 +1,460 @@
+"""Operator-facing generation run orchestration service."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from app.core import ConfigurationLifecycleService, SimulationSettings, load_settings
+from app.db.session import session_scope
+from app.models import (
+    BatchRun,
+    ClubMembership,
+    ConfigurationProfileVersion,
+    ExportRun,
+    GenerationRun,
+    JobStageProgress,
+    JobStatus,
+    Match,
+    MatchGame,
+    MatchTeam,
+    MatchTeamPlayer,
+    MonthlyBatch,
+    Player,
+    PlayerAssessmentHistory,
+    PlayerRatingHistory,
+    PlayerRegistration,
+    RatingsUpdateLog,
+    StudentDatasetRelease,
+    StudentDatasetReleaseFile,
+    Team,
+    TeamMembership,
+    Tournament,
+    ValidationResult,
+)
+
+from .control_plane import GenerationControlPlane
+from .monthly_pipeline import (
+    MonthlyGenerationPipeline,
+    MultiMonthPipelineResult,
+    PIPELINE_STEPS,
+    PipelineProgressEvent,
+)
+
+
+DELETE_MODELS_IN_ORDER = (
+    JobStageProgress,
+    StudentDatasetReleaseFile,
+    StudentDatasetRelease,
+    ValidationResult,
+    ExportRun,
+    BatchRun,
+    RatingsUpdateLog,
+    PlayerRatingHistory,
+    PlayerAssessmentHistory,
+    MatchTeamPlayer,
+    MatchGame,
+    MatchTeam,
+    Match,
+    TeamMembership,
+    Team,
+    ClubMembership,
+    PlayerRegistration,
+    Player,
+    Tournament,
+    MonthlyBatch,
+)
+
+
+@dataclass(frozen=True)
+class GenerationRunLaunchResult:
+    """Outcome of launching a full destructive generation run."""
+
+    configuration_version: ConfigurationProfileVersion
+    generation_run: GenerationRun
+    job_status: JobStatus
+    monthly_batches: tuple[MonthlyBatch, ...]
+    pipeline_result: MultiMonthPipelineResult
+
+
+class GenerationRunService:
+    """Core service for launching operator-facing generation runs."""
+
+    def __init__(
+        self,
+        *,
+        settings: SimulationSettings | None = None,
+        configuration_lifecycle: ConfigurationLifecycleService | None = None,
+        control_plane: GenerationControlPlane | None = None,
+        pipeline: MonthlyGenerationPipeline | None = None,
+    ) -> None:
+        self.settings = settings or load_settings()
+        self.configuration_lifecycle = (
+            configuration_lifecycle or ConfigurationLifecycleService()
+        )
+        self.control_plane = control_plane or GenerationControlPlane(self.settings)
+        self.pipeline = pipeline or MonthlyGenerationPipeline(
+            control_plane=self.control_plane
+        )
+
+    def launch_generation_run(
+        self,
+        generation_name: str,
+        *,
+        session: Session | None = None,
+    ) -> GenerationRunLaunchResult:
+        """Launch a full destructive generation run from the current valid config."""
+        if session is not None:
+            return self._launch_generation_run(generation_name, session=session)
+
+        with session_scope() as active_session:
+            return self._launch_generation_run(generation_name, session=active_session)
+
+    def _launch_generation_run(
+        self,
+        generation_name: str,
+        *,
+        session: Session,
+    ) -> GenerationRunLaunchResult:
+        config_version = self._resolve_single_valid_config(session)
+        validation = self.configuration_lifecycle.validate_working_copy(
+            config_version.config_payload,
+            profile_name=config_version.profile.profile_name,
+            profile_version=config_version.version_number,
+        )
+        if not validation.is_valid or validation.settings is None:
+            raise ValueError(
+                "Current valid configuration payload failed validation: "
+                + "; ".join(validation.errors)
+            )
+        self._ensure_no_active_generation_run(session)
+
+        first_batch_month = _parse_first_batch_month(validation.normalized_payload)
+        month_count = _parse_month_count(validation.normalized_payload)
+        parameter_snapshot = validation.normalized_payload
+
+        generation_run = self.control_plane.create_generation_run(
+            generation_name,
+            seed_value=validation.settings.default_seed_value,
+            parameter_snapshot=parameter_snapshot,
+            settings=validation.settings,
+            session=session,
+        )
+        job_status = self._create_job_status(session, generation_run)
+
+        try:
+            self.control_plane.start_generation_run(generation_run.id, session=session)
+            self.configuration_lifecycle.mark_version_used(
+                session,
+                version_id=config_version.id,
+            )
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase="destructive_reset",
+                message="Deleting generated data from previous runs.",
+                started=True,
+            )
+            self._perform_destructive_reset(session)
+
+            monthly_batches = self._create_monthly_batches(
+                session,
+                generation_run_id=generation_run.id,
+                first_batch_month=first_batch_month,
+                month_count=month_count,
+            )
+            self._seed_stage_progress(
+                session,
+                job_status=job_status,
+                generation_run=generation_run,
+                monthly_batches=monthly_batches,
+            )
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase="generation_pipeline",
+                message="Running monthly generation pipeline.",
+            )
+
+            pipeline_result = self.pipeline.run_months(
+                generation_run_id=generation_run.id,
+                months=month_count,
+                skip_existing=False,
+                progress_listener=lambda event: self._record_progress_event(
+                    session,
+                    job_status=job_status,
+                    event=event,
+                ),
+                session=session,
+            )
+
+            self.control_plane.complete_generation_run(
+                generation_run.id,
+                session=session,
+            )
+            self._set_job_status(
+                job_status,
+                status="succeeded",
+                phase="completed",
+                message="Generation run completed successfully.",
+                percent_complete=Decimal("100.00"),
+                completed=True,
+            )
+            session.flush()
+            return GenerationRunLaunchResult(
+                configuration_version=config_version,
+                generation_run=generation_run,
+                job_status=job_status,
+                monthly_batches=tuple(monthly_batches),
+                pipeline_result=pipeline_result,
+            )
+        except Exception as exc:
+            self.control_plane.fail_generation_run(generation_run.id, session=session)
+            self._set_job_status(
+                job_status,
+                status="failed",
+                phase="failed",
+                message=str(exc),
+                completed=True,
+            )
+            raise
+
+    def _resolve_single_valid_config(self, session: Session) -> ConfigurationProfileVersion:
+        valid_versions = list(
+            session.scalars(
+                select(ConfigurationProfileVersion)
+                .where(ConfigurationProfileVersion.lifecycle_status == "valid")
+                .order_by(ConfigurationProfileVersion.id)
+            )
+        )
+        if len(valid_versions) != 1:
+            raise ValueError(
+                "Expected exactly one valid configuration version before launch; "
+                f"found {len(valid_versions)}."
+            )
+        return valid_versions[0]
+
+    def _ensure_no_active_generation_run(self, session: Session) -> None:
+        active_run = session.scalar(
+            select(GenerationRun).where(GenerationRun.status == "running")
+        )
+        if active_run is not None:
+            raise ValueError(
+                f"Generation run {active_run.id} is already running; concurrent runs are blocked."
+            )
+
+    def _perform_destructive_reset(self, session: Session) -> None:
+        for model in DELETE_MODELS_IN_ORDER:
+            session.execute(delete(model))
+        session.flush()
+
+    def _create_monthly_batches(
+        self,
+        session: Session,
+        *,
+        generation_run_id: int,
+        first_batch_month: date,
+        month_count: int,
+    ) -> list[MonthlyBatch]:
+        batches = [
+            self.control_plane.get_or_create_monthly_batch(
+                generation_run_id,
+                _add_months(first_batch_month, offset),
+                batch_sequence=offset + 1,
+                batch_type="historical_initial",
+                session=session,
+            )
+            for offset in range(month_count)
+        ]
+        session.flush()
+        return batches
+
+    def _create_job_status(
+        self,
+        session: Session,
+        generation_run: GenerationRun,
+    ) -> JobStatus:
+        job = JobStatus(
+            job_type="generation_run",
+            job_id=f"generation-run-{generation_run.id}-{uuid4().hex[:8]}",
+            status="pending",
+            current_phase="initialize",
+            percent_complete=Decimal("0.00"),
+            current_message="Preparing generation run.",
+        )
+        session.add(job)
+        session.flush()
+        return job
+
+    def _seed_stage_progress(
+        self,
+        session: Session,
+        *,
+        job_status: JobStatus,
+        generation_run: GenerationRun,
+        monthly_batches: list[MonthlyBatch],
+    ) -> None:
+        for batch in monthly_batches:
+            for index, step in enumerate(PIPELINE_STEPS, start=1):
+                session.add(
+                    JobStageProgress(
+                        job_status_id=job_status.id,
+                        generation_run_id=generation_run.id,
+                        batch_id=batch.id,
+                        stage_name=step,
+                        stage_sequence=index,
+                        status="pending",
+                        progress_current=0,
+                        progress_total=1,
+                        progress_unit="stage",
+                        progress_percent=Decimal("0.00"),
+                        progress_message="Pending execution.",
+                    )
+                )
+        session.flush()
+
+    def _record_progress_event(
+        self,
+        session: Session,
+        *,
+        job_status: JobStatus,
+        event: PipelineProgressEvent,
+    ) -> None:
+        stage_row = session.scalar(
+            select(JobStageProgress).where(
+                JobStageProgress.job_status_id == job_status.id,
+                JobStageProgress.batch_id == event.batch_id,
+                JobStageProgress.stage_name == event.step,
+            )
+        )
+        if stage_row is None:
+            raise ValueError(
+                f"Missing job_stage_progress row for job={job_status.id}, "
+                f"batch={event.batch_id}, step={event.step}."
+            )
+
+        stage_row.status = event.status
+        stage_row.progress_message = _format_progress_message(event)
+        stage_row.last_heartbeat_at = _utc_now()
+        if event.status == "running":
+            stage_row.started_at = stage_row.started_at or _utc_now()
+            stage_row.progress_current = 0
+            stage_row.progress_total = stage_row.progress_total or 1
+            stage_row.progress_percent = Decimal("0.00")
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase=event.step,
+                message=f"{event.batch_month}: {stage_row.progress_message}",
+            )
+        elif event.status == "succeeded":
+            stage_row.started_at = stage_row.started_at or _utc_now()
+            stage_row.completed_at = _utc_now()
+            stage_row.progress_current = stage_row.progress_total or 1
+            stage_row.progress_total = stage_row.progress_total or 1
+            stage_row.progress_percent = Decimal("100.00")
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase=event.step,
+                message=f"{event.batch_month}: {stage_row.progress_message}",
+                percent_complete=self._overall_percent_complete(session, job_status.id),
+            )
+        elif event.status == "failed":
+            stage_row.started_at = stage_row.started_at or _utc_now()
+            stage_row.completed_at = _utc_now()
+            stage_row.error_message = str(event.details.get("error_message", "Stage failed."))
+            stage_row.progress_percent = Decimal("0.00")
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase=event.step,
+                message=f"{event.batch_month}: {stage_row.error_message}",
+                percent_complete=self._overall_percent_complete(session, job_status.id),
+            )
+        session.flush()
+
+    def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:
+        total_rows = session.scalar(
+            select(func.count()).select_from(JobStageProgress).where(
+                JobStageProgress.job_status_id == job_status_id
+            )
+        ) or 0
+        if total_rows == 0:
+            return Decimal("0.00")
+        completed_rows = session.scalar(
+            select(func.count()).select_from(JobStageProgress).where(
+                JobStageProgress.job_status_id == job_status_id,
+                JobStageProgress.status == "succeeded",
+            )
+        ) or 0
+        return (Decimal(completed_rows) * Decimal("100.00")) / Decimal(total_rows)
+
+    def _set_job_status(
+        self,
+        job_status: JobStatus,
+        *,
+        status: str,
+        phase: str,
+        message: str,
+        percent_complete: Decimal | None = None,
+        started: bool = False,
+        completed: bool = False,
+    ) -> None:
+        job_status.status = status
+        job_status.current_phase = phase
+        job_status.current_message = message
+        if percent_complete is not None:
+            job_status.percent_complete = percent_complete
+        if started and job_status.started_at is None:
+            job_status.started_at = _utc_now()
+        if completed:
+            job_status.completed_at = _utc_now()
+
+
+def _parse_first_batch_month(payload: dict[str, Any]) -> date:
+    raw_value = payload["simulation"]["first_batch_month"]
+    if isinstance(raw_value, date):
+        return date(raw_value.year, raw_value.month, 1)
+    if not isinstance(raw_value, str):
+        raise ValueError("simulation.first_batch_month must be an ISO date string.")
+    parsed = date.fromisoformat(raw_value)
+    return date(parsed.year, parsed.month, 1)
+
+
+def _parse_month_count(payload: dict[str, Any]) -> int:
+    raw_value = payload["simulation"]["historical_batch_count"]
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise ValueError("simulation.historical_batch_count must be an integer.")
+    if raw_value < 1:
+        raise ValueError("simulation.historical_batch_count must be at least 1.")
+    return raw_value
+
+
+def _format_progress_message(event: PipelineProgressEvent) -> str:
+    if event.status == "running":
+        return f"{event.step} running"
+    if event.status == "failed":
+        return str(event.details.get("error_message", f"{event.step} failed"))
+    if not event.details:
+        return f"{event.step} succeeded"
+    detail_parts = ", ".join(
+        f"{key}={value}" for key, value in sorted(event.details.items())
+    )
+    return f"{event.step} succeeded ({detail_parts})"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)

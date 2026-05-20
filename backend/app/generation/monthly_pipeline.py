@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -68,6 +68,18 @@ class MultiMonthPipelineResult:
     batch_results: tuple[MonthlyPipelineResult, ...]
 
 
+@dataclass(frozen=True)
+class PipelineProgressEvent:
+    """Progress signal emitted before and after each pipeline step."""
+
+    generation_run_id: int
+    batch_id: int
+    batch_month: date
+    step: str
+    status: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 class MonthlyGenerationPipeline:
     """Coordinate setup, match generation, and rating updates for monthly batches."""
 
@@ -98,6 +110,7 @@ class MonthlyGenerationPipeline:
         start_batch_id: int | None = None,
         player_count: int | None = None,
         skip_existing: bool = True,
+        progress_listener: Callable[[PipelineProgressEvent], None] | None = None,
         session: Session | None = None,
     ) -> MultiMonthPipelineResult:
         """Run the pipeline for up to 12 successive monthly batches."""
@@ -111,6 +124,7 @@ class MonthlyGenerationPipeline:
                 start_batch_id=start_batch_id,
                 player_count=player_count,
                 skip_existing=skip_existing,
+                progress_listener=progress_listener,
                 session=session,
             )
 
@@ -121,6 +135,7 @@ class MonthlyGenerationPipeline:
                 start_batch_id=start_batch_id,
                 player_count=player_count,
                 skip_existing=skip_existing,
+                progress_listener=progress_listener,
                 session=active_session,
             )
 
@@ -132,6 +147,7 @@ class MonthlyGenerationPipeline:
         start_batch_id: int | None,
         player_count: int | None,
         skip_existing: bool,
+        progress_listener: Callable[[PipelineProgressEvent], None] | None,
         session: Session,
     ) -> MultiMonthPipelineResult:
         generation_run = session.get(GenerationRun, generation_run_id)
@@ -151,6 +167,7 @@ class MonthlyGenerationPipeline:
                 batch=batch,
                 player_count=player_count if index == 0 else None,
                 skip_existing=skip_existing,
+                progress_listener=progress_listener,
                 session=session,
             )
             for index, batch in enumerate(batches)
@@ -168,6 +185,7 @@ class MonthlyGenerationPipeline:
         batch: MonthlyBatch,
         player_count: int | None,
         skip_existing: bool,
+        progress_listener: Callable[[PipelineProgressEvent], None] | None,
         session: Session,
     ) -> MonthlyPipelineResult:
         if batch.processing_status == "succeeded" and skip_existing:
@@ -188,22 +206,65 @@ class MonthlyGenerationPipeline:
         step_results: list[PipelineStepResult] = []
         try:
             step_results.append(
-                self._run_players(
-                    generation_run_id,
-                    batch.id,
-                    player_count,
-                    skip_existing,
-                    session,
+                self._run_step(
+                    generation_run_id=generation_run_id,
+                    batch=batch,
+                    step="players",
+                    runner=lambda: self._run_players(
+                        generation_run_id,
+                        batch.id,
+                        player_count,
+                        skip_existing,
+                        session,
+                    ),
+                    progress_listener=progress_listener,
                 )
             )
             step_results.append(
-                self._run_club_memberships(generation_run_id, skip_existing, session)
+                self._run_step(
+                    generation_run_id=generation_run_id,
+                    batch=batch,
+                    step="club_memberships",
+                    runner=lambda: self._run_club_memberships(
+                        generation_run_id,
+                        skip_existing,
+                        session,
+                    ),
+                    progress_listener=progress_listener,
+                )
             )
             step_results.append(
-                self._run_teams(generation_run_id, batch, skip_existing, session)
+                self._run_step(
+                    generation_run_id=generation_run_id,
+                    batch=batch,
+                    step="teams",
+                    runner=lambda: self._run_teams(
+                        generation_run_id,
+                        batch,
+                        skip_existing,
+                        session,
+                    ),
+                    progress_listener=progress_listener,
+                )
             )
-            step_results.append(self._run_matches(batch.id, skip_existing, session))
-            step_results.append(self._run_ratings(batch.id, skip_existing, session))
+            step_results.append(
+                self._run_step(
+                    generation_run_id=generation_run_id,
+                    batch=batch,
+                    step="matches",
+                    runner=lambda: self._run_matches(batch.id, skip_existing, session),
+                    progress_listener=progress_listener,
+                )
+            )
+            step_results.append(
+                self._run_step(
+                    generation_run_id=generation_run_id,
+                    batch=batch,
+                    step="ratings",
+                    runner=lambda: self._run_ratings(batch.id, skip_existing, session),
+                    progress_listener=progress_listener,
+                )
+            )
         except Exception as exc:
             self.control_plane.fail_monthly_batch(
                 batch.id,
@@ -220,6 +281,45 @@ class MonthlyGenerationPipeline:
             batch_month=batch.batch_month,
             step_results=tuple(step_results),
         )
+
+    def _run_step(
+        self,
+        *,
+        generation_run_id: int,
+        batch: MonthlyBatch,
+        step: str,
+        runner: Callable[[], PipelineStepResult],
+        progress_listener: Callable[[PipelineProgressEvent], None] | None,
+    ) -> PipelineStepResult:
+        _emit_progress(
+            generation_run_id=generation_run_id,
+            batch=batch,
+            step=step,
+            status="running",
+            details={},
+            progress_listener=progress_listener,
+        )
+        try:
+            result = runner()
+        except Exception as exc:
+            _emit_progress(
+                generation_run_id=generation_run_id,
+                batch=batch,
+                step=step,
+                status="failed",
+                details={"error_message": str(exc)},
+                progress_listener=progress_listener,
+            )
+            raise
+        _emit_progress(
+            generation_run_id=generation_run_id,
+            batch=batch,
+            step=step,
+            status="succeeded" if result.status in {"generated", "skipped"} else result.status,
+            details=result.details,
+            progress_listener=progress_listener,
+        )
+        return result
 
     def _run_players(
         self,
@@ -471,3 +571,25 @@ def _add_months(value: date, months: int) -> date:
 
 def _count(session: Session, statement) -> int:
     return int(session.scalar(statement) or 0)
+
+
+def _emit_progress(
+    generation_run_id: int,
+    batch: MonthlyBatch,
+    step: str,
+    status: str,
+    details: dict[str, Any],
+    progress_listener: Callable[[PipelineProgressEvent], None] | None,
+) -> None:
+    if progress_listener is None:
+        return
+    progress_listener(
+        PipelineProgressEvent(
+            generation_run_id=generation_run_id,
+            batch_id=batch.id,
+            batch_month=batch.batch_month,
+            step=step,
+            status=status,
+            details=details,
+        )
+    )
