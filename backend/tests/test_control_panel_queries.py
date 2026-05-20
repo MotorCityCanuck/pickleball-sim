@@ -593,3 +593,46 @@ def test_seed_readiness_ignores_stale_failed_raw_load_when_reference_data_is_rea
     assert snapshot.seed_data_summary.is_ready is True
     assert "The latest raw seed ingest failed." not in snapshot.seed_data_summary.readiness_blockers
     assert snapshot.seed_data_summary.latest_raw_loads[0].status == "failed"
+
+
+def test_seed_job_prefers_newer_succeeded_job_over_older_failed_job_without_started_at(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                completed_at, created_at, updated_at
+            ) VALUES (
+                301, 'raw_seed_ingest', 'raw-seed-ingest-301', 'failed', 'failed', 0.00,
+                'Cleared stale pending job before retest.',
+                '2026-05-20 12:06:48', '2026-05-20 12:06:48', CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                302, 'seed_normalization', 'seed-normalization-302', 'succeeded', 'completed', 100.00,
+                'Seed normalization completed for 4 datasets.',
+                '2026-05-20 20:33:49', '2026-05-20 20:38:59', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 20, 40, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.seed_data_summary.latest_seed_job is not None
+    assert snapshot.seed_data_summary.latest_seed_job.job_status_id == 302
+    assert snapshot.seed_data_summary.latest_seed_job.status == "succeeded"
+    assert snapshot.seed_data_summary.is_ready is True

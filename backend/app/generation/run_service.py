@@ -353,7 +353,7 @@ class GenerationRunService:
             pipeline_result = self.pipeline.run_months(
                 generation_run_id=generation_run.id,
                 months=month_count,
-                skip_existing=False,
+                skip_existing=True,
                 progress_listener=lambda event: self._record_progress_event(
                     session,
                     job_status=job_status,

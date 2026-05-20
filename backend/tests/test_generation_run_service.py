@@ -534,6 +534,30 @@ class FailingPipeline:
         raise RuntimeError("planned pipeline failure")
 
 
+class RecordingPipeline:
+    def __init__(self) -> None:
+        self.last_skip_existing = None
+
+    def run_months(
+        self,
+        *,
+        generation_run_id,
+        months,
+        start_batch_id=None,
+        player_count=None,
+        skip_existing=True,
+        progress_listener=None,
+        session=None,
+    ):
+        del generation_run_id, months, start_batch_id, player_count, progress_listener, session
+        self.last_skip_existing = skip_existing
+        return MultiMonthPipelineResult(
+            generation_run_id=1,
+            months_requested=1,
+            batch_results=(),
+        )
+
+
 def _seed_valid_config(session, *, seed=42, historical_months=2):
     lifecycle = ConfigurationLifecycleService()
     payload = {
@@ -710,3 +734,16 @@ def test_background_generation_run_persists_failed_status(session, monkeypatch):
     stage_rows = session.query(JobStageProgress).filter_by(job_status_id=job.id).all()
     assert stage_rows
     assert any(row.status == "failed" for row in stage_rows)
+
+
+def test_launch_generation_run_uses_skip_existing_for_successive_months(session):
+    _seed_valid_config(session, historical_months=2)
+    pipeline = RecordingPipeline()
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=pipeline,
+    )
+
+    service.launch_generation_run("skip existing run", session=session)
+
+    assert pipeline.last_skip_existing is True

@@ -1,3 +1,12 @@
+{% set generation_complete = (
+    snapshot.generation_run_summary
+    and snapshot.generation_run_summary.status == 'succeeded'
+    and snapshot.generation_run_summary.batch_count > 0
+    and snapshot.generation_run_summary.pending_batch_count == 0
+    and snapshot.generation_run_summary.running_batch_count == 0
+    and snapshot.generation_run_summary.failed_batch_count == 0
+) %}
+
 <section
     style="display:grid; gap:16px;"
     {% if (snapshot.seed_data_summary.latest_seed_job and snapshot.seed_data_summary.latest_seed_job.status in ('pending', 'running')) or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
@@ -297,4 +306,18 @@
     {% include "partials/control_run_status.html" %}
     {% include "partials/control_batch_table.html" %}
     {% include "partials/control_progress_bars.html" %}
+
+    {% if generation_complete %}
+        <script>
+            (() => {
+                const runId = "{{ snapshot.generation_run_summary.generation_run_id }}";
+                const key = `generation-complete-notified:${runId}`;
+                if (window.sessionStorage.getItem(key)) {
+                    return;
+                }
+                window.sessionStorage.setItem(key, "1");
+                window.alert("All monthly batches are complete.");
+            })();
+        </script>
+    {% endif %}
 </section>

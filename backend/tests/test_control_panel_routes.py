@@ -319,6 +319,79 @@ def _seed_snapshot_state(session_factory):
         session.close()
 
 
+def _seed_completed_generation_state(session_factory):
+    session = session_factory()
+    try:
+        lifecycle = ConfigurationLifecycleService()
+        lifecycle.save_new_version(
+            session,
+            title="Completed config",
+            notes=None,
+            payload={
+                "runtime": {},
+                "simulation": {
+                    "simulation_name": "Completed Route Test",
+                    "simulation_version": "v1",
+                    "master_seed": 11,
+                    "historical_batch_count": 2,
+                    "first_batch_month": "2026-01-01",
+                    "target_total_players": 1000,
+                },
+            },
+        )
+        _seed_ready_reference_data(session)
+        session.execute(
+            text(
+                """
+                INSERT INTO generation_runs (
+                    id, generation_name, seed_value, simulation_version, status, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    2, 'Completed UI run', 11, 'v1', 'succeeded', '2026-05-20 09:00:00', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO monthly_batches (
+                    id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+                ) VALUES
+                    (21, 2, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (22, 2, '2026-02-01', 2, 'historical_initial', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    2, 'generation_run', 'generation-run-2-test', 'succeeded', 'completed', 100.00, 'Generation run completed successfully.',
+                    '2026-05-20 09:00:00', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                    progress_current, progress_total, progress_unit, progress_percent, progress_message,
+                    created_at, updated_at
+                ) VALUES
+                    (201, 2, 2, 21, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, 'players succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (202, 2, 2, 22, 'matches', 4, 'succeeded', 1, 1, 'stage', 100.00, 'matches succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
 def _seed_idle_config_state(session_factory):
     session = session_factory()
     try:
@@ -565,6 +638,27 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
     assert 'hx-trigger="every 10s"' in orchestration.body.decode()
+
+
+def test_completed_generation_run_renders_completion_popup_script(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        orchestration = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = orchestration.body.decode()
+    assert orchestration.status_code == 200
+    assert "All monthly batches are complete." in body
+    assert 'const runId = "2"' in body
+    assert "generation-complete-notified:${runId}" in body
 
 
 def test_control_panel_config_validate_renders_validation_success(session_factory):

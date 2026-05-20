@@ -287,23 +287,35 @@ class ControlPanelQueries:
         *,
         generation_run_id: int,
     ) -> JobSummary | None:
+        job_sort_timestamp = func.coalesce(
+            JobStatus.started_at,
+            JobStatus.completed_at,
+            JobStatus.created_at,
+        )
+        job_ids_for_run = (
+            select(JobStageProgress.job_status_id)
+            .where(JobStageProgress.generation_run_id == generation_run_id)
+            .distinct()
+        )
         statement = (
-                select(JobStatus)
-                .join(JobStageProgress, JobStageProgress.job_status_id == JobStatus.id)
-                .where(JobStageProgress.generation_run_id == generation_run_id)
-                .distinct()
-                .order_by(
-                    case((JobStatus.status == "running", 0), else_=1),
-                    case((JobStatus.status == "pending", 1), else_=2),
-                    JobStatus.started_at.desc(),
-                    JobStatus.created_at.desc(),
-                    JobStatus.id.desc(),
-                )
-                .limit(1)
+            select(JobStatus)
+            .where(JobStatus.id.in_(job_ids_for_run))
+            .order_by(
+                case((JobStatus.status == "running", 0), else_=1),
+                case((JobStatus.status == "pending", 1), else_=2),
+                job_sort_timestamp.desc(),
+                JobStatus.id.desc(),
+            )
+            .limit(1)
         )
         return _job_summary(session.scalar(statement))
 
     def get_seed_job(self, session: Session) -> JobSummary | None:
+        job_sort_timestamp = func.coalesce(
+            JobStatus.started_at,
+            JobStatus.completed_at,
+            JobStatus.created_at,
+        )
         return _job_summary(
             session.scalar(
                 select(JobStatus)
@@ -311,8 +323,7 @@ class ControlPanelQueries:
                 .order_by(
                     case((JobStatus.status == "running", 0), else_=1),
                     case((JobStatus.status == "pending", 1), else_=2),
-                    JobStatus.started_at.desc(),
-                    JobStatus.created_at.desc(),
+                    job_sort_timestamp.desc(),
                     JobStatus.id.desc(),
                 )
                 .limit(1)
