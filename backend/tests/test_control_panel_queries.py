@@ -455,3 +455,45 @@ def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(ses
         "Seed/reference data must be prepared before synthetic generation can start."
         in snapshot.allowed_actions.start_generation_blockers
     )
+
+
+def test_get_control_panel_snapshot_includes_seed_job_stage_progress(session):
+    _seed_valid_config(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, created_at, updated_at
+            ) VALUES (
+                200, 'seed_refresh', 'seed-refresh-200', 'running', 'seed_normalization', 50.00,
+                'Normalizing staged seed datasets into reference tables.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, metadata_json, started_at, completed_at, created_at, updated_at
+            ) VALUES
+                (2000, 200, NULL, NULL, 'raw_seed_ingest', 1, 'succeeded', 6, 6, 'dataset', 100.00, '2026-05-20 09:10:00', 'Loaded 6 raw seed datasets.', '{"completed_datasets": 6}', '2026-05-20 09:00:00', '2026-05-20 09:10:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (2001, 200, NULL, NULL, 'seed_normalization', 2, 'running', 2, 4, 'dataset', 50.00, '2026-05-20 09:12:00', 'Normalizing last_names (3/4)', '{"completed_datasets": 2}', '2026-05-20 09:10:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(now_fn=lambda: datetime(2026, 5, 20, 9, 13, 0)).get_control_panel_snapshot(session)
+
+    assert snapshot.seed_data_summary.latest_seed_job is not None
+    assert snapshot.seed_data_summary.latest_seed_job.job_type == "seed_refresh"
+    assert len(snapshot.seed_data_summary.latest_seed_stage_progress) == 2
+    assert snapshot.seed_data_summary.latest_seed_stage_progress[0].stage_name == "raw_seed_ingest"
+    assert snapshot.seed_data_summary.latest_seed_stage_progress[0].completion_message == "Datasets completed: 6"
+    assert snapshot.seed_data_summary.latest_seed_stage_progress[1].stage_name == "seed_normalization"
+    assert snapshot.seed_data_summary.latest_seed_stage_progress[1].progress_percent == 50

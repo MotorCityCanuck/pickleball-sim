@@ -92,6 +92,7 @@ class SeedDataSummary:
     readiness_label: str
     readiness_blockers: tuple[str, ...]
     latest_seed_job: JobSummary | None
+    latest_seed_stage_progress: tuple[StageProgressSummary, ...]
     latest_raw_loads: tuple[SeedLoadRunSummary, ...]
     regions_count: int
     clubs_count: int
@@ -307,12 +308,64 @@ class ControlPanelQueries:
             )
         )
 
+    def get_seed_job_progress(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+    ) -> tuple[StageProgressSummary, ...]:
+        rows = list(
+            session.scalars(
+                select(JobStageProgress)
+                .where(
+                    JobStageProgress.job_status_id == job_status_id,
+                    JobStageProgress.generation_run_id.is_(None),
+                )
+                .order_by(
+                    JobStageProgress.stage_sequence.asc(),
+                    JobStageProgress.id.asc(),
+                )
+            )
+        )
+        now = self.now_fn()
+        return tuple(
+            StageProgressSummary(
+                stage_name=row.stage_name,
+                stage_sequence=_coerce_int(row.stage_sequence),
+                status=row.status,
+                progress_current=_coerce_int(row.progress_current, default=0) or 0,
+                progress_total=_coerce_int(row.progress_total),
+                progress_percent=row.progress_percent,
+                progress_unit=row.progress_unit,
+                progress_message=row.progress_message,
+                completion_message=_completion_message(
+                    row.status,
+                    _coerce_mapping(row.metadata_json),
+                ),
+                last_heartbeat_at=row.last_heartbeat_at,
+                started_at=row.started_at,
+                completed_at=row.completed_at,
+                error_message=row.error_message,
+                is_stale=self._is_stale(
+                    status=row.status,
+                    last_heartbeat_at=row.last_heartbeat_at,
+                    now=now,
+                ),
+            )
+            for row in rows
+        )
+
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
         regions_count = int(session.scalar(select(func.count()).select_from(Region)) or 0)
         clubs_count = int(session.scalar(select(func.count()).select_from(Club)) or 0)
         first_names_count = int(session.scalar(select(func.count()).select_from(FirstName)) or 0)
         last_names_count = int(session.scalar(select(func.count()).select_from(LastName)) or 0)
         latest_seed_job = self.get_seed_job(session)
+        latest_seed_stage_progress = (
+            self.get_seed_job_progress(session, job_status_id=latest_seed_job.job_status_id)
+            if latest_seed_job is not None
+            else ()
+        )
         latest_raw_loads = tuple(
             SeedLoadRunSummary(
                 load_run_id=load.id,
@@ -351,6 +404,7 @@ class ControlPanelQueries:
             readiness_label="Ready" if not blockers else "Blocked",
             readiness_blockers=tuple(blockers),
             latest_seed_job=latest_seed_job,
+            latest_seed_stage_progress=latest_seed_stage_progress,
             latest_raw_loads=latest_raw_loads,
             regions_count=regions_count,
             clubs_count=clubs_count,
@@ -508,6 +562,8 @@ class ControlPanelQueries:
         active_job: JobSummary | None,
     ) -> AllowedActions:
         seed_blockers: list[str] = []
+        if config_summary is None:
+            seed_blockers.append("A single valid configuration is required.")
         if generation_run is not None and generation_run.status == "running":
             seed_blockers.append("Seed preparation cannot run while a generation run is running.")
         if active_job is not None and active_job.status == "running":
@@ -714,6 +770,7 @@ def _completion_message(status: str, details: dict[str, object]) -> str | None:
 
     row_count = _first_int(
         details,
+        "completed_datasets",
         "rows_loaded",
         "membership_rows_loaded",
         "match_count",
@@ -738,6 +795,8 @@ def _first_int(details: dict[str, object], *keys: str) -> int | None:
 
 
 def _first_label(details: dict[str, object]) -> str:
+    if "completed_datasets" in details:
+        return "Datasets completed"
     if "rows_loaded" in details or "membership_rows_loaded" in details:
         return "Rows created"
     if "match_count" in details:

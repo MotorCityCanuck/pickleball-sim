@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core import ConfigurationLifecycleService, diff_config_payloads
 from app.db.session import get_session
-from app.generation import GenerationRunService
+from app.generation import GenerationRunService, SeedRefreshService
 
 from .control_panel_queries import (
     ConfigEditorState,
@@ -44,6 +44,11 @@ def get_configuration_lifecycle() -> ConfigurationLifecycleService:
 def get_generation_run_service() -> GenerationRunService:
     """Return the generation run service."""
     return GenerationRunService()
+
+
+def get_seed_refresh_service() -> SeedRefreshService:
+    """Return the seed refresh service."""
+    return SeedRefreshService()
 
 
 def build_control_panel_router() -> APIRouter:
@@ -155,9 +160,59 @@ def build_control_panel_router() -> APIRouter:
             "partials/control_orchestration_tab.html",
             {
                 "snapshot": snapshot,
+                "seed_launch_message": None,
+                "seed_launch_error": None,
                 "launch_message": None,
                 "launch_error": None,
             },
+        )
+
+    @router.post("/control/seed/load", response_class=HTMLResponse)
+    def control_panel_seed_load_start(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+    ) -> HTMLResponse:
+        return _run_seed_action(
+            request,
+            session=session,
+            queries=queries,
+            seed_service=seed_service,
+            action="load",
+            templates=templates,
+        )
+
+    @router.post("/control/seed/normalize", response_class=HTMLResponse)
+    def control_panel_seed_normalize_start(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+    ) -> HTMLResponse:
+        return _run_seed_action(
+            request,
+            session=session,
+            queries=queries,
+            seed_service=seed_service,
+            action="normalize",
+            templates=templates,
+        )
+
+    @router.post("/control/seed/refresh", response_class=HTMLResponse)
+    def control_panel_seed_refresh_start(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
+    ) -> HTMLResponse:
+        return _run_seed_action(
+            request,
+            session=session,
+            queries=queries,
+            seed_service=seed_service,
+            action="refresh",
+            templates=templates,
         )
 
     @router.post("/control/generation/start", response_class=HTMLResponse)
@@ -198,6 +253,8 @@ def build_control_panel_router() -> APIRouter:
             "partials/control_orchestration_tab.html",
             {
                 "snapshot": snapshot,
+                "seed_launch_message": None,
+                "seed_launch_error": None,
                 "launch_message": launch_message,
                 "launch_error": launch_error,
             },
@@ -379,6 +436,66 @@ def _config_context(
         change_count=0,
     )
     return refreshed_snapshot, refreshed_editor
+
+
+def _run_seed_action(
+    request: Request,
+    *,
+    session: Session,
+    queries: ControlPanelQueries,
+    seed_service: SeedRefreshService,
+    action: str,
+    templates: Jinja2Templates,
+) -> HTMLResponse:
+    snapshot = queries.get_control_panel_snapshot(session)
+    seed_launch_message = None
+    seed_launch_error = None
+
+    if not snapshot.allowed_actions.can_start_seed_refresh:
+        seed_launch_error = (
+            snapshot.allowed_actions.seed_refresh_blockers[0]
+            if snapshot.allowed_actions.seed_refresh_blockers
+            else "Seed preparation cannot be started."
+        )
+    else:
+        try:
+            if action == "load":
+                result = seed_service.load_raw_seed_data(session=session)
+                seed_launch_message = (
+                    "Raw seed ingest completed successfully for "
+                    f"{len(result.raw_load_results)} datasets."
+                )
+            elif action == "normalize":
+                result = seed_service.normalize_seed_data(session=session)
+                seed_launch_message = (
+                    "Seed normalization completed successfully for "
+                    f"{len(result.normalize_results)} datasets."
+                )
+            else:
+                result = seed_service.refresh_seed_data(session=session)
+                seed_launch_message = (
+                    "Full seed refresh completed successfully: "
+                    f"{len(result.raw_load_results)} ingested, "
+                    f"{len(result.normalize_results)} normalized."
+                )
+            session.commit()
+            snapshot = queries.get_control_panel_snapshot(session)
+        except Exception as exc:
+            session.rollback()
+            snapshot = queries.get_control_panel_snapshot(session)
+            seed_launch_error = str(exc)
+
+    return templates.TemplateResponse(
+        request,
+        "partials/control_orchestration_tab.html",
+        {
+            "snapshot": snapshot,
+            "seed_launch_message": seed_launch_message,
+            "seed_launch_error": seed_launch_error,
+            "launch_message": None,
+            "launch_error": None,
+        },
+    )
 
 
 def _parse_payload_json(

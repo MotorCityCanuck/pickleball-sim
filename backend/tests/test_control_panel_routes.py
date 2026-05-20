@@ -416,6 +416,33 @@ class FakeGenerationRunService:
         return object()
 
 
+class FakeSeedRefreshService:
+    def __init__(self, *, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    def load_raw_seed_data(self, *, session=None):
+        del session
+        self.calls.append("load")
+        if self.error is not None:
+            raise ValueError(self.error)
+        return type("Result", (), {"raw_load_results": (1, 2), "normalize_results": ()})()
+
+    def normalize_seed_data(self, *, session=None):
+        del session
+        self.calls.append("normalize")
+        if self.error is not None:
+            raise ValueError(self.error)
+        return type("Result", (), {"raw_load_results": (), "normalize_results": (1, 2, 3)})()
+
+    def refresh_seed_data(self, *, session=None):
+        del session
+        self.calls.append("refresh")
+        if self.error is not None:
+            raise ValueError(self.error)
+        return type("Result", (), {"raw_load_results": (1, 2), "normalize_results": (1, 2, 3)})()
+
+
 def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     _seed_snapshot_state(session_factory)
     app = create_app()
@@ -486,6 +513,9 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
+    assert 'hx-post="/control/seed/load"' in orchestration.body.decode()
+    assert 'hx-post="/control/seed/normalize"' in orchestration.body.decode()
+    assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/run-status"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/batch-table"' in orchestration.body.decode()
 
@@ -597,6 +627,50 @@ def test_control_panel_generation_start_requires_destructive_confirmation(sessio
     assert response.status_code == 200
     assert "Destructive reset confirmation is required before starting a generation run." in body
     assert fake_service.calls == []
+
+
+def test_control_panel_seed_refresh_launches_when_allowed(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeSeedRefreshService()
+    try:
+        response = routes["/control/seed/refresh"](
+            request=_request("/control/seed/refresh", method="POST"),
+            session=session,
+            queries=ControlPanelQueries(),
+            seed_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Full seed refresh completed successfully" in body
+    assert fake_service.calls == ["refresh"]
+
+
+def test_control_panel_seed_refresh_surfaces_service_failure(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeSeedRefreshService(error="seed refresh failed")
+    try:
+        response = routes["/control/seed/normalize"](
+            request=_request("/control/seed/normalize", method="POST"),
+            session=session,
+            queries=ControlPanelQueries(),
+            seed_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "seed refresh failed" in body
+    assert fake_service.calls == ["normalize"]
 
 
 def test_control_panel_generation_start_launches_run_when_allowed(session_factory):

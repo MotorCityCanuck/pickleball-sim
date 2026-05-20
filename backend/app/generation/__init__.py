@@ -12,6 +12,7 @@ from .monthly_pipeline import (
 )
 from .orchestrator import GenerationOrchestrator, InitialGenerationPlan
 from .run_service import GenerationRunLaunchResult, GenerationRunService
+from .seed_refresh_service import SeedRefreshResult, SeedRefreshService
 
 __all__ = [
     "GenerationControlPlane",
@@ -26,4 +27,6 @@ __all__ = [
     "PIPELINE_STEPS",
     "PipelineProgressEvent",
     "PipelineStepResult",
+    "SeedRefreshResult",
+    "SeedRefreshService",
 ]

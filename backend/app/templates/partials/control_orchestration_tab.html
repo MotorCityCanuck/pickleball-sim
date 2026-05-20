@@ -66,17 +66,77 @@
             </div>
         </div>
 
+        {% if seed_launch_message %}
+            <div style="margin-top:12px; border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                {{ seed_launch_message }}
+            </div>
+        {% endif %}
+        {% if seed_launch_error %}
+            <div style="margin-top:12px; border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                {{ seed_launch_error }}
+            </div>
+        {% endif %}
+
         <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
-            <button disabled style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+            <button
+                hx-post="/control/seed/load"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+                {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
+                style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            >
                 Load Raw Seed Data
             </button>
-            <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+            <button
+                hx-post="/control/seed/normalize"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+                {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
+                style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            >
                 Normalize Seed Data
             </button>
-            <button disabled style="border:1px solid #d6d9df; background:#f4f6fa; color:#5a6477; border-radius:8px; padding:10px 14px; opacity:0.75; cursor:not-allowed;">
+            <button
+                hx-post="/control/seed/refresh"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+                {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
+                style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            >
                 Refresh Full Seed Dataset
             </button>
         </div>
+
+        {% if snapshot.seed_data_summary.latest_seed_stage_progress %}
+            <div style="margin-top:16px; display:grid; gap:10px;">
+                {% for stage in snapshot.seed_data_summary.latest_seed_stage_progress %}
+                    <div>
+                        <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+                            <span>{{ stage.stage_name }}</span>
+                            <span>
+                                {{ stage.status }}
+                                {% if stage.progress_percent is not none %}
+                                    | {{ stage.progress_percent }}%
+                                {% endif %}
+                                {% if stage.is_stale %}
+                                    | stale
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                            <div
+                                style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
+                            ></div>
+                        </div>
+                        {% if stage.completion_message or stage.progress_message %}
+                            <div style="margin-top:4px; color:#5a6477; font-size:12px;">
+                                {{ stage.completion_message or stage.progress_message }}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
 
         {% if snapshot.seed_data_summary.latest_raw_loads %}
             <div style="margin-top:16px; overflow:auto;">
