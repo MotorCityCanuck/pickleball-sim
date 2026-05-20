@@ -28,9 +28,10 @@ The first implementation should stay intentionally narrow.
 - Configuration validation before saving a new version.
 - Immutable configuration version creation.
 - Raw ingest and seed normalization job launch actions.
-- Generation plan creation action.
-- Monthly pipeline launch action.
-- Coarse progress updates at job, batch, and stage level.
+- Full generation preview action derived from the current valid configuration.
+- Full destructive generation run launch action.
+- Student-facing parquet release generation as the final workload stage.
+- Stage-level progress bars with persisted progress snapshots and heartbeat freshness.
 - Guardrails that prevent obviously unsafe operations.
 - Development and production environment visibility in the page header.
 
@@ -69,11 +70,10 @@ Use a single server-rendered page:
 /control
 ```
 
-The page should have three primary tabs:
+The page should have two primary tabs:
 
 1. Configuration Control
 2. Workload Orchestration
-3. Student Dataset Generation
 
 Recommended secondary layout:
 
@@ -87,7 +87,6 @@ Header
 Tabs
 - Configuration Control
 - Workload Orchestration
-- Student Dataset Generation
 
 Persistent Status Bar
 - Latest job status
@@ -149,18 +148,73 @@ The Configuration Control tab should edit and version the full generation config
 - `configuration_profiles`
 - `configuration_profile_versions`
 
-Configuration edits should create new immutable profile versions. A generation run must freeze its selected configuration into `generation_runs.parameter_snapshot` before any workload starts.
+Configuration edits should create new immutable profile versions. There should
+be exactly one current valid configuration set. A generation run must freeze
+that selected configuration into `generation_runs.parameter_snapshot` before
+any workload starts.
+
+### Configuration Storage Model
+
+Configuration versions should be stored as immutable validated JSON/JSONB
+payloads with structured relational lifecycle metadata. The system should not
+fully normalize every configuration parameter into separate database tables for
+the first implementation.
+
+Recommended storage shape:
+
+```text
+configuration_profile_versions
+- id
+- profile_id
+- version_number
+- title
+- notes
+- lifecycle_status
+- created_at
+- created_by
+- last_used_at
+- deprecated_at
+- config_schema_version
+- config_hash
+- config_payload
+```
+
+The `config_payload` field contains the full generation configuration. Individual
+configuration parameters are keys inside that payload, not columns on
+`configuration_profile_versions`.
+
+JSON/JSONB storage is acceptable only when paired with typed validation. The
+backend configuration models should parse and validate the payload before it can
+be saved. Arbitrary unvalidated JSON should never become a saved valid
+configuration version.
+
+This approach keeps the database manageable while preserving:
+
+- schema validation
+- immutable version snapshots
+- configuration diffing
+- lifecycle management
+- generation reproducibility
+- future schema migration flexibility
+
+Relational columns should be reserved for lifecycle, identity, audit,
+reproducibility, and orchestration fields. Nested simulation parameters,
+probability distributions, thresholds, data quality settings, and export options
+should remain inside the validated payload.
 
 ### Required Capabilities
 
-- Select active configuration profile.
-- View latest valid version.
-- View older versions.
-- Create a new version from an existing version.
+- Load the current valid configuration by default.
+- View the current valid version.
+- Create a new immutable version from the edited working copy.
 - Edit configuration groups through generated forms.
 - Validate edits before saving.
-- Mark a version as valid or invalid.
-- Start a generation run from a selected version only when all configuration items are valid.
+- Require a brief user-provided title before saving a new version.
+- Assign version numbers automatically when a validated configuration is saved.
+- Track when each saved version was created, last used, and deprecated.
+- Automatically deprecate the prior valid version when a new version is saved.
+- Start a generation run only from the single current valid configuration version.
+- Require changes to seed, first generated month, generated month count, player scale, or other generation settings to be made through a new valid configuration version.
 - Provide a generation run start time and progressing duration indicator.
 - Show field-level changes compared with the previous version.
 
@@ -223,35 +277,69 @@ Use appropriate controls:
 - Text inputs for names and versions.
 - Read-only display for computed or deprecated values.
 
-### Configuration Version States
+### Configuration Version Lifecycle
 
-Configuration versions should use explicit states.
+The first implementation should avoid a complex configuration state machine.
+The edit panel should operate on an unsaved working copy until the operator
+validates and saves it.
 
-Recommended states:
+Default behavior:
 
 ```text
-draft
-validated
-valid
-invalid
-deprecated
-archived
+Load current valid configuration
+        ↓
+Operator edits fields
+        ↓
+Validate Configuration
+        ↓
+If validation passes, show Save New Version
+        ↓
+Operator provides a short title
+        ↓
+System saves an immutable version number
+        ↓
+New version becomes valid and prior valid version becomes deprecated
 ```
 
-Definitions:
+Important distinctions:
 
-- `draft`: A candidate configuration payload that has not yet passed validation.
-- `validated`: A candidate version has passed validation but has not been promoted for use.
-- `valid`: Approved for generation runs.
-- `invalid`: Failed validation or manually marked unusable.
-- `deprecated`: Previously valid but no longer recommended.
-- `archived`: Retained for history but hidden from normal selectors.
+- Unsaved edits are not configuration versions.
+- Saved versions are immutable.
+- A saved version must have passed validation before it is created.
+- Exactly one saved version should have lifecycle status `valid`.
+- Prior saved versions should have lifecycle status `deprecated`.
+- Deprecated versions are retained in the database for audit/history but hidden
+  from the normal UI and not eligible for generation.
+- Runtime generation settings such as seed, first generated month, generated
+  month count, and player scale come from the current valid configuration. The
+  workload orchestration panel should display these values but should not expose
+  one-off overrides.
 
-Only `valid` configuration versions should be eligible for generation run creation.
+Recommended lifecycle metadata for saved versions:
+
+- `version_number`: assigned by the system, increasing within each profile.
+- `title`: required short user-provided title.
+- `description` or `notes`: optional longer explanation.
+- `created_at`: when the immutable version was saved.
+- `created_by`: optional for the first implementation.
+- `last_used_at`: most recent time the version was used to create or start a generation run.
+- `deprecated_at`: when the version was replaced by a newer valid version.
+- `lifecycle_status`: `valid` or `deprecated`.
+
+For the first implementation, only validated configurations should be saved as
+versions. Validation failure should not create a database version. Saving a new
+version should be transactional: insert the new valid version and deprecate the
+prior valid version in the same operation.
+
+The ORM and database schema will be updated during the build process to support
+this simplified lifecycle. Expected updates include adding a version title,
+optional notes, `last_used_at`, `deprecated_at`, renaming or replacing
+`validation_status` with a lifecycle field, and enforcing exactly one valid
+configuration version.
 
 ### Validation
 
-Configuration validation should run before a new version can become valid.
+Configuration validation should run before a new version can be saved.
 
 Validation should check:
 
@@ -268,19 +356,26 @@ Validation should check:
 
 Validation results should be shown inline next to the affected field and also in a summary panel.
 
+If the operator changes any field after validation succeeds, the UI should
+invalidate the validation result and return to the `Validate Configuration`
+action. The `Save New Version` action should only be available for the exact
+payload that passed validation.
+
 ### Save Behavior
 
 Do not mutate existing profile-version payloads.
 
 Recommended save flow:
 
-1. User edits draft values in the generated form.
-2. User clicks `Validate`.
+1. UI loads the current valid configuration into an editable working copy.
+2. User edits values in the generated form.
 3. Server validates and returns inline errors/warnings.
-4. If valid, user clicks `Save New Version`.
-5. Server inserts a new `configuration_profile_versions` row.
-6. UI updates active version selector and version history.
-7. UI shows a version-to-version change summary.
+4. If valid, UI enables `Save New Version`.
+5. User provides a required short title and optional notes.
+6. Server inserts a new immutable `configuration_profile_versions` row and assigns the next version number.
+7. Server marks the previous valid version as deprecated in the same transaction.
+8. UI updates the current version display.
+9. UI shows a version-to-version change summary.
 
 ### Configuration Diffing
 
@@ -297,16 +392,38 @@ This is important for debugging, reproducibility, and explaining why simulation 
 
 ## Tab 2: Workload Orchestration
 
-The Workload Orchestration tab should control two major stages:
+The Workload Orchestration tab should control three major stages:
 
 1. Raw Data Ingest and Seed Data Generation
-2. Workflow Control and Status
+2. Simulation Workflow Control and Status
+3. Student Dataset Release Generation
 
-Student-facing parquet dataset generation is intentionally managed in a separate
-Student Dataset Generation tab because it is a publication/export workflow, not
-a core simulation execution workflow.
+Student-facing parquet dataset generation is intentionally managed as the final
+stage in the Workload Orchestration tab. It is a publication/export workflow,
+not a core simulation execution workflow, and it must occur only after the clean
+simulation pipeline and validation prerequisites are complete.
 
 These stages should be visible as separate panels inside the same tab.
+
+### Simplified Operational Contract
+
+The Version 1 control panel should deliberately avoid becoming a general
+orchestration system.
+
+- There is exactly one current valid configuration version.
+- Saving a new configuration version automatically deprecates the prior valid version.
+- Seed/reference data is treated as fixed operational input for Version 1.
+- Seed/reference data changes only through an explicit raw ingest and seed
+  normalization workflow.
+- Only the web control panel may start a generation run.
+- A generation run may start only from the current valid configuration version.
+- Only one generation run may be `running` at a time.
+- Every generation run starts from the beginning.
+- Every generation run is destructive to generated domain data.
+- Generation runs must not delete seed/reference data or saved configuration versions.
+- Failed generation runs are not resumable from a midpoint.
+- Retrying after failure requires a new full destructive generation run.
+- Student dataset releases may use only the current generation run after it has `succeeded`.
 
 ## Stage 1: Raw Data Ingest And Seed Data Generation
 
@@ -315,6 +432,11 @@ This stage prepares the reference data needed by generation jobs.
 - This stage can run independently of the data generation pipeline.
 - This stage must not run when the data generation pipeline is active.
 - This stage should be blocked when another write-heavy seed preparation job is already running.
+- Version 1 should treat normalized seed/reference data as fixed operational
+  input once prepared. The system does not need seed dataset version lineage for
+  the first implementation.
+- Changing seed/reference data requires running the explicit raw ingest and seed
+  normalization workflow again.
 
 Existing command equivalents:
 
@@ -366,57 +488,145 @@ Before simulation workflows can run, show readiness checks:
 - Last names loaded.
 - Clubs loaded.
 - State/province bias data loaded where expected.
-- Default configuration profile exists and has a valid version.
+- Exactly one current valid configuration version exists.
 - Required raw datasets have successful load and normalization history.
 
 Use this panel to prevent generation runs from starting against incomplete reference data.
 
-## Stage 2: Workflow Control And Status
+### Seed Data Versioning Position
 
-This stage creates generation plans and runs monthly generation.
+Seed dataset version lineage is a future enhancement. The seed datasets are
+large and difficult to persist as historical versions, so Version 1 should not
+attempt to snapshot or version seed/reference data for every generation run.
 
-Existing command equivalents:
+For Version 1:
 
-- `backend/scripts/create_generation_plan.py`
-- `backend/scripts/run_monthly_pipeline.py`
+- Treat normalized seed/reference data as fixed operational input.
+- Allow seed/reference changes only through explicit raw ingest and seed
+  normalization actions.
+- Preserve seed/reference data when a destructive generation run starts.
+- Do not expose seed version selection in the UI.
+- Do not attempt to replay historical generation runs against old seed data.
 
-### Generation Plan Controls
+If seed/reference data changes, subsequent generation runs use the currently
+loaded seed/reference data. Reproducibility for Version 1 is primarily based on
+the saved configuration snapshot and the current prepared seed/reference state.
+
+## Stage 2: Simulation Workflow Control And Status
+
+This stage starts full generation runs and displays generation progress.
+Generation starts are deliberately narrow in Version 1: only the web control
+panel may kick off a generation run, every run starts from the beginning, and
+every run is destructive to generated data.
+
+There should be no operator-facing generation plan concept in Version 1. The
+current valid configuration is the plan. The preview shown before launch should
+be derived from that configuration and should not create a separate persistent
+plan object.
+
+The generation service should own the full run lifecycle:
+
+```text
+validate current configuration
+        ↓
+create generation run record
+        ↓
+freeze parameter_snapshot
+        ↓
+destructively reset generated data
+        ↓
+create monthly batch records
+        ↓
+execute generation stages from the beginning
+        ↓
+mark generation run succeeded or failed
+```
+
+Web routes should call this service and poll job status. They should not contain
+their own independent lifecycle logic.
+
+### Full Generation Run Controls
 
 Inputs:
 
 - Generation name.
-- Configuration profile.
-- Configuration version.
-- Seed value.
-- First batch month.
-- Historical month count.
-- Initial player count override.
+- Current valid configuration version, display only.
+- Seed value from the current valid configuration, display only.
+- First generated month from the current valid configuration, display only.
+- Generated month count from the current valid configuration, display only.
+- Player scale or target player count from the current valid configuration, display only.
+- Destructive run confirmation.
 
 Actions:
 
-- Create generation plan.
-- Preview planned monthly batches.
-- Start selected plan.
+- Preview full generation run.
+- Start full generation run.
 
-### Monthly Pipeline Controls
+Generation start rules:
 
-Inputs:
+- A run may start only when the current configuration version is valid.
+- A run may start only when no generation run is currently `running`.
+- A run must use seed, first generated month, generated month count, player scale,
+  and all other runtime generation settings from the current valid configuration.
+- The workflow orchestration UI must not allow one-off overrides for generation
+  settings. If a different value is needed, the operator must save a new valid
+  configuration version first.
+- A run must delete and rebuild generated domain data.
+- A run must not delete seed/reference data or saved configuration versions.
+- A run must freeze the current valid configuration into `generation_runs.parameter_snapshot`.
+- A failed generation run cannot resume from a midpoint. A retry must create a new full destructive run from the beginning.
 
-- Generation run.
-- Start batch.
-- Month count, capped at `12`.
-- Player count override.
-- Skip existing stages.
-- Fail on existing stages.
+Generated data reset should delete generated-domain and run-specific data in a
+defined dependency order. It should not reset raw seed data, normalized
+seed/reference tables, saved configuration versions, or system configuration.
 
-Actions:
+Required destructive delete order:
 
-- Run one month.
-- Run up to twelve successive months.
-- Resume from selected batch.
-- Stop/cancel requested job, when job cancellation is implemented.
+```text
+1. job_stage_progress
+2. student_dataset_release_files
+3. student_dataset_releases
+4. validation_results
+5. export_runs
+6. batch_runs
+7. ratings_update_log
+8. player_rating_history
+9. player_assessment_history
+10. match_team_players
+11. match_games
+12. match_teams
+13. matches
+14. team_memberships
+15. teams
+16. club_memberships
+17. player_registrations
+18. players
+19. tournaments
+20. monthly_batches
+```
 
-Pipeline stages shown per batch:
+Preserved tables:
+
+```text
+configuration_profiles
+configuration_profile_versions
+generation_runs
+job_status
+uploaded_files
+regions
+first_names
+last_names
+clubs
+```
+
+`generation_runs` and `job_status` should be preserved as operational
+audit/control records. The current generation run is the latest run created by
+the generation service, not any older succeeded run whose generated data has
+already been reset.
+
+### Generation Progress Display
+
+Implemented generation stages shown per batch:
 
 ```text
 players
@@ -424,23 +634,66 @@ club_memberships
 teams
 matches
 ratings
-validation
-export
 ```
 
-The current implementation supports the first five stages. Validation and export should appear as planned/disabled stages until implemented.
+For Version 1, a generation run may become `succeeded` when the implemented
+generation stages complete successfully. Future validation and student release
+steps must not be treated as required generation completion criteria.
 
-## Tab 3: Student Dataset Generation
+Future post-generation workflow steps may be shown as disabled or planned items:
 
-The Student Dataset Generation tab should manage creation of student-facing parquet
-dataset releases from the clean, validated simulation database.
+```text
+validation
+student_dataset_release
+```
 
-This tab should be treated as a controlled export and publication workflow, not
-as part of the core simulation generation pipeline.
+These planned items should be visually distinct from incomplete or failed
+implemented stages. The UI should label them as `not implemented` or `planned`,
+not `incomplete`.
+
+Each implemented stage should have its own progress bar. The progress bar should
+be driven by persisted progress metadata, not by client-side timers or inferred
+elapsed time.
+
+Recommended per-stage display:
+
+```text
+Stage: matches
+Status: running
+Progress: 425,000 / 1,800,000 matches
+Percent: 23.6%
+Last update: 42 seconds ago
+Message: Simulating matches for 2027-04
+```
+
+Progress bars should support these states:
+
+- `not_started`: empty bar.
+- `running` with known total: determinate progress bar.
+- `running` with unknown total: indeterminate bar plus processed count and
+  heartbeat age.
+- `succeeded`: full bar with final count summary.
+- `failed`: failed bar state with error summary.
+
+Long-running stages must persist progress periodically during execution. A stage
+should update progress every configured row-count interval, object-count
+interval, or elapsed-time interval, whichever comes first. The UI should show a
+stale warning when the latest heartbeat is older than the configured threshold,
+but stale progress should be treated as an operational warning rather than an
+automatic failure.
+
+## Stage 3: Student Dataset Release Generation
+
+The Student Dataset Release Generation stage should manage creation of
+student-facing parquet dataset releases from the clean, validated simulation
+database.
+
+This stage should be treated as a controlled export and publication workflow,
+not as part of the core simulation generation pipeline.
 
 ### Purpose
 
-The purpose of this tab is to allow the instructor/operator to generate
+The purpose of this stage is to allow the instructor/operator to generate
 student-facing analytical datasets while concealing internal simulation details.
 
 The exported parquet datasets should support:
@@ -492,9 +745,33 @@ Write instructor-only manifest
 The data quality injection step should operate only on export dataframes and
 parquet outputs. It must not mutate the authoritative database.
 
+### Release Readiness Requirements
+
+Student dataset release generation must be blocked unless all release
+readiness requirements pass.
+
+Required readiness checks:
+
+- The source generation run is the current generation run.
+- The source generation run has `status = succeeded`.
+- All monthly batches in the selected release scope have `processing_status = succeeded`.
+- No generation, seed ingest, seed normalization, or other write-heavy job is running.
+- Seed/reference readiness checks pass.
+- The student-facing table and column projection inventory is complete.
+- Every included table has every exported column classified.
+- No unclassified table or column is allowed in the release.
+- Protected-field scan passes before parquet writing.
+- Hidden rating, generator configuration, seed, operational metadata, and job/log fields are absent from projected export dataframes.
+- Referential integrity checks pass for the projected student-facing tables.
+- No validation blockers are present.
+
+If any readiness check fails, the UI should disable release generation and show
+the blocking reason. Readiness validation should run before data quality
+injection and before writing parquet files.
+
 ### Release Types
 
-The tab should support two release types:
+The stage should support two release types:
 
 1. Historical baseline release
 2. Monthly incremental release
@@ -537,6 +814,54 @@ This release is used for:
 - updated predictions
 - operational analytics simulation
 
+### Release Tracking Model
+
+Student dataset generation should have a release-level database entity. This is
+still the final stage inside Workload Orchestration; it is not a separate
+top-level tab. The release entity exists so the system can track a coherent
+student release package across multiple parquet files, validation steps, data
+quality injection, and manifest generation.
+
+`export_runs` should remain lower-level export/file tracking. It should not be
+overloaded as the operator-facing student release record.
+
+Recommended new ORM/database tables for the build process:
+
+```text
+student_dataset_releases
+student_dataset_release_files
+```
+
+Recommended `student_dataset_releases` fields:
+
+- `id`
+- `release_name`
+- `release_type`: `historical_baseline` or `monthly_incremental`
+- `release_month`
+- `generation_run_id`
+- `data_quality_level`
+- `output_path`
+- `status`: `pending`, `running`, `succeeded`, or `failed`
+- `created_at`
+- `completed_at`
+- `error_message`
+
+Recommended `student_dataset_release_files` fields:
+
+- `id`
+- `release_id`
+- `table_name`
+- `file_path`
+- `row_count`
+- `schema_hash`
+- `checksum`
+- `created_at`
+
+The release table should be the source for release history, release status,
+output folder display, and student release validation summaries. File-level
+records should be used for reconciliation, checksums, row counts, and per-file
+debugging.
+
 ### Student Dataset Controls
 
 Inputs:
@@ -547,13 +872,12 @@ Inputs:
 - source configuration profile/version display only
 - release month
 - historical month count
-- include dimensions
-- include fact tables
-- include derived summary tables
+- include approved operational source tables
 - include visible rating history
 - include rating deltas
 - include data dictionary
 - include release manifest
+- include table relationship guide
 - output folder
 - overwrite existing release, behind confirmation checkbox
 
@@ -569,30 +893,23 @@ Actions:
 
 ### Student-Facing Dataset Tables
 
-The first version should support the following export groups.
+The first version should export approved operational-style table extracts. It
+must not generate instructor-prebuilt dimensional models, fact tables, or
+derived summary tables for students. Students are expected to construct those
+structures themselves as part of the assignment.
 
-Dimensions:
-
-```text
-dim_players.parquet
-dim_clubs.parquet
-dim_regions.parquet
-```
-
-Facts:
+Student-facing table files should use operational-style names that mirror the
+approved source tables unless a safe rename is required for clarity.
 
 ```text
-fact_matches.parquet
-fact_games.parquet
-fact_team_memberships.parquet
-fact_rating_history.parquet
-```
-
-Derived summaries:
-
-```text
-monthly_player_summary.parquet
-monthly_region_summary.parquet
+players.parquet
+clubs.parquet
+regions.parquet
+teams.parquet
+team_memberships.parquet
+matches.parquet
+games.parquet
+rating_history.parquet
 ```
 
 Metadata:
@@ -600,12 +917,26 @@ Metadata:
 ```text
 release_manifest.parquet
 data_dictionary.parquet
+table_relationships.parquet
+```
+
+The release must not include files such as:
+
+```text
+dim_players.parquet
+dim_clubs.parquet
+dim_regions.parquet
+fact_matches.parquet
+fact_games.parquet
+fact_rating_history.parquet
+monthly_player_summary.parquet
+monthly_region_summary.parquet
 ```
 
 Tournament/event data, if implemented:
 
 ```text
-tournament_events.parquet
+tournaments.parquet
 ```
 
 ### Protected Data Rules
@@ -644,7 +975,7 @@ simulation engine.
 
 ### Data Quality Injection Controls
 
-The Student Dataset Generation tab should include a dedicated Data Quality
+The Student Dataset Release Generation stage should include a dedicated Data Quality
 Injection panel.
 
 Data quality injection should be optional and configurable per release.
@@ -813,15 +1144,15 @@ The initial implementation should support table-level enablement.
 Recommended controls:
 
 ```text
-dim_players
-dim_clubs
-dim_regions
-fact_matches
-fact_games
-fact_team_memberships
-fact_rating_history
-monthly_player_summary
-monthly_region_summary
+players
+clubs
+regions
+teams
+team_memberships
+matches
+games
+rating_history
+tournaments
 ```
 
 For each table, show:
@@ -867,6 +1198,7 @@ Before a release is finalized, the control panel should show validation results.
 
 Required checks:
 
+- release readiness checks passed
 - parquet files can be read
 - required files are present
 - expected row counts are within tolerance
@@ -881,7 +1213,7 @@ Required checks:
 
 ### Student Dataset Status Views
 
-The tab should include:
+The stage should include:
 
 - latest student release card
 - release history table
@@ -929,10 +1261,16 @@ data_quality_injection
 
 ### Guardrails
 
-The Student Dataset Generation tab should include the following guardrails:
+The Student Dataset Release Generation stage should include the following guardrails:
 
 - disable export until source generation run is complete
+- allow export only from the current generation run with `status = succeeded`
+- require all selected-scope monthly batches to have `processing_status = succeeded`
+- block export while any generation, seed ingest, seed normalization, or other write-heavy job is running
 - disable export if seed/reference readiness checks fail
+- block export if table/column projection classification is incomplete
+- block export if protected-field scan fails
+- block export if validation blockers are present
 - require confirmation before overwriting an existing release folder
 - require confirmation before using high or very_high injection levels
 - clearly label instructor-only files
@@ -972,8 +1310,8 @@ Recommended job types:
 
 - `raw_seed_ingest`
 - `seed_normalization`
-- `generation_plan`
-- `monthly_pipeline`
+- `generation_preview`
+- `generation_run`
 - `validation`
 - `export`
 
@@ -985,25 +1323,31 @@ Recommended states:
 
 ```text
 pending
-queued
 running
-completed
+succeeded
 failed
-cancel_requested
-cancelled
 ```
 
 Definitions:
 
 - `pending`: Job record has been created but execution has not started.
-- `queued`: Job is waiting for available execution capacity.
 - `running`: Job is actively executing.
-- `completed`: Job finished successfully.
+- `succeeded`: Job finished successfully.
 - `failed`: Job ended with an unrecovered error.
-- `cancel_requested`: Operator requested cancellation, but execution has not stopped yet.
-- `cancelled`: Job stopped due to cancellation.
 
-For version 1, cancellation states can exist in the model even if no cancellation action is exposed yet.
+Version 1 should not include job cancellation states. Cancellation is a future
+feature and should not appear in the current job status lifecycle until the
+system has a real cancellation mechanism.
+
+The ORM and database schema will be updated during the build process so the
+`job_status.status` constraint supports exactly:
+
+```text
+pending
+running
+succeeded
+failed
+```
 
 ### Job Ownership Hierarchy
 
@@ -1014,15 +1358,17 @@ Recommended hierarchy:
 ```text
 generation_run
   -> monthly_batches
-      -> pipeline_stages
-          -> job_status entries
+      -> job_stage_progress entries
+  -> job_status entries
 ```
 
-This relationship should help the operator understand whether a job belongs to seed preparation, plan creation, a generation run, a monthly batch, or a specific pipeline stage.
+This relationship should help the operator understand whether a job belongs to seed preparation, a generation run, a monthly batch, or a specific pipeline stage.
 
 ### Structured Job Metadata
 
-`job_status` should gain structured JSON metadata for stage counts and result summaries.
+`job_status` should gain structured JSON metadata for job-level counts and
+result summaries. Per-stage progress should be stored in `job_stage_progress`,
+not only inside job-level metadata.
 
 Recommended column:
 
@@ -1034,9 +1380,6 @@ Potential contents:
 
 - Current batch.
 - Total batch count.
-- Current stage.
-- Stage index.
-- Total stages.
 - Rows read.
 - Rows written.
 - Rows rejected.
@@ -1044,7 +1387,37 @@ Potential contents:
 - Output file references.
 - Validation warning counts.
 
-This metadata should support richer status displays without requiring a new table for every progress detail.
+This metadata should support richer job summaries without replacing the
+dedicated stage progress table.
+
+### Job Stage Progress
+
+Add a dedicated `job_stage_progress` table to support per-stage progress bars.
+
+Recommended fields:
+
+- `id`
+- `job_status_id`
+- `generation_run_id`
+- `batch_id`
+- `stage_name`
+- `stage_sequence`
+- `status`: `pending`, `running`, `succeeded`, or `failed`
+- `progress_current`
+- `progress_total`, nullable when unknown
+- `progress_unit`
+- `progress_percent`, nullable when total is unknown
+- `last_heartbeat_at`
+- `progress_message`
+- `started_at`
+- `completed_at`
+- `error_message`
+- `metadata_json`
+- `created_at`
+- `updated_at`
+
+The web UI should render progress bars from this table. Long-running workers
+should update the current stage row periodically while work is running.
 
 ### Structured Job Logs
 
@@ -1062,6 +1435,32 @@ Recommended fields:
 
 Version 1 can show only the most recent log messages. Future versions can add filtering, expansion, and export.
 
+## Monthly Batch States
+
+Monthly batches should use the same simplified lifecycle model as other
+operator-facing execution records.
+
+Recommended `monthly_batches.processing_status` values:
+
+```text
+pending
+running
+succeeded
+failed
+```
+
+Definitions:
+
+- `pending`: Batch record exists, but the batch has not started.
+- `running`: One or more generation stages for the batch are executing.
+- `succeeded`: All implemented generation stages for the batch completed successfully.
+- `failed`: The batch failed and the generation run must be treated as failed.
+
+Validation and student dataset release/export are post-generation workflow steps.
+They should not appear as monthly batch states. The database schema should not
+include `validating`, `exporting`, `completed`, or `superseded` as Version 1
+monthly batch states.
+
 ## Generation Run States
 
 Generation runs should use explicit lifecycle states.
@@ -1069,55 +1468,91 @@ Generation runs should use explicit lifecycle states.
 Recommended states:
 
 ```text
-planned
-ready
+not_started
 running
-partial_failure
-completed
+succeeded
 failed
-cancelled
 ```
 
 Definitions:
 
-- `planned`: Run has been defined but not yet checked for readiness.
-- `ready`: Prerequisites are satisfied and the run can start.
-- `running`: One or more monthly batches are executing.
-- `partial_failure`: Some stages or batches failed while others completed.
-- `completed`: All planned batches and supported stages completed.
-- `failed`: Run cannot continue without intervention.
-- `cancelled`: Run was stopped by operator request.
+- `not_started`: The generation run record or plan exists, but no generation work has started.
+- `running`: Generation is actively executing.
+- `succeeded`: Generation completed successfully and the current database contents are usable for validation and export.
+- `failed`: Generation failed and the current database contents should be treated as incomplete or unreliable.
+
+The database is intentionally designed to hold one generation's domain data at a
+time. The control panel should therefore treat generation runs as lifecycle
+records for the current database population, not as a selectable catalog of
+historical scenarios.
+
+Only the current generation run with `status = succeeded` should be eligible as
+the source for student dataset release generation. The control panel should not
+offer historical generation runs as export sources unless their associated
+generated domain data still exists in the database.
+
+Failed runs are not resumable in Version 1. A failed run leaves generated data
+in an incomplete or unreliable state. Retrying generation requires a new full
+destructive run from the beginning.
+
+The ORM and database schema will be updated during the build process so the
+`generation_runs.status` constraint supports exactly:
+
+```text
+not_started
+running
+succeeded
+failed
+```
 
 ## Progress Reporting
 
-The UI needs real progress for long-running jobs, not just a spinner.
+The UI needs real progress for long-running jobs, not just a spinner or stage
+boundary updates.
 
-Show both batch-level and stage-level progress:
+Show both batch-level progress and one progress bar for each visible stage:
 
 ```text
-Job: monthly_pipeline
+Job: generation_run
 Status: running
 Current batch: 2024-04-01
-Current phase: matches
-Percent: 62.5%
-Message: Generated 18,400 of 34,900 target matches
+Stages:
+  players             succeeded  100%
+  club_memberships    succeeded  100%
+  teams               succeeded  100%
+  matches             running     62.5%  18,400 / 34,900 matches
+  ratings             not_started 0%
 ```
 
-For the first version, progress can be coarse:
+For the first version, progress must be persisted at stage level:
 
-- Stage started.
-- Stage completed.
-- Row counts after each stage.
-- Current batch index out of total batches.
+- Each stage has a status.
+- Each stage has a progress bar.
+- Each stage records `progress_current`.
+- Each stage records `progress_total` when known.
+- Each stage records `progress_unit`.
+- Each running stage records `last_heartbeat_at`.
+- Each running stage records a short progress message.
+- Completed stages retain final counts and summary metadata.
 
-Later versions should add intra-stage counters for:
+Expected progress units include:
 
 - Players generated.
 - Club memberships created.
 - Teams formed.
 - Matches generated.
 - Rating updates written.
-- Files exported.
+- Files exported during student dataset release generation.
+
+The implementation does not need perfect estimates for every stage. When a total
+is known, the UI should render a determinate progress bar. When a total is not
+known, the UI should render an indeterminate progress bar with current count,
+unit, and heartbeat age.
+
+The ORM and database schema will be updated during the build process to support
+stage-level progress snapshots in the dedicated `job_stage_progress` table. The
+key requirement is that the progress state is durable and pollable while the
+worker is still running.
 
 ## Polling Design
 
@@ -1142,8 +1577,8 @@ POST /control/config/versions
 GET  /control/workloads
 POST /control/jobs/raw-ingest
 POST /control/jobs/normalize-seed
-POST /control/jobs/create-plan
-POST /control/jobs/run-pipeline
+POST /control/generation/preview
+POST /control/jobs/start-generation
 GET  /control/jobs/{job_id}
 GET  /control/jobs/current
 ```
@@ -1202,13 +1637,13 @@ Recommended guardrails:
 
 - Require confirmation for replacing production seed data.
 - Require confirmation for runs above a configurable player-count threshold.
-- Cap monthly pipeline runs at 12 months per invocation.
+- Require explicit confirmation before starting a destructive generation run.
 - Disable start buttons when prerequisite checks fail.
 - Show the selected database URL, database alias, or environment label in the header.
 - Prevent launching two write-heavy jobs concurrently unless the job types are proven safe to run in parallel.
 - Freeze configuration payloads into generation runs.
 - Preserve immutable configuration versions.
-- Show whether a stage will run, skip, or fail before starting.
+- Make clear that generation deletes/rebuilds generated data but does not delete seed/reference data.
 - Require additional confirmation for production writes.
 - Display a summary of expected affected rows when available.
 
@@ -1218,9 +1653,9 @@ The initial implementation should be conservative.
 
 Recommended rules:
 
-- Only one monthly pipeline job may run at a time.
-- Seed ingest and seed normalization may not run while a monthly pipeline job is active.
-- Generation plan creation may run only when no write-heavy generation job is active.
+- Only one generation job may run at a time.
+- Seed ingest and seed normalization may not run while a generation job is active.
+- A new generation run may start only when no generation run is `running`.
 - Read-only status refreshes may run concurrently.
 - Validation jobs may run concurrently only if they do not mutate shared state.
 - Production write actions should be serialized.
@@ -1229,22 +1664,25 @@ If concurrency rules are violated, the UI should disable the action and explain 
 
 ## Idempotency And Rerun Strategy
 
-The design should explicitly account for partial failures and reruns.
+The Version 1 rerun strategy should be intentionally simple.
 
-Each pipeline stage should define whether it is:
+- Generation runs always start from the beginning.
+- Starting a generation run is destructive to generated data.
+- Generation runs do not delete seed/reference data or saved configuration versions.
+- No mid-run start, selected-batch start, or partial resume is allowed.
+- Failed generation runs cannot resume from the failed stage or month.
+- Retrying after failure requires creating a new generation run and performing a new destructive full run.
 
-- Safe to rerun without deleting prior output.
-- Safe to rerun only after deleting or replacing prior output.
-- Not safe to rerun without manual intervention.
+This avoids turning the first control panel into a complex orchestration tool.
+Stage-level rerun, selective replacement, and partial recovery controls belong
+in the future enhancement backlog.
 
-The UI should show whether a stage will:
+Seed ingest and seed normalization are separate workflows. They may have their
+own replacement confirmations, but they are not part of the destructive
+generation reset.
 
-- Run.
-- Skip because output already exists.
-- Fail because output already exists.
-- Replace existing output after confirmation.
-
-This matters for monthly pipeline reruns, seed normalization, ratings regeneration, and export stages.
+Seed dataset version lineage and historical seed replay are future
+enhancements. They should not be included in the Version 1 rerun model.
 
 ## Authentication And Authorization
 
@@ -1282,7 +1720,7 @@ backend/app/web/
       job_status.html
       generation_runs.html
       monthly_batches.html
-      student_datasets_tab.html
+      student_dataset_release_panel.html
       student_dataset_validation.html
       raw_seed_runs.html
       validation_summary.html
@@ -1323,12 +1761,13 @@ The first screen should be the control panel itself.
 8. Add configuration validation and save-new-version flow.
 9. Add configuration diff summary.
 10. Add raw ingest and normalize job launch actions.
-11. Add generation-plan job launch action.
-12. Add monthly-pipeline job launch action.
-13. Add progress updates inside pipeline stages.
-14. Add structured job metadata.
-15. Add structured job logs.
-16. Add cancellation and log detail views.
+11. Add full generation preview action.
+12. Add full destructive generation launch action.
+13. Add persisted per-stage progress updates and progress bars.
+14. Add student dataset release generation as the final workload stage.
+15. Add structured job metadata.
+16. Add structured job logs.
+17. Add cancellation and log detail views.
 
 ## Open Design Questions
 
@@ -1337,17 +1776,17 @@ The first screen should be the control panel itself.
 - Should `job_status` gain structured JSON metadata for stage counts and result summaries?
   - Answer: Yes. This is important to clearly articulate status and avoid overloading simple text fields.
 - Should long-running jobs be cancellable in the first version?
-  - Answer: No. Add the status model support now if practical, but place user-facing cancellation controls in the future enhancement backlog.
+  - Answer: No. Do not add cancellation states to the Version 1 job lifecycle. Place cancellation controls and cancellation-specific states in the future enhancement backlog.
 - Should the web layer support multiple named environments, or only the local development database?
   - Answer: The web layer should support development and production environments. These should be two databases with the exact same schema design. The active environment must be displayed clearly, and production write actions should require stronger confirmation.
 - Should validation/export be visible as disabled stages immediately, or hidden until implemented?
-  - Answer: Show them as disabled/planned stages now. Add their full development and implementation to the future enhancement backlog.
+  - Answer: Show validation and student dataset release as disabled/planned post-generation workflow steps if useful. They are not Version 1 generation completion criteria and should be visually distinct from incomplete implemented stages.
 - Should React be introduced later if the UI grows?
   - Answer: Not by default. The preferred long-term posture is still server-rendered HTML with HTMX unless the control panel develops requirements that clearly justify a SPA framework.
 
 ## Future Enhancement Backlog
 
-### Student Dataset Generation Enhancements
+### Student Dataset Release Enhancements
 
 - Advanced per-column data quality rule editing.
 - Student dataset release comparison.
@@ -1376,6 +1815,8 @@ The first screen should be the control panel itself.
 - Estimated runtime calculations.
 - Pipeline dependency graph visualization.
 - Manual stage rerun controls.
+- Seed dataset version lineage.
+- Historical seed snapshot replay.
 - Background worker queue migration to Celery, RQ, Dramatiq, or equivalent.
 - Job prioritization.
 - Job history retention policy.

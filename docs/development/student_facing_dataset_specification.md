@@ -779,7 +779,6 @@ These tables should be excluded from student-facing releases.
 configuration_profiles
 configuration_profile_versions
 generation_runs
-generation_plans
 monthly_batches
 job_status
 raw_seed_load_runs
@@ -787,6 +786,8 @@ raw_seed_load_errors
 export_runs
 validation_runs
 pipeline_stage_runs
+student_dataset_releases
+student_dataset_release_files
 ```
 
 ## Excluded Raw Seed Tables
@@ -1119,23 +1120,31 @@ writing parquet files.
 
 Required validation checks:
 
-1. Query the ORM/database metadata for the full list of tables.
-2. Confirm every table appears in the export inventory.
-3. Confirm every included table has every ORM/database column classified.
-4. Confirm no excluded/protected column appears in the export dataframe.
-5. Confirm no hidden rating, true skill rating, K-factor, generator
+1. Confirm release readiness checks passed before projection, data quality
+   injection, or parquet writing begins.
+2. Confirm the source generation run is current and has succeeded.
+3. Confirm all monthly batches in the selected release scope have
+   `processing_status = succeeded`.
+4. Confirm no generation, seed ingest, seed normalization, or other write-heavy
+   job is running.
+5. Query the ORM/database metadata for the full list of tables.
+6. Confirm every table appears in the export inventory.
+7. Confirm every included table has every ORM/database column classified.
+8. Confirm no excluded/protected column appears in the export dataframe.
+9. Confirm no hidden rating, true skill rating, K-factor, generator
    configuration, or operational metadata column appears in any student-facing
    parquet file.
-6. Confirm student-facing parquet schemas match the data dictionary.
-7. Confirm instructor-only files are not placed in the student release folder.
-8. Confirm no prebuilt dimensional, fact, or summary mart file is exported to
+10. Confirm student-facing parquet schemas match the data dictionary.
+11. Confirm instructor-only files are not placed in the student release folder.
+12. Confirm no prebuilt dimensional, fact, or summary mart file is exported to
    the student release unless explicitly approved as part of a later assignment
    variant.
-9. Confirm exported parquet file names align to approved operational table names
+13. Confirm exported parquet file names align to approved operational table names
    or explicitly approved safe aliases.
 
 A release must fail validation if any table or included-table column is
-unclassified.
+unclassified, any protected field scan fails, any validation blocker is present,
+or any write-heavy operational job is active.
 
 ---
 
@@ -1493,6 +1502,26 @@ release validation
         ↓
 release publication
 ```
+
+Before parquet generation begins, the orchestration workflow must verify release
+readiness.
+
+Required release readiness checks:
+
+- the source generation run is the current generation run
+- the source generation run has succeeded
+- all monthly batches in the selected release scope have `processing_status = succeeded`
+- no generation, seed ingest, seed normalization, or other write-heavy job is running
+- seed/reference readiness checks pass
+- the student-facing table and column projection inventory is complete
+- every included table has every exported column classified
+- no unclassified table or column is allowed in the release
+- protected-field scan passes before parquet writing
+- hidden rating, generator configuration, seed, operational metadata, and job/log fields are absent from projected export dataframes
+- projected student-facing tables preserve required referential integrity
+- no validation blockers are present
+
+If any readiness check fails, parquet generation must not begin.
 
 The orchestration layer should provide centralized operational visibility and
 administrative control over the educational dataset release lifecycle.

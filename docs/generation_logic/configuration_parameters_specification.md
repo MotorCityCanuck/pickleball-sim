@@ -432,27 +432,57 @@ All configuration parsers must enforce:
 ## 17. Configuration Repository Storage
 
 Configuration is stored in the database as versioned profile payloads so a
-future web UI can create, edit, validate, and activate configurations without
+web UI can create, edit, validate, and activate configurations without
 schema changes for every individual parameter.
 
 - `configuration_profiles` stores named configuration profiles and whether a
   profile is active.
 - `configuration_profile_versions` stores immutable versioned JSONB payloads
-  in `config_payload`, with a `config_schema_version` and validation status.
+  in `config_payload`, with a `config_schema_version`, payload hash, version
+  title, lifecycle status, and lifecycle timestamps.
 - Individual configuration parameters are keys inside `config_payload`, not
   columns on `configuration_profile_versions`.
 - `generation_runs.parameter_snapshot` stores the frozen effective
-  configuration used by a specific generation run after defaults,
-  profile values, environment overrides, UI overrides, and command-line
-  arguments are resolved.
+  configuration used by a specific generation run after defaults and profile
+  values are resolved.
 - A generation run must never depend on mutable profile state after it starts;
   it must copy the resolved configuration into `parameter_snapshot`.
 - The canonical payload shape and grouped sample JSON are defined in
   [Configuration Payload Architecture](../architecture/configuration_payload_architecture.md).
 
-This structure supports profile-level reloads, version history, rollback by
-selecting an earlier version, web-based editing, and future schema migrations
-inside the JSON payload.
+This structure supports profile-level reloads, version history, web-based
+editing, and future schema migrations inside the JSON payload.
+
+For the first web-control-panel implementation:
+
+- Exactly one configuration profile version should have lifecycle status
+  `valid`.
+- Saving a new valid version should automatically mark the prior valid version
+  as `deprecated` in the same transaction.
+- Deprecated versions are retained for audit/history but hidden from the normal
+  UI and not eligible for generation.
+- Validation failure should not create a saved database version.
+- The configuration payload must be parsed and validated by typed backend
+  configuration models before it can be saved as valid.
+- Arbitrary unvalidated JSON must not become the source of truth for generation.
+
+Recommended structured fields for `configuration_profile_versions`:
+
+```text
+id
+profile_id
+version_number
+title
+notes
+lifecycle_status
+created_at
+created_by
+last_used_at
+deprecated_at
+config_schema_version
+config_hash
+config_payload
+```
 
 ## 18. Configuration Precedence
 
@@ -460,12 +490,16 @@ When loading configuration:
 
 1. **Default values** (documented in this specification)
 2. **Configuration profile version** (`configuration_profile_versions.config_payload`)
-3. **Configuration file** (YAML/JSON, for development or import/export)
-4. **Environment variables** (prefixed with `PBSIM_`)
-5. **UI overrides** (submitted through web control panel)
-6. **Command-line arguments** (highest precedence)
+3. **Configuration file** (YAML/JSON, for development or import/export only)
+4. **Environment variables** (prefixed with `PBSIM_`, for development or
+   deployment wiring only)
 
 Example environment variable: `PBSIM_MASTER_SEED=12345`
+
+The web control panel should not support one-off runtime overrides for
+generation settings. If seed, first generated month, generated month count,
+player scale, or another runtime setting needs to change, the operator must save
+a new valid configuration version.
 
 ---
 

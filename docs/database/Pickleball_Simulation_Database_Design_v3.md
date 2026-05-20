@@ -142,11 +142,17 @@ Operational entities:
 
 - export_runs
 
+- student_dataset_releases
+
+- student_dataset_release_files
+
 - uploaded_files
 
 - validation_results
 
 - job_status
+
+- job_stage_progress
 
 Reference entities:
 
@@ -568,9 +574,20 @@ Stores consolidated USA and Canada last-name frequency data.
 
 \| processing_status \| VARCHAR(30) \|
 
+\| started_at \| TIMESTAMP \|
+
 \| created_at \| TIMESTAMP \|
 
 \| completed_at \| TIMESTAMP \|
+
+Allowed values:
+
+```text
+pending
+running
+succeeded
+failed
+```
 
 \-\--
 
@@ -624,6 +641,15 @@ Stores consolidated USA and Canada last-name frequency data.
 
 \| status \| VARCHAR(30) \|
 
+Allowed values:
+
+```text
+not_started
+running
+succeeded
+failed
+```
+
 \-\--
 
 ## 10.2 configuration_profiles
@@ -662,17 +688,33 @@ Stores consolidated USA and Canada last-name frequency data.
 
 \| version_number \| INTEGER \|
 
+\| title \| VARCHAR(255) \|
+
+\| notes \| TEXT \|
+
 \| config_schema_version \| VARCHAR(50) \|
+
+\| config_hash \| VARCHAR(128) \|
 
 \| config_payload \| JSONB \|
 
 \| created_by \| VARCHAR(255) \|
 
-\| validation_status \| VARCHAR(30) DEFAULT 'pending' \|
+\| lifecycle_status \| VARCHAR(30) DEFAULT 'valid' \|
+
+\| last_used_at \| TIMESTAMP \|
+
+\| deprecated_at \| TIMESTAMP \|
 
 \| created_at \| TIMESTAMP \|
 
 \| updated_at \| TIMESTAMP \|
+
+The first web-control-panel build should replace the older
+`validation_status` concept with `lifecycle_status`. Configuration payloads
+remain JSONB, but must be validated by typed backend configuration models before
+they can be saved as the single current valid version. Deprecated versions are
+retained for audit/history and hidden from the normal UI.
 
 \-\--
 
@@ -800,13 +842,23 @@ profile_id BIGINT NOT NULL REFERENCES configuration_profiles(id),
 
 version_number INTEGER NOT NULL,
 
+title VARCHAR(255) NOT NULL,
+
+notes TEXT,
+
 config_schema_version VARCHAR(50) NOT NULL,
+
+config_hash VARCHAR(128),
 
 config_payload JSONB NOT NULL,
 
 created_by VARCHAR(255),
 
-validation_status VARCHAR(30) DEFAULT 'pending' NOT NULL,
+lifecycle_status VARCHAR(30) DEFAULT 'valid' NOT NULL,
+
+last_used_at TIMESTAMP,
+
+deprecated_at TIMESTAMP,
 
 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -816,7 +868,7 @@ CONSTRAINT uq_configuration_profile_version UNIQUE (profile_id, version_number),
 
 CONSTRAINT chk_configuration_version_number CHECK (version_number > 0),
 
-CONSTRAINT chk_configuration_validation_status CHECK (validation_status IN ('pending', 'valid', 'invalid'))
+CONSTRAINT chk_configuration_lifecycle_status CHECK (lifecycle_status IN ('valid', 'deprecated'))
 
 );
 
@@ -1363,7 +1415,7 @@ UNIQUE (generation_run_id, batch_month),
 
 CONSTRAINT chk_batch_type CHECK (batch_type IN ('historical_initial', 'future_increment')),
 
-CONSTRAINT chk_processing_status CHECK (processing_status IN ('pending', 'running', 'validating', 'exporting', 'completed', 'failed', 'superseded'))
+CONSTRAINT chk_processing_status CHECK (processing_status IN ('pending', 'running', 'succeeded', 'failed'))
 
 );
 
@@ -1387,13 +1439,13 @@ started_at TIMESTAMP,
 
 completed_at TIMESTAMP,
 
-status VARCHAR(30) NOT NULL DEFAULT 'pending',
+status VARCHAR(30) NOT NULL DEFAULT 'not_started',
 
 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_generation_status CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
+CONSTRAINT chk_generation_status CHECK (status IN ('not_started', 'running', 'succeeded', 'failed'))
 
 );
 
@@ -1507,7 +1559,7 @@ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_run_status CHECK (run_status IN ('pending', 'running', 'completed', 'failed'))
+CONSTRAINT chk_run_status CHECK (run_status IN ('pending', 'running', 'succeeded', 'failed'))
 
 );
 
@@ -1571,7 +1623,65 @@ CONSTRAINT chk_export_format CHECK (export_format IN ('parquet', 'csv', 'json', 
 
 \-\--
 
-## 11.21 validation_results
+## 11.21 student_dataset_releases
+
+CREATE TABLE student_dataset_releases (
+
+id BIGSERIAL PRIMARY KEY,
+
+release_name VARCHAR(255) NOT NULL,
+
+release_type VARCHAR(50) NOT NULL,
+
+release_month DATE,
+
+generation_run_id BIGINT NOT NULL REFERENCES generation_runs(id),
+
+data_quality_level VARCHAR(50),
+
+output_path TEXT NOT NULL,
+
+status VARCHAR(30) NOT NULL DEFAULT 'pending',
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+completed_at TIMESTAMP,
+
+error_message TEXT,
+
+CONSTRAINT chk_student_release_type CHECK (release_type IN ('historical_baseline', 'monthly_incremental')),
+
+CONSTRAINT chk_student_release_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed'))
+
+);
+
+\-\--
+
+## 11.22 student_dataset_release_files
+
+CREATE TABLE student_dataset_release_files (
+
+id BIGSERIAL PRIMARY KEY,
+
+release_id BIGINT NOT NULL REFERENCES student_dataset_releases(id),
+
+table_name VARCHAR(255) NOT NULL,
+
+file_path TEXT NOT NULL,
+
+row_count BIGINT,
+
+schema_hash VARCHAR(128),
+
+checksum VARCHAR(128),
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+);
+
+\-\--
+
+## 11.23 validation_results
 
 CREATE TABLE validation_results (
 
@@ -1605,7 +1715,7 @@ CONSTRAINT chk_severity CHECK (severity IN ('info', 'warning', 'error', 'blocker
 
 \-\--
 
-## 11.22 job_status
+## 11.24 job_status
 
 CREATE TABLE job_status (
 
@@ -1633,11 +1743,135 @@ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CONSTRAINT chk_job_status CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+CONSTRAINT chk_job_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
 
 CONSTRAINT chk_percent_complete CHECK (percent_complete >= 0 AND percent_complete <= 100)
 
 );
+
+\-\--
+
+## 11.25 job_stage_progress
+
+CREATE TABLE job_stage_progress (
+
+id BIGSERIAL PRIMARY KEY,
+
+job_status_id BIGINT NOT NULL REFERENCES job_status(id),
+
+generation_run_id BIGINT REFERENCES generation_runs(id),
+
+batch_id BIGINT REFERENCES monthly_batches(id),
+
+stage_name VARCHAR(100) NOT NULL,
+
+stage_sequence INTEGER,
+
+status VARCHAR(30) NOT NULL DEFAULT 'pending',
+
+progress_current BIGINT NOT NULL DEFAULT 0,
+
+progress_total BIGINT,
+
+progress_unit VARCHAR(100),
+
+progress_percent NUMERIC(5,2),
+
+last_heartbeat_at TIMESTAMP,
+
+progress_message TEXT,
+
+started_at TIMESTAMP,
+
+completed_at TIMESTAMP,
+
+error_message TEXT,
+
+metadata_json JSONB,
+
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+CONSTRAINT chk_job_stage_progress_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+
+CONSTRAINT chk_job_stage_progress_percent CHECK (progress_percent IS NULL OR (progress_percent >= 0 AND progress_percent <= 100)),
+
+CONSTRAINT uq_job_stage_progress_stage UNIQUE (job_status_id, batch_id, stage_name)
+
+);
+
+`job_stage_progress` is the durable source for per-stage progress bars in the
+web control panel. Long-running workers should update these rows periodically
+while a stage is running. A stale `last_heartbeat_at` is an operational warning,
+not an automatic failure.
+
+\-\--
+
+## 11.26 Destructive Generation Reset Contract
+
+Every operator-facing generation run starts from the beginning and is
+destructive to generated data. The reset must preserve seed/reference data,
+configuration profiles, configuration profile versions, and durable job/run
+history.
+
+The reset should execute inside a transaction before monthly batches for the new
+run are created. Use ordered `DELETE` statements rather than broad truncation so
+the implementation can preserve audit/control records and avoid deleting
+reference data.
+
+### Tables Preserved During Generation Reset
+
+The destructive generation reset must not delete:
+
+```text
+configuration_profiles
+configuration_profile_versions
+generation_runs
+job_status
+uploaded_files
+regions
+first_names
+last_names
+clubs
+```
+
+`generation_runs` and `job_status` are preserved as operational audit/control
+records. The web control panel should treat the latest generation run as the
+current run and should not offer older runs as export sources after their
+generated data has been reset.
+
+### Ordered Delete List
+
+Delete generated/run-specific tables in this order:
+
+```text
+1. job_stage_progress
+2. student_dataset_release_files
+3. student_dataset_releases
+4. validation_results
+5. export_runs
+6. batch_runs
+7. ratings_update_log
+8. player_rating_history
+9. player_assessment_history
+10. match_team_players
+11. match_games
+12. match_teams
+13. matches
+14. team_memberships
+15. teams
+16. club_memberships
+17. player_registrations
+18. players
+19. tournaments
+20. monthly_batches
+```
+
+This order deletes child tables before parent tables and leaves seed/reference
+tables intact. If future generated tables are added, they must be inserted into
+this ordered list based on their foreign-key dependencies before the table is
+used by the web control panel.
 
 \-\--
 
@@ -1655,7 +1889,10 @@ CREATE INDEX idx_players_generation_run ON players(generation_run_id);
 CREATE INDEX idx_configuration_profiles_active ON configuration_profiles(is_active);
 CREATE INDEX idx_configuration_versions_profile ON configuration_profile_versions(profile_id);
 CREATE INDEX idx_configuration_versions_schema ON configuration_profile_versions(config_schema_version);
-CREATE INDEX idx_configuration_versions_status ON configuration_profile_versions(validation_status);
+CREATE INDEX idx_configuration_versions_lifecycle ON configuration_profile_versions(lifecycle_status);
+CREATE UNIQUE INDEX uq_configuration_versions_single_valid
+ON configuration_profile_versions(lifecycle_status)
+WHERE lifecycle_status = 'valid';
 
 -- player_rating_history indexes
 CREATE INDEX idx_rating_player_date ON player_rating_history(player_id, rating_date DESC);
@@ -1754,6 +1991,12 @@ CREATE INDEX idx_export_runs_batch ON export_runs(batch_id);
 CREATE INDEX idx_export_runs_type ON export_runs(export_type);
 CREATE INDEX idx_export_runs_created ON export_runs(created_at);
 
+-- student dataset release indexes
+CREATE INDEX idx_student_dataset_releases_generation_run ON student_dataset_releases(generation_run_id);
+CREATE INDEX idx_student_dataset_releases_status ON student_dataset_releases(status);
+CREATE INDEX idx_student_dataset_release_files_release ON student_dataset_release_files(release_id);
+CREATE INDEX idx_student_dataset_release_files_table ON student_dataset_release_files(table_name);
+
 -- validation_results indexes
 CREATE INDEX idx_validation_results_batch ON validation_results(batch_id);
 CREATE INDEX idx_validation_results_severity ON validation_results(severity);
@@ -1763,6 +2006,13 @@ CREATE INDEX idx_validation_results_rule ON validation_results(validation_rule_i
 CREATE INDEX idx_job_status_type ON job_status(job_type);
 CREATE INDEX idx_job_status_status ON job_status(status);
 CREATE INDEX idx_job_status_started ON job_status(started_at);
+
+-- job_stage_progress indexes
+CREATE INDEX idx_job_stage_progress_job ON job_stage_progress(job_status_id);
+CREATE INDEX idx_job_stage_progress_generation_run ON job_stage_progress(generation_run_id);
+CREATE INDEX idx_job_stage_progress_batch ON job_stage_progress(batch_id);
+CREATE INDEX idx_job_stage_progress_status ON job_stage_progress(status);
+CREATE INDEX idx_job_stage_progress_heartbeat ON job_stage_progress(last_heartbeat_at);
 
 \-\--
 
@@ -1998,12 +2248,15 @@ Future schema support:
 - monthly_batches: Batch processing metadata
 - validation_results: Data quality scorecards
 - export_runs: Published data packages
+- student_dataset_releases: Student release package tracking
+- student_dataset_release_files: Student release file tracking
 
 ## 17.4 Operational Layer (Platform Metadata)
 
 - generation_runs: Simulation execution control
 - batch_runs: Batch execution tracking
 - job_status: Real-time job monitoring
+- job_stage_progress: Per-stage progress tracking
 - uploaded_files: File intake tracking
 
 \-\--

@@ -11,14 +11,63 @@ repeatable process for running one or more successive monthly batches.
 
 It is designed to support:
 
-- one-month development runs
-- resume-style runs that skip already populated stages
+- full generation runs from the beginning
 - successive future-month generation
-- up to 12 months per invocation
+- the configured number of months for the active generation run
 - auditable per-step row counts and statuses
 
 The pipeline coordinates existing generators. It does not replace their internal
 logic.
+
+## Version 1 Web Control Panel Policy
+
+The lower-level monthly pipeline should align with the Version 1 web control
+panel policy. Operator-facing generation starts from the beginning and does not
+support selected-batch starts, partial restarts, or existing-data bypass
+behavior.
+
+For the web control panel:
+
+- Only the web control panel may start an operator-facing generation run.
+- A generation run starts only from the single current valid configuration.
+- A generation run is destructive to generated domain data.
+- Seed/reference data and saved configuration versions are preserved.
+- Seed/reference data is treated as fixed operational input for Version 1 and
+  changes only through explicit raw ingest and seed normalization workflows.
+- Only one generation run may be active at a time.
+- No selected-batch start, mid-run start, or partial resume is allowed.
+- Failed generation runs must be retried by starting a new full destructive run
+  from the beginning.
+
+CLI entry points may remain useful for development and testing, but they should
+use the same lifecycle guard and destructive reset service used by the web
+control panel when starting a generation run.
+
+For Version 1 web workflows, generation completion is based on the implemented
+generation stages: `players`, `club_memberships`, `teams`, `matches`, and
+`ratings`. Validation and student dataset release/export are future
+post-generation workflow steps. They may be shown as disabled/planned in the UI,
+but they are not required for a generation run to become `succeeded`.
+
+The web control panel should display a progress bar for each implemented stage.
+Pipeline and generator code therefore needs a durable progress callback or
+progress-writer hook for long-running stages. Stage progress should be persisted
+periodically while the worker is running, not only when the stage returns.
+
+Minimum progress fields for each visible stage:
+
+- Stage status.
+- Progress current value.
+- Progress total value, when known.
+- Progress unit.
+- Last heartbeat timestamp.
+- Last progress message.
+
+When a stage knows its expected total, such as target players, target matches,
+or files to export, the UI should render a determinate progress bar. When the
+total is not known, the UI should render an indeterminate progress bar with the
+current processed count and heartbeat age. A stale heartbeat is an operational
+warning, not an automatic failure.
 
 ## Execution Order
 
@@ -37,55 +86,43 @@ The first three stages are effectively setup stages for the current run:
 - `club_memberships` assigns generated players to clubs.
 - `teams` creates active doubles teams.
 
-Later months usually skip those setup stages and reuse the active player, club,
-and team state. The month-level stages then generate new match/game activity and
-rating updates:
+Later months reuse the active player, club, and team state created earlier in
+the same generation run. The month-level stages then generate new match/game
+activity and rating updates:
 
 - `matches` creates matches, match teams, match players, and game scores for the
   batch.
 - `ratings` consumes the batch's matches and games, appends
   `player_rating_history` rows, and writes `ratings_update_log` audit rows.
 
-## Multi-Month Looping
+## Full-Run Monthly Looping
 
-The pipeline accepts a `months` value from 1 to 12.
+The pipeline should process the configured month range from the current valid
+configuration. The first generated month and generated month count come from the
+configuration snapshot frozen into the generation run.
 
-For a multi-month run:
+For a full generation run:
 
-1. It selects monthly batches ordered by `batch_month`.
-2. If `--start-batch-id` is supplied, it starts at that batch.
-3. If fewer than the requested number of batches exist, it creates successive
-   `future_increment` batches after the last selected month.
-4. It processes each selected batch in order.
+1. The generation service performs the destructive reset.
+2. It creates all required `monthly_batches` for the configured month range.
+3. It processes monthly batches ordered by `batch_month`.
+4. It processes each stage from the beginning.
+5. It marks each monthly batch `succeeded` or `failed`.
+6. It marks the generation run `succeeded` only after all required monthly
+   batches succeed.
 
-This means a generation run can be advanced in chunks:
+The destructive reset must use the ordered delete list defined in the database
+design and web control panel specification. It must preserve seed/reference
+tables, configuration versions, `generation_runs`, and `job_status`.
 
-```bash
-python backend/scripts/run_monthly_pipeline.py \
-  --generation-run-id 15 \
-  --start-batch-id 15 \
-  --months 12
-```
+The web orchestration workflow must not expose:
 
-The 12-month cap is intentional. It keeps operational runs bounded while still
-supporting a full simulated year per command.
-
-## Existing Data Behavior
-
-By default, the CLI skips stages that already have rows. This supports resume
-and incremental workflows.
-
-Examples:
-
-- If a generation run already has players, `players` is skipped.
-- If club memberships already exist for the run, `club_memberships` is skipped.
-- If active teams already exist for the batch month, `teams` is skipped.
-- If a batch already has matches, `matches` is skipped.
-- If a batch already has rating logs, `ratings` is skipped.
-- If a batch is already `completed`, the whole batch is skipped.
-
-Use `--fail-existing` when you want the command to fail instead of skipping
-already-populated stages.
+- selected-batch starts
+- month-count overrides
+- existing-data bypass controls
+- fail-on-existing controls
+- stage-level resume controls
+- mid-run restarts
 
 ## Batch Lifecycle
 
@@ -94,77 +131,52 @@ The pipeline uses `GenerationControlPlane` for batch status transitions.
 For each processed batch:
 
 ```text
-pending -> running -> completed
+pending -> running -> succeeded
 pending -> running -> failed
 ```
 
 If a stage raises an error, the pipeline marks the batch as `failed` and writes
 the exception text to `monthly_batches.error_message`.
 
-Completed batches are skipped by default in later runs.
+Failed batches make the generation run fail. Retrying after failure requires a
+new full destructive generation run from the beginning.
 
 ## CLI Usage
 
-Run one month:
+Start a full generation run:
 
 ```bash
 python backend/scripts/run_monthly_pipeline.py \
-  --generation-run-id 15 \
-  --start-batch-id 15
+  --generation-run-id 15
 ```
 
-Run up to 12 successive months:
-
-```bash
-python backend/scripts/run_monthly_pipeline.py \
-  --generation-run-id 15 \
-  --start-batch-id 15 \
-  --months 12
-```
-
-Run a small initial smoke load:
-
-```bash
-python backend/scripts/run_monthly_pipeline.py \
-  --generation-run-id 15 \
-  --start-batch-id 15 \
-  --player-count 5000
-```
-
-Fail on existing data instead of skipping:
-
-```bash
-python backend/scripts/run_monthly_pipeline.py \
-  --generation-run-id 15 \
-  --start-batch-id 15 \
-  --fail-existing
-```
+The CLI should use the generation run's frozen configuration snapshot to derive
+the first generated month, generated month count, player scale, and other
+runtime settings. Development-only flags may exist temporarily during migration,
+but they should not be part of the operator-facing contract.
 
 ## CLI Output
 
-The command prints a compact per-batch summary:
+The command should print a compact per-batch summary:
 
 ```text
 generation_run_id=15
-months_requested=2
-batch=15,2024-01-01
-  players=skipped,existing_players=5000,existing_registrations=5000
-  club_memberships=skipped,existing_rows=4486
-  teams=skipped,active_teams=1750
-  matches=skipped,existing_matches=3286
-  ratings=skipped,existing_logs=13144
-batch=16,2024-02-01
-  players=skipped,existing_players=5000,existing_registrations=0
-  club_memberships=skipped,existing_rows=4486
-  teams=skipped,active_teams=1750
+months_configured=2
+batch=1,2024-01-01,status=succeeded
+  players=generated,players=5000,registrations=5000
+  club_memberships=generated,rows=4486
+  teams=generated,active_teams=1750
+  matches=generated,game_count=4938,match_count=3286
+  ratings=generated,log_count=13144,match_count=3286,rating_history_count=13144
+batch=2,2024-02-01,status=succeeded
   matches=generated,game_count=4938,match_count=3281
   ratings=generated,log_count=13124,match_count=3281,rating_history_count=13124
 ```
 
 ## Current Scope and Extension Points
 
-The current pipeline is ready to loop month-level match and rating generation
-for up to 12 successive batches.
+The current pipeline is intended to loop month-level match and rating generation
+for the configured generation month range.
 
 The following future enhancements should plug into this orchestration layer as
 new stages or as replacements for setup-only behavior:
