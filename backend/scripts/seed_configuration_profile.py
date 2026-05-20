@@ -19,7 +19,7 @@ def main() -> None:
         print(f"profile_id={profile_version.profile_id}")
         print(f"version_number={profile_version.version_number}")
         print(f"config_schema_version={profile_version.config_schema_version}")
-        print(f"validation_status={profile_version.validation_status}")
+        print(f"lifecycle_status={profile_version.lifecycle_status}")
 
 
 if __name__ == "__main__":

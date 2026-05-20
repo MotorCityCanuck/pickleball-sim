@@ -22,6 +22,88 @@ DEMO_PAYLOAD = {
 
 SCHEMA_STATEMENTS = (
     """
+    CREATE TABLE raw_seed_load_runs (
+        id integer primary key autoincrement,
+        dataset_type varchar(80) not null,
+        source_path varchar(1000) not null,
+        source_file_count integer not null default 0,
+        source_checksum varchar(128),
+        started_at datetime,
+        completed_at datetime,
+        status varchar(30) not null default 'pending',
+        rows_read integer not null default 0,
+        rows_loaded integer not null default 0,
+        rows_rejected integer not null default 0,
+        error_message text,
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null
+    )
+    """,
+    """
+    CREATE TABLE regions (
+        id integer primary key autoincrement,
+        country_code varchar(10) not null,
+        region_type varchar(20),
+        region_name varchar(255) not null,
+        state_province_code varchar(10),
+        population bigint,
+        selection_probability numeric(12,8),
+        competitiveness_multiplier numeric(8,4) default 1.0,
+        latitude numeric(10,6),
+        longitude numeric(10,6),
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null
+    )
+    """,
+    """
+    CREATE TABLE clubs (
+        id integer primary key,
+        club_name varchar(255) not null,
+        region_id bigint not null,
+        club_type varchar(50),
+        competitiveness_level varchar(50),
+        member_capacity integer,
+        founding_date date,
+        indoor_court_count integer default 0,
+        outdoor_court_count integer default 0,
+        generation_run_id bigint,
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null,
+        foreign key(region_id) references regions(id),
+        foreign key(generation_run_id) references generation_runs(id)
+    )
+    """,
+    """
+    CREATE TABLE first_names (
+        id integer primary key,
+        country_code varchar(2) not null,
+        state_province_code varchar(2) not null,
+        birth_year integer not null,
+        gender varchar(1) not null,
+        first_name varchar(100) not null,
+        frequency_count integer not null,
+        normalized_probability numeric(12,8),
+        source_dataset varchar(255),
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null
+    )
+    """,
+    """
+    CREATE TABLE last_names (
+        id integer primary key,
+        country_code varchar(2) not null,
+        state_province_code varchar(2) not null,
+        last_name varchar(100) not null,
+        frequency_count integer not null,
+        bias_multiplier numeric(10,4),
+        adjusted_frequency_count numeric(18,4),
+        normalized_probability numeric(12,8),
+        source_dataset varchar(255),
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null
+    )
+    """,
+    """
     CREATE TABLE configuration_profiles (
         id integer primary key autoincrement,
         profile_name varchar(255) not null unique,
@@ -147,6 +229,55 @@ def main() -> int:
     with sqlite3.connect(db_path) as connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
+
+        connection.executemany(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, dataset_type, source_path, source_file_count, status,
+                rows_read, rows_loaded, rows_rejected, started_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (1, "metro_areas_us", "data/raw/metro_areas/us.csv", 1, "completed", 120, 120, 0, "2026-05-20 08:00:00", "2026-05-20 08:03:00"),
+                (2, "first_names_us", "data/raw/first_names/us.csv", 1, "completed", 500, 500, 0, "2026-05-20 08:03:00", "2026-05-20 08:06:00"),
+                (3, "last_names_us", "data/raw/last_names/us.csv", 1, "completed", 300, 300, 0, "2026-05-20 08:06:00", "2026-05-20 08:08:00"),
+                (4, "pickleball_club_distributions", "data/raw/pickleball_clubs/distributions.csv", 1, "completed", 50, 50, 0, "2026-05-20 08:08:00", "2026-05-20 08:10:00"),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO regions (
+                id, country_code, region_type, region_name, state_province_code, population, selection_probability
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "US", "MSA", "Phoenix, AZ", "AZ", 5000000, 1.0),
+        )
+        connection.execute(
+            """
+            INSERT INTO clubs (
+                id, club_name, region_id, club_type, competitiveness_level, member_capacity,
+                indoor_court_count, outdoor_court_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "Phoenix Pickleball Club", 1, "public_park", "recreational", 120, 0, 8),
+        )
+        connection.execute(
+            """
+            INSERT INTO first_names (
+                id, country_code, state_province_code, birth_year, gender, first_name, frequency_count, normalized_probability, source_dataset
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "US", "AZ", 1990, "M", "Alex", 25, 1.0, "demo_first_names_us"),
+        )
+        connection.execute(
+            """
+            INSERT INTO last_names (
+                id, country_code, state_province_code, last_name, frequency_count, bias_multiplier,
+                adjusted_frequency_count, normalized_probability, source_dataset
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "US", "AZ", "Smith", 25, 1.0, 25.0, 1.0, "demo_last_names_us"),
+        )
 
         connection.execute(
             """

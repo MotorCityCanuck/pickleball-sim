@@ -7,19 +7,30 @@ from decimal import Decimal
 import json
 from typing import Callable
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Club,
     ConfigurationProfileVersion,
+    FirstName,
     GenerationRun,
     JobStageProgress,
     JobStatus,
+    LastName,
     MonthlyBatch,
+    RawSeedLoadRun,
+    Region,
 )
 
 
 DEFAULT_STALE_AFTER = timedelta(minutes=15)
+SEED_CONFIG_KEYS = (
+    "raw_seed_data",
+    "name_assignment",
+    "regional",
+    "club_generation",
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,54 @@ class ConfigSummary:
     simulation_version: str | None
     first_batch_month: date | None
     historical_batch_count: int | None
+    target_total_players: int | None
+    seed_dataset_count: int
+
+
+@dataclass(frozen=True)
+class SeedLoadRunSummary:
+    """UI-ready raw seed load run summary."""
+
+    load_run_id: int
+    dataset_type: str
+    status: str
+    rows_read: int
+    rows_loaded: int
+    rows_rejected: int
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class JobSummary:
+    """UI-ready job status summary."""
+
+    job_status_id: int
+    job_type: str
+    job_id: str
+    status: str
+    current_phase: str | None
+    percent_complete: Decimal | None
+    current_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class SeedDataSummary:
+    """UI-ready seed/reference data readiness summary."""
+
+    is_ready: bool
+    readiness_label: str
+    readiness_blockers: tuple[str, ...]
+    latest_seed_job: JobSummary | None
+    latest_raw_loads: tuple[SeedLoadRunSummary, ...]
+    regions_count: int
+    clubs_count: int
+    first_names_count: int
+    last_names_count: int
 
 
 @dataclass(frozen=True)
@@ -76,22 +135,6 @@ class BatchSummary:
 
 
 @dataclass(frozen=True)
-class JobSummary:
-    """UI-ready job status summary."""
-
-    job_status_id: int
-    job_type: str
-    job_id: str
-    status: str
-    current_phase: str | None
-    percent_complete: Decimal | None
-    current_message: str | None
-    started_at: datetime | None
-    completed_at: datetime | None
-    error_message: str | None
-
-
-@dataclass(frozen=True)
 class GenerationRunSummary:
     """UI-ready generation run summary."""
 
@@ -115,8 +158,10 @@ class AllowedActions:
     """Current operator actions and the blockers that disable them."""
 
     can_edit_config: bool
+    can_start_seed_refresh: bool
     can_start_generation_run: bool
     can_generate_student_dataset: bool
+    seed_refresh_blockers: tuple[str, ...]
     start_generation_blockers: tuple[str, ...]
     student_dataset_blockers: tuple[str, ...]
 
@@ -127,7 +172,8 @@ class ConfigEditorState:
 
     title: str
     notes: str
-    payload_json: str
+    seed_payload_json: str
+    synthetic_payload_json: str
     validation_passed: bool
     validation_errors: tuple[str, ...]
     validation_hash: str | None
@@ -140,6 +186,7 @@ class ControlPanelSnapshot:
     """Full read-model snapshot for the control panel landing page."""
 
     config_summary: ConfigSummary | None
+    seed_data_summary: SeedDataSummary
     generation_run_summary: GenerationRunSummary | None
     batch_summaries: tuple[BatchSummary, ...]
     active_job_summary: JobSummary | None
@@ -161,6 +208,7 @@ class ControlPanelQueries:
 
     def get_control_panel_snapshot(self, session: Session) -> ControlPanelSnapshot:
         config_summary, config_warning = self._get_current_valid_config_summary(session)
+        seed_summary = self.get_seed_data_summary(session)
         generation_run = self.get_active_generation_run(session) or self.get_latest_generation_run(session)
         run_summary = None
         batch_summaries: tuple[BatchSummary, ...] = ()
@@ -169,6 +217,8 @@ class ControlPanelQueries:
 
         if config_warning is not None:
             warnings.append(config_warning)
+        if not seed_summary.is_ready:
+            warnings.extend(seed_summary.readiness_blockers)
 
         if generation_run is not None:
             active_job = self.get_job_for_generation_run(
@@ -188,17 +238,19 @@ class ControlPanelQueries:
 
         allowed_actions = self._build_allowed_actions(
             config_summary=config_summary,
+            seed_summary=seed_summary,
             generation_run=generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
         )
         return ControlPanelSnapshot(
             config_summary=config_summary,
+            seed_data_summary=seed_summary,
             generation_run_summary=run_summary,
             batch_summaries=batch_summaries,
             active_job_summary=active_job,
             allowed_actions=allowed_actions,
-            warnings=tuple(warnings),
+            warnings=tuple(dict.fromkeys(warnings)),
         )
 
     def get_active_generation_run(self, session: Session) -> GenerationRun | None:
@@ -238,20 +290,72 @@ class ControlPanelQueries:
             )
             .limit(1)
         )
-        job = session.scalar(statement)
-        if job is None:
-            return None
-        return JobSummary(
-            job_status_id=job.id,
-            job_type=job.job_type,
-            job_id=job.job_id,
-            status=job.status,
-            current_phase=job.current_phase,
-            percent_complete=job.percent_complete,
-            current_message=job.current_message,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-            error_message=job.error_message,
+        return _job_summary(session.scalar(statement))
+
+    def get_seed_job(self, session: Session) -> JobSummary | None:
+        return _job_summary(
+            session.scalar(
+                select(JobStatus)
+                .where(JobStatus.job_type.in_(("raw_seed_ingest", "seed_normalization", "seed_refresh")))
+                .order_by(
+                    case((JobStatus.status == "running", 0), else_=1),
+                    JobStatus.started_at.desc(),
+                    JobStatus.created_at.desc(),
+                    JobStatus.id.desc(),
+                )
+                .limit(1)
+            )
+        )
+
+    def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
+        regions_count = int(session.scalar(select(func.count()).select_from(Region)) or 0)
+        clubs_count = int(session.scalar(select(func.count()).select_from(Club)) or 0)
+        first_names_count = int(session.scalar(select(func.count()).select_from(FirstName)) or 0)
+        last_names_count = int(session.scalar(select(func.count()).select_from(LastName)) or 0)
+        latest_seed_job = self.get_seed_job(session)
+        latest_raw_loads = tuple(
+            SeedLoadRunSummary(
+                load_run_id=load.id,
+                dataset_type=load.dataset_type,
+                status=load.status,
+                rows_read=load.rows_read,
+                rows_loaded=load.rows_loaded,
+                rows_rejected=load.rows_rejected,
+                started_at=load.started_at,
+                completed_at=load.completed_at,
+                error_message=load.error_message,
+            )
+            for load in session.scalars(
+                select(RawSeedLoadRun)
+                .order_by(RawSeedLoadRun.started_at.desc(), RawSeedLoadRun.id.desc())
+                .limit(5)
+            )
+        )
+
+        blockers: list[str] = []
+        if regions_count <= 0:
+            blockers.append("Seed/reference readiness requires normalized regions.")
+        if clubs_count <= 0:
+            blockers.append("Seed/reference readiness requires normalized clubs.")
+        if first_names_count <= 0:
+            blockers.append("Seed/reference readiness requires normalized first names.")
+        if last_names_count <= 0:
+            blockers.append("Seed/reference readiness requires normalized last names.")
+        if latest_seed_job is not None and latest_seed_job.status == "failed":
+            blockers.append("The latest seed preparation job failed.")
+        if latest_raw_loads and latest_raw_loads[0].status == "failed":
+            blockers.append("The latest raw seed ingest failed.")
+
+        return SeedDataSummary(
+            is_ready=not blockers,
+            readiness_label="Ready" if not blockers else "Blocked",
+            readiness_blockers=tuple(blockers),
+            latest_seed_job=latest_seed_job,
+            latest_raw_loads=latest_raw_loads,
+            regions_count=regions_count,
+            clubs_count=clubs_count,
+            first_names_count=first_names_count,
+            last_names_count=last_names_count,
         )
 
     def get_generation_run_batches(
@@ -291,7 +395,7 @@ class ControlPanelQueries:
                     stage_name=row.stage_name,
                     stage_sequence=_coerce_int(row.stage_sequence),
                     status=row.status,
-                    progress_current=_coerce_int(row.progress_current, default=0),
+                    progress_current=_coerce_int(row.progress_current, default=0) or 0,
                     progress_total=_coerce_int(row.progress_total),
                     progress_percent=row.progress_percent,
                     progress_unit=row.progress_unit,
@@ -348,6 +452,8 @@ class ControlPanelQueries:
         version = valid_versions[0]
         payload = version.config_payload or {}
         simulation = payload.get("simulation", {})
+        raw_seed_data = payload.get("raw_seed_data", {})
+        supported_datasets = raw_seed_data.get("supported_datasets", []) if isinstance(raw_seed_data, dict) else []
         return (
             ConfigSummary(
                 version_id=version.id,
@@ -362,6 +468,8 @@ class ControlPanelQueries:
                 simulation_version=_coerce_str(simulation.get("simulation_version")),
                 first_batch_month=_coerce_date(simulation.get("first_batch_month")),
                 historical_batch_count=_coerce_int(simulation.get("historical_batch_count")),
+                target_total_players=_coerce_int(simulation.get("target_total_players")),
+                seed_dataset_count=len(supported_datasets) if isinstance(supported_datasets, list) else 0,
             ),
             None,
         )
@@ -394,33 +502,55 @@ class ControlPanelQueries:
         self,
         *,
         config_summary: ConfigSummary | None,
+        seed_summary: SeedDataSummary,
         generation_run: GenerationRun | None,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
     ) -> AllowedActions:
+        seed_blockers: list[str] = []
+        if generation_run is not None and generation_run.status == "running":
+            seed_blockers.append("Seed preparation cannot run while a generation run is running.")
+        if active_job is not None and active_job.status == "running":
+            seed_blockers.append("Another write-heavy generation job is still running.")
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+            seed_blockers.append("A seed preparation job is already running.")
+
         start_blockers: list[str] = []
         if config_summary is None:
             start_blockers.append("A single valid configuration is required.")
+        if not seed_summary.is_ready:
+            start_blockers.append("Seed/reference data must be prepared before synthetic generation can start.")
         if generation_run is not None and generation_run.status == "running":
             start_blockers.append("A generation run is already running.")
         if active_job is not None and active_job.status == "running":
             start_blockers.append("A generation job is still running.")
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+            start_blockers.append("Seed preparation must finish before synthetic generation can start.")
 
         student_blockers: list[str] = []
         if generation_run is None:
             student_blockers.append("No generation run exists yet.")
         elif generation_run.status != "succeeded":
             student_blockers.append("Student dataset generation requires a succeeded generation run.")
+        if not seed_summary.is_ready:
+            student_blockers.append("Seed/reference readiness must be restored before student dataset generation.")
         if any(batch.processing_status != "succeeded" for batch in batch_summaries):
             student_blockers.append("All monthly batches must be succeeded before student dataset generation.")
         if active_job is not None and active_job.status == "running":
             student_blockers.append("No write-heavy job can be active during student dataset generation.")
+        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status == "running":
+            student_blockers.append("No seed preparation job can be active during student dataset generation.")
 
-        can_edit_config = generation_run is None or generation_run.status != "running"
+        can_edit_config = (
+            (generation_run is None or generation_run.status != "running")
+            and (seed_summary.latest_seed_job is None or seed_summary.latest_seed_job.status != "running")
+        )
         return AllowedActions(
             can_edit_config=can_edit_config,
+            can_start_seed_refresh=not seed_blockers,
             can_start_generation_run=not start_blockers,
             can_generate_student_dataset=not student_blockers,
+            seed_refresh_blockers=tuple(seed_blockers),
             start_generation_blockers=tuple(start_blockers),
             student_dataset_blockers=tuple(student_blockers),
         )
@@ -438,7 +568,8 @@ class ControlPanelQueries:
             return ConfigEditorState(
                 title="",
                 notes="",
-                payload_json="{}",
+                seed_payload_json="{}",
+                synthetic_payload_json="{}",
                 validation_passed=False,
                 validation_errors=(
                     "A single valid configuration is required before editing.",
@@ -448,10 +579,12 @@ class ControlPanelQueries:
                 change_count=None,
             )
         version = valid_versions[0]
+        seed_payload, synthetic_payload = split_payload_sections(version.config_payload)
         return ConfigEditorState(
             title="",
             notes=version.notes or "",
-            payload_json=json.dumps(version.config_payload, indent=2, sort_keys=True),
+            seed_payload_json=json.dumps(seed_payload, indent=2, sort_keys=True),
+            synthetic_payload_json=json.dumps(synthetic_payload, indent=2, sort_keys=True),
             validation_passed=False,
             validation_errors=(),
             validation_hash=version.config_hash,
@@ -490,6 +623,50 @@ class ControlPanelQueries:
         if status != "running" or last_heartbeat_at is None:
             return False
         return (now - last_heartbeat_at) > self.stale_after
+
+
+def _job_summary(job: JobStatus | None) -> JobSummary | None:
+    if job is None:
+        return None
+    return JobSummary(
+        job_status_id=job.id,
+        job_type=job.job_type,
+        job_id=job.job_id,
+        status=job.status,
+        current_phase=job.current_phase,
+        percent_complete=job.percent_complete,
+        current_message=job.current_message,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        error_message=job.error_message,
+    )
+
+
+def split_payload_sections(payload: dict[str, object] | None) -> tuple[dict[str, object], dict[str, object]]:
+    """Split a full configuration payload into seed and synthetic sections."""
+    source = payload or {}
+    seed_payload: dict[str, object] = {}
+    synthetic_payload: dict[str, object] = {}
+    for key, value in source.items():
+        if key in SEED_CONFIG_KEYS:
+            seed_payload[key] = value
+        else:
+            synthetic_payload[key] = value
+    return seed_payload, synthetic_payload
+
+
+def merge_payload_sections(
+    seed_payload: dict[str, object],
+    synthetic_payload: dict[str, object],
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Merge seed and synthetic configuration sections into one payload."""
+    overlap = sorted(set(seed_payload) & set(synthetic_payload))
+    if overlap:
+        return {}, (f"Configuration sections overlap: {', '.join(overlap)}.",)
+    payload: dict[str, object] = {}
+    payload.update(synthetic_payload)
+    payload.update(seed_payload)
+    return payload, ()
 
 
 def _count_batch_statuses(batch_summaries: tuple[BatchSummary, ...]) -> dict[str, int]:

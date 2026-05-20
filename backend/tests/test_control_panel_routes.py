@@ -31,6 +31,98 @@ def session_factory():
         conn.exec_driver_sql("PRAGMA foreign_keys = ON")
         conn.exec_driver_sql(
             """
+            CREATE TABLE raw_seed_load_runs (
+                id integer primary key autoincrement,
+                dataset_type varchar(80) not null,
+                source_path varchar(1000) not null,
+                source_file_count integer not null default 0,
+                source_checksum varchar(128),
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null default 'pending',
+                rows_read integer not null default 0,
+                rows_loaded integer not null default 0,
+                rows_rejected integer not null default 0,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE regions (
+                id integer primary key autoincrement,
+                country_code varchar(10) not null,
+                region_type varchar(20),
+                region_name varchar(255) not null,
+                state_province_code varchar(10),
+                population bigint,
+                selection_probability numeric(12,8),
+                competitiveness_multiplier numeric(8,4) default 1.0,
+                latitude numeric(10,6),
+                longitude numeric(10,6),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE clubs (
+                id integer primary key,
+                club_name varchar(255) not null,
+                region_id bigint not null,
+                club_type varchar(50),
+                competitiveness_level varchar(50),
+                member_capacity integer,
+                founding_date date,
+                indoor_court_count integer default 0,
+                outdoor_court_count integer default 0,
+                generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                foreign key(region_id) references regions(id),
+                foreign key(generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE first_names (
+                id integer primary key,
+                country_code varchar(2) not null,
+                state_province_code varchar(2) not null,
+                birth_year integer not null,
+                gender varchar(1) not null,
+                first_name varchar(100) not null,
+                frequency_count integer not null,
+                normalized_probability numeric(12,8),
+                source_dataset varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE last_names (
+                id integer primary key,
+                country_code varchar(2) not null,
+                state_province_code varchar(2) not null,
+                last_name varchar(100) not null,
+                frequency_count integer not null,
+                bias_multiplier numeric(10,4),
+                adjusted_frequency_count numeric(18,4),
+                normalized_probability numeric(12,8),
+                source_dataset varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE configuration_profiles (
                 id integer primary key autoincrement,
                 profile_name varchar(255) not null unique,
@@ -174,6 +266,7 @@ def _seed_snapshot_state(session_factory):
                 },
             },
         )
+        _seed_ready_reference_data(session)
         session.execute(
             text(
                 """
@@ -246,9 +339,60 @@ def _seed_idle_config_state(session_factory):
                 },
             },
         )
+        _seed_ready_reference_data(session)
         session.commit()
     finally:
         session.close()
+
+
+def _seed_ready_reference_data(session):
+    session.execute(
+        text(
+            """
+            INSERT INTO regions (
+                id, country_code, region_type, region_name, state_province_code, created_at, updated_at
+            ) VALUES (1, 'US', 'MSA', 'Phoenix, AZ', 'AZ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO clubs (
+                id, club_name, region_id, club_type, created_at, updated_at
+            ) VALUES (1, 'Phoenix Pickleball Club', 1, 'public_park', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO first_names (
+                id, country_code, state_province_code, birth_year, gender, first_name, frequency_count, created_at, updated_at
+            ) VALUES (1, 'US', 'AZ', 1990, 'M', 'Alex', 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO last_names (
+                id, country_code, state_province_code, last_name, frequency_count, created_at, updated_at
+            ) VALUES (1, 'US', 'AZ', 'Smith', 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, dataset_type, source_path, source_file_count, status, rows_read, rows_loaded, rows_rejected, created_at, updated_at
+            ) VALUES (
+                1, 'metro_areas_us', 'data/raw/metro_areas/us.csv', 1, 'completed', 100, 100, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
 
 
 def _request(path: str, *, method: str = "GET") -> Request:
@@ -257,6 +401,19 @@ def _request(path: str, *, method: str = "GET") -> Request:
 
 def _route_map(app):
     return {route.path: route.endpoint for route in app.router.routes if hasattr(route, "path")}
+
+
+class FakeGenerationRunService:
+    def __init__(self, *, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    def launch_generation_run(self, generation_name: str, *, session=None):
+        del session
+        self.calls.append(generation_name)
+        if self.error is not None:
+            raise ValueError(self.error)
+        return object()
 
 
 def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
@@ -326,7 +483,8 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "matches" in progress.body.decode()
 
     assert orchestration.status_code == 200
-    assert "Mock-up workflow surface" in orchestration.body.decode()
+    assert "Generate seed data" in orchestration.body.decode()
+    assert "Generate player and match data" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
     assert 'hx-get="/control/partials/run-status"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/batch-table"' in orchestration.body.decode()
@@ -343,7 +501,8 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
             request=_request("/control/config/validate", method="POST"),
             config_title="March tuning",
             config_notes="adjusted player count",
-            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 3, "first_batch_month": "2026-03-01", "target_total_players": 1200}}',
+            seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us"]}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 3, "first_batch_month": "2026-03-01", "target_total_players": 1200}}',
             session=session,
             queries=ControlPanelQueries(),
             lifecycle=lifecycle,
@@ -356,6 +515,7 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
     assert "Configuration validated successfully." in body
     assert "Save New Version" in body
     assert "March tuning" in body
+    assert "Seed Data Ingest and Preparation JSON" in body
 
 
 def test_control_panel_config_save_persists_new_version_when_idle(session_factory):
@@ -369,7 +529,8 @@ def test_control_panel_config_save_persists_new_version_when_idle(session_factor
             request=_request("/control/config/save", method="POST"),
             config_title="April tuning",
             config_notes="saved",
-            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v3", "master_seed": 21, "historical_batch_count": 4, "first_batch_month": "2026-03-01", "target_total_players": 1400}}',
+            seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us", "first_names_us"]}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v3", "master_seed": 21, "historical_batch_count": 4, "first_batch_month": "2026-03-01", "target_total_players": 1400}}',
             session=session,
             queries=ControlPanelQueries(),
             lifecycle=lifecycle,
@@ -398,7 +559,8 @@ def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
             request=_request("/control/config/save", method="POST"),
             config_title="Blocked save",
             config_notes="should not persist",
-            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Route Test", "simulation_version": "v2", "master_seed": 11, "historical_batch_count": 2, "first_batch_month": "2026-01-01", "target_total_players": 1000}}',
+            seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw"}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Route Test", "simulation_version": "v2", "master_seed": 11, "historical_batch_count": 2, "first_batch_month": "2026-01-01", "target_total_players": 1000}}',
             session=session,
             queries=ControlPanelQueries(),
             lifecycle=lifecycle,
@@ -411,3 +573,76 @@ def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
     assert response.status_code == 200
     assert "Configuration editing is blocked while a generation run is active." in body
     assert current_version.title == "Read only config"
+
+
+def test_control_panel_generation_start_requires_destructive_confirmation(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeGenerationRunService()
+    try:
+        response = routes["/control/generation/start"](
+            request=_request("/control/generation/start", method="POST"),
+            generation_name="UI launch",
+            destructive_confirm=None,
+            session=session,
+            queries=ControlPanelQueries(),
+            run_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Destructive reset confirmation is required before starting a generation run." in body
+    assert fake_service.calls == []
+
+
+def test_control_panel_generation_start_launches_run_when_allowed(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeGenerationRunService()
+    try:
+        response = routes["/control/generation/start"](
+            request=_request("/control/generation/start", method="POST"),
+            generation_name="UI launch",
+            destructive_confirm="yes",
+            session=session,
+            queries=ControlPanelQueries(),
+            run_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "completed successfully" in body
+    assert "UI launch" in body
+    assert fake_service.calls == ["UI launch"]
+
+
+def test_control_panel_generation_start_surfaces_service_failure(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeGenerationRunService(error="pipeline failed")
+    try:
+        response = routes["/control/generation/start"](
+            request=_request("/control/generation/start", method="POST"),
+            generation_name="UI launch",
+            destructive_confirm="yes",
+            session=session,
+            queries=ControlPanelQueries(),
+            run_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "pipeline failed" in body
+    assert fake_service.calls == ["UI launch"]

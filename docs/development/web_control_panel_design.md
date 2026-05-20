@@ -235,9 +235,35 @@ The authoritative configuration schema should come from backend configuration mo
 - Grouping metadata.
 - Advanced/basic field visibility.
 
-The UI should still present fields in manually curated domain groups so the page remains understandable. Generated fields should appear inside these groups, not as one giant JSON editor.
+The UI should still present fields in manually curated domain groups so the page remains understandable. Generated fields should appear inside these groups, not as one giant undifferentiated editor.
 
 Suggested sections:
+
+1. Seed Data Ingest and Preparation Configuration
+2. Player and Match Generation Configuration
+
+The first section should contain raw ingest and seed-preparation settings such
+as:
+
+- `raw_seed_data`
+- `name_assignment`
+- `regional`
+- `club_generation`
+
+The second section should contain synthetic workload settings such as:
+
+- `runtime`
+- `simulation`
+- `player_generation`
+- team formation settings
+- match scheduling settings
+- rating settings
+- data quality and export settings
+
+The control panel may still store and validate one full configuration payload,
+but the editing experience should present the seed-preparation subset and the
+player/match-generation subset as separate editor sections that are recombined
+before validation and save.
 
 - Simulation identity and target scale
 - Player generation
@@ -392,18 +418,16 @@ This is important for debugging, reproducibility, and explaining why simulation 
 
 ## Tab 2: Workload Orchestration
 
-The Workload Orchestration tab should control three major stages:
+The Workload Orchestration tab should present two independent operational
+stages:
 
-1. Raw Data Ingest and Seed Data Generation
-2. Simulation Workflow Control and Status
-3. Student Dataset Release Generation
+1. Generate New Seed Data
+2. Generate Player and Match Data
 
-Student-facing parquet dataset generation is intentionally managed as the final
-stage in the Workload Orchestration tab. It is a publication/export workflow,
-not a core simulation execution workflow, and it must occur only after the clean
-simulation pipeline and validation prerequisites are complete.
+Student-facing parquet dataset generation remains the final step inside Stage 2.
+It is not a separate top-level orchestration stage.
 
-These stages should be visible as separate panels inside the same tab.
+These two stages should be visible as separate panels inside the same tab.
 
 ### Simplified Operational Contract
 
@@ -412,11 +436,14 @@ orchestration system.
 
 - There is exactly one current valid configuration version.
 - Saving a new configuration version automatically deprecates the prior valid version.
-- Seed/reference data is treated as fixed operational input for Version 1.
+- Seed/reference data is treated as fixed operational input for Version 1 once prepared.
 - Seed/reference data changes only through an explicit raw ingest and seed
   normalization workflow.
+- Seed preparation and synthetic generation are separate operator actions.
+- Seed preparation may run independently when no synthetic generation job is active.
 - Only the web control panel may start a generation run.
 - A generation run may start only from the current valid configuration version.
+- A generation run may start only when seed/reference readiness checks pass.
 - Only one generation run may be `running` at a time.
 - Every generation run starts from the beginning.
 - Every generation run is destructive to generated domain data.
@@ -425,12 +452,13 @@ orchestration system.
 - Retrying after failure requires a new full destructive generation run.
 - Student dataset releases may use only the current generation run after it has `succeeded`.
 
-## Stage 1: Raw Data Ingest And Seed Data Generation
+## Stage 1: Generate New Seed Data
 
-This stage prepares the reference data needed by generation jobs.
+This stage prepares or refreshes the reference data needed by synthetic
+generation jobs.
 
-- This stage can run independently of the data generation pipeline.
-- This stage must not run when the data generation pipeline is active.
+- This stage can run independently of synthetic generation.
+- This stage must not run when player/match generation is active.
 - This stage should be blocked when another write-heavy seed preparation job is already running.
 - Version 1 should treat normalized seed/reference data as fixed operational
   input once prepared. The system does not need seed dataset version lineage for
@@ -512,7 +540,7 @@ If seed/reference data changes, subsequent generation runs use the currently
 loaded seed/reference data. Reproducibility for Version 1 is primarily based on
 the saved configuration snapshot and the current prepared seed/reference state.
 
-## Stage 2: Simulation Workflow Control And Status
+## Stage 2: Generate Player And Match Data
 
 This stage starts full generation runs and displays generation progress.
 Generation starts are deliberately narrow in Version 1: only the web control
@@ -565,6 +593,7 @@ Actions:
 Generation start rules:
 
 - A run may start only when the current configuration version is valid.
+- A run may start only when Stage 1 seed/reference readiness checks pass.
 - A run may start only when no generation run is currently `running`.
 - A run must use seed, first generated month, generated month count, player scale,
   and all other runtime generation settings from the current valid configuration.

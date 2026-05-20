@@ -11,38 +11,34 @@
             {% endif %}
         </div>
         <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Simulation</div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed Preparation Scope</div>
             {% if snapshot.config_summary %}
-                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.simulation_name or "Unnamed simulation" }}</div>
-                <div style="margin-top:6px; color:#5a6477;">Version {{ snapshot.config_summary.simulation_version or "n/a" }}</div>
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.seed_dataset_count }} raw datasets</div>
+                <div style="margin-top:6px; color:#5a6477;">Seed ingest and normalization settings</div>
             {% else %}
                 <div style="margin-top:8px; font-size:18px;">Unavailable</div>
             {% endif %}
         </div>
         <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Window</div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Synthetic Run Scope</div>
             {% if snapshot.config_summary %}
-                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.first_batch_month or "n/a" }}</div>
-                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.config_summary.historical_batch_count or 0 }} months</div>
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.target_total_players or 0 }} players</div>
+                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.config_summary.first_batch_month or "n/a" }} for {{ snapshot.config_summary.historical_batch_count or 0 }} months</div>
             {% else %}
                 <div style="margin-top:8px; font-size:18px;">Unavailable</div>
             {% endif %}
         </div>
         <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Eligibility</div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Edit Eligibility</div>
             <div style="margin-top:8px; font-size:18px;">
-                {% if snapshot.allowed_actions.can_start_generation_run %}
+                {% if snapshot.allowed_actions.can_edit_config %}
                     Ready
                 {% else %}
                     Blocked
                 {% endif %}
             </div>
-            {% if snapshot.allowed_actions.start_generation_blockers %}
-                <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
-                    {% for blocker in snapshot.allowed_actions.start_generation_blockers %}
-                        <li>{{ blocker }}</li>
-                    {% endfor %}
-                </ul>
+            {% if not snapshot.allowed_actions.can_edit_config %}
+                <div style="margin-top:6px; color:#8f1d18;">Configuration editing is blocked while a write-heavy job is active.</div>
             {% endif %}
         </div>
     </div>
@@ -50,8 +46,9 @@
     <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
-                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Config Editor</div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Configuration Editor</div>
                 <div style="margin-top:6px; font-size:18px;">Edit the current valid configuration and save a new immutable version.</div>
+                <div style="margin-top:6px; color:#5a6477;">Seed preparation settings and player/match generation settings are edited separately, then validated as one payload.</div>
             </div>
             <div style="font-size:13px; color:#5a6477;">
                 {% if editor.validation_hash %}
@@ -108,16 +105,27 @@
                 </label>
             </div>
 
-            <label style="display:grid; gap:6px;">
-                <span style="font-size:13px; color:#5a6477;">Configuration JSON</span>
-                <textarea
-                    name="config_payload_json"
-                    rows="28"
-                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
-                >{{ editor.payload_json }}</textarea>
-            </label>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:12px;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Seed Data Ingest and Preparation JSON</span>
+                    <textarea
+                        name="seed_config_json"
+                        rows="24"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
+                    >{{ editor.seed_payload_json }}</textarea>
+                </label>
 
-            <div style="display:flex; gap:10px; align-items:center;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Player and Match Generation JSON</span>
+                    <textarea
+                        name="synthetic_config_json"
+                        rows="24"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
+                    >{{ editor.synthetic_payload_json }}</textarea>
+                </label>
+            </div>
+
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <button
                     type="submit"
                     formaction="/control/config/validate"
@@ -142,7 +150,7 @@
                     Save New Version
                 </button>
                 {% if not snapshot.allowed_actions.can_edit_config %}
-                    <span style="font-size:13px; color:#8f1d18;">Configuration editing is blocked while a generation run is active.</span>
+                    <span style="font-size:13px; color:#8f1d18;">Configuration editing is blocked while a seed or synthetic generation job is active.</span>
                 {% endif %}
             </div>
         </form>

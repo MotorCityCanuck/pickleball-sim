@@ -23,6 +23,98 @@ def session():
         conn.exec_driver_sql("PRAGMA foreign_keys = ON")
         conn.exec_driver_sql(
             """
+            CREATE TABLE raw_seed_load_runs (
+                id integer primary key autoincrement,
+                dataset_type varchar(80) not null,
+                source_path varchar(1000) not null,
+                source_file_count integer not null default 0,
+                source_checksum varchar(128),
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null default 'pending',
+                rows_read integer not null default 0,
+                rows_loaded integer not null default 0,
+                rows_rejected integer not null default 0,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE regions (
+                id integer primary key autoincrement,
+                country_code varchar(10) not null,
+                region_type varchar(20),
+                region_name varchar(255) not null,
+                state_province_code varchar(10),
+                population bigint,
+                selection_probability numeric(12,8),
+                competitiveness_multiplier numeric(8,4) default 1.0,
+                latitude numeric(10,6),
+                longitude numeric(10,6),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE clubs (
+                id integer primary key,
+                club_name varchar(255) not null,
+                region_id bigint not null,
+                club_type varchar(50),
+                competitiveness_level varchar(50),
+                member_capacity integer,
+                founding_date date,
+                indoor_court_count integer default 0,
+                outdoor_court_count integer default 0,
+                generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                foreign key(region_id) references regions(id),
+                foreign key(generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE first_names (
+                id integer primary key,
+                country_code varchar(2) not null,
+                state_province_code varchar(2) not null,
+                birth_year integer not null,
+                gender varchar(1) not null,
+                first_name varchar(100) not null,
+                frequency_count integer not null,
+                normalized_probability numeric(12,8),
+                source_dataset varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE last_names (
+                id integer primary key,
+                country_code varchar(2) not null,
+                state_province_code varchar(2) not null,
+                last_name varchar(100) not null,
+                frequency_count integer not null,
+                bias_multiplier numeric(10,4),
+                adjusted_frequency_count numeric(18,4),
+                normalized_probability numeric(12,8),
+                source_dataset varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE configuration_profiles (
                 id integer primary key autoincrement,
                 profile_name varchar(255) not null unique,
@@ -173,8 +265,60 @@ def _seed_valid_config(session):
     session.commit()
 
 
+def _seed_ready_reference_data(session):
+    session.execute(
+        text(
+            """
+            INSERT INTO regions (
+                id, country_code, region_type, region_name, state_province_code, created_at, updated_at
+            ) VALUES (1, 'US', 'MSA', 'Phoenix, AZ', 'AZ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO clubs (
+                id, club_name, region_id, club_type, created_at, updated_at
+            ) VALUES (1, 'Phoenix Pickleball Club', 1, 'public_park', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO first_names (
+                id, country_code, state_province_code, birth_year, gender, first_name, frequency_count, created_at, updated_at
+            ) VALUES (1, 'US', 'AZ', 1990, 'M', 'Alex', 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO last_names (
+                id, country_code, state_province_code, last_name, frequency_count, created_at, updated_at
+            ) VALUES (1, 'US', 'AZ', 'Smith', 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, dataset_type, source_path, source_file_count, status, rows_read, rows_loaded, rows_rejected, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                1, 'metro_areas_us', 'data/raw/metro_areas/us.csv', 1, 'completed', 100, 100, 0,
+                '2026-05-20 08:00:00', '2026-05-20 08:05:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+
 def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     _seed_valid_config(session)
+    _seed_ready_reference_data(session)
     now = datetime(2026, 5, 20, 12, 0, 0)
     stale_at = now - timedelta(minutes=20)
     session.execute(
@@ -233,6 +377,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.config_summary is not None
     assert snapshot.config_summary.title == "Current config"
     assert snapshot.config_summary.first_batch_month.isoformat() == "2026-01-01"
+    assert snapshot.seed_data_summary.is_ready is True
     assert snapshot.generation_run_summary is not None
     assert snapshot.generation_run_summary.generation_run_id == 1
     assert snapshot.generation_run_summary.running_batch_count == 1
@@ -263,6 +408,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
 
 
 def test_get_control_panel_snapshot_reports_missing_valid_config(session):
+    _seed_ready_reference_data(session)
     session.execute(
         text(
             """
@@ -296,3 +442,16 @@ def test_get_control_panel_snapshot_reports_missing_valid_config(session):
     assert snapshot.allowed_actions.can_start_generation_run is False
     assert "A single valid configuration is required." in snapshot.allowed_actions.start_generation_blockers
     assert snapshot.allowed_actions.can_generate_student_dataset is True
+
+
+def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(session):
+    _seed_valid_config(session)
+
+    snapshot = ControlPanelQueries(now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)).get_control_panel_snapshot(session)
+
+    assert snapshot.seed_data_summary.is_ready is False
+    assert snapshot.allowed_actions.can_start_generation_run is False
+    assert (
+        "Seed/reference data must be prepared before synthetic generation can start."
+        in snapshot.allowed_actions.start_generation_blockers
+    )

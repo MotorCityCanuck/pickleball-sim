@@ -2,16 +2,138 @@
     <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
-                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Run Controls</div>
-                <div style="margin-top:6px; font-size:18px;">Mock-up workflow surface</div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 1</div>
+                <div style="margin-top:6px; font-size:18px;">Generate seed data</div>
                 <div style="margin-top:6px; color:#5a6477;">
-                    This section is visual only for now. Start actions remain disabled until the launch route is wired.
+                    Load raw seed inputs and normalize production reference tables before any synthetic generation run starts.
                 </div>
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
-                Mock-up only
+            {% if snapshot.allowed_actions.can_start_seed_refresh %}
+                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    Ready
+                </div>
+            {% else %}
+                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                    Blocked
+                </div>
+            {% endif %}
+        </div>
+
+        <div style="margin-top:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed Readiness</div>
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.seed_data_summary.readiness_label }}</div>
+                {% if snapshot.seed_data_summary.readiness_blockers %}
+                    <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                        {% for blocker in snapshot.seed_data_summary.readiness_blockers %}
+                            <li>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <div style="margin-top:6px; color:#5a6477;">Reference tables are populated and synthetic generation can rely on them.</div>
+                {% endif %}
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Reference Row Counts</div>
+                <div style="margin-top:8px; color:#1d2433;">Regions: {{ snapshot.seed_data_summary.regions_count }}</div>
+                <div style="margin-top:6px; color:#1d2433;">Clubs: {{ snapshot.seed_data_summary.clubs_count }}</div>
+                <div style="margin-top:6px; color:#1d2433;">First names: {{ snapshot.seed_data_summary.first_names_count }}</div>
+                <div style="margin-top:6px; color:#1d2433;">Last names: {{ snapshot.seed_data_summary.last_names_count }}</div>
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Seed Job</div>
+                {% if snapshot.seed_data_summary.latest_seed_job %}
+                    <div style="margin-top:8px; font-size:18px;">{{ snapshot.seed_data_summary.latest_seed_job.job_type }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">{{ snapshot.seed_data_summary.latest_seed_job.status }}</div>
+                    {% if snapshot.seed_data_summary.latest_seed_job.current_message %}
+                        <div style="margin-top:6px; color:#5a6477;">{{ snapshot.seed_data_summary.latest_seed_job.current_message }}</div>
+                    {% endif %}
+                {% else %}
+                    <div style="margin-top:8px; font-size:18px;">No seed job yet</div>
+                {% endif %}
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Preconditions</div>
+                {% if snapshot.allowed_actions.seed_refresh_blockers %}
+                    <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                        {% for blocker in snapshot.allowed_actions.seed_refresh_blockers %}
+                            <li>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <div style="margin-top:8px; color:#5a6477;">No active generation job is blocking seed preparation.</div>
+                {% endif %}
             </div>
         </div>
+
+        <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button disabled style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+                Load Raw Seed Data
+            </button>
+            <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+                Normalize Seed Data
+            </button>
+            <button disabled style="border:1px solid #d6d9df; background:#f4f6fa; color:#5a6477; border-radius:8px; padding:10px 14px; opacity:0.75; cursor:not-allowed;">
+                Refresh Full Seed Dataset
+            </button>
+        </div>
+
+        {% if snapshot.seed_data_summary.latest_raw_loads %}
+            <div style="margin-top:16px; overflow:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                    <thead>
+                        <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
+                            <th style="padding:8px 10px;">Dataset</th>
+                            <th style="padding:8px 10px;">Status</th>
+                            <th style="padding:8px 10px;">Rows Loaded</th>
+                            <th style="padding:8px 10px;">Rows Rejected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for load in snapshot.seed_data_summary.latest_raw_loads %}
+                            <tr style="border-bottom:1px solid #eef1f5;">
+                                <td style="padding:8px 10px;">{{ load.dataset_type }}</td>
+                                <td style="padding:8px 10px;">{{ load.status }}</td>
+                                <td style="padding:8px 10px;">{{ load.rows_loaded }}</td>
+                                <td style="padding:8px 10px;">{{ load.rows_rejected }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </section>
+
+    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 2</div>
+                <div style="margin-top:6px; font-size:18px;">Generate player and match data</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    Start the destructive full synthetic generation run from the current valid configuration after seed data is ready.
+                </div>
+            </div>
+            {% if snapshot.allowed_actions.can_start_generation_run %}
+                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    Ready to start
+                </div>
+            {% else %}
+                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                    Blocked
+                </div>
+            {% endif %}
+        </div>
+
+        {% if launch_message %}
+            <div style="margin-top:12px; border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                {{ launch_message }}
+            </div>
+        {% endif %}
+        {% if launch_error %}
+            <div style="margin-top:12px; border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                {{ launch_error }}
+            </div>
+        {% endif %}
 
         <div style="margin-top:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
             <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
@@ -32,7 +154,7 @@
                 </div>
             </div>
             <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
-                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Preconditions</div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Synthetic Run Preconditions</div>
                 <div style="margin-top:8px; font-size:18px;">
                     {% if snapshot.allowed_actions.can_start_generation_run %}
                         Ready
@@ -46,8 +168,6 @@
                             <li>{{ blocker }}</li>
                         {% endfor %}
                     </ul>
-                {% else %}
-                    <div style="margin-top:6px; color:#5a6477;">Destructive full-run launch will be allowed when the route is enabled.</div>
                 {% endif %}
             </div>
             <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
@@ -69,17 +189,41 @@
             </div>
         </div>
 
-        <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
-            <button disabled style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
-                Start Generation Run
-            </button>
-            <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
-                Generate Student Dataset
-            </button>
-            <button disabled style="border:1px solid #d6d9df; background:#f4f6fa; color:#5a6477; border-radius:8px; padding:10px 14px; opacity:0.75; cursor:not-allowed;">
-                View Launch Plan
-            </button>
-        </div>
+        <form
+            style="margin-top:16px; display:grid; gap:12px;"
+            hx-post="/control/generation/start"
+            hx-target="#control-tab-content"
+            hx-swap="innerHTML"
+        >
+            <div style="display:grid; grid-template-columns: minmax(0, 1fr) auto; gap:12px; align-items:end;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Generation run name</span>
+                    <input
+                        type="text"
+                        name="generation_name"
+                        value="{% if snapshot.config_summary and snapshot.config_summary.simulation_name %}{{ snapshot.config_summary.simulation_name }} run{% else %}Generation run{% endif %}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                </label>
+                <label style="display:flex; gap:8px; align-items:center; font-size:13px; color:#5a6477; padding-bottom:10px;">
+                    <input type="checkbox" name="destructive_confirm" value="yes">
+                    Confirm destructive reset
+                </label>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button
+                    type="submit"
+                    {% if not snapshot.allowed_actions.can_start_generation_run %}disabled{% endif %}
+                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_generation_run %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                >
+                    Start Generation Run
+                </button>
+                <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+                    Generate Student Dataset
+                </button>
+            </div>
+        </form>
     </section>
 
     <div
