@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from hashlib import sha256
-import json
 from typing import Any
 
 from sqlalchemy import select
@@ -11,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ConfigurationProfile, ConfigurationProfileVersion
 
+from .configuration_lifecycle import compute_config_hash
 from .default_configuration import (
     DEFAULT_CONFIG_CREATED_BY,
     DEFAULT_CONFIG_PAYLOAD,
@@ -82,7 +81,7 @@ def upsert_default_configuration_profile(session: Session) -> ConfigurationProfi
             title="Default configuration",
             notes="Seeded default generation configuration.",
             config_schema_version=DEFAULT_CONFIG_SCHEMA_VERSION,
-            config_hash=_config_hash(DEFAULT_CONFIG_PAYLOAD),
+            config_hash=compute_config_hash(DEFAULT_CONFIG_PAYLOAD),
             config_payload=deepcopy(DEFAULT_CONFIG_PAYLOAD),
             created_by=DEFAULT_CONFIG_CREATED_BY,
             lifecycle_status="valid",
@@ -92,7 +91,7 @@ def upsert_default_configuration_profile(session: Session) -> ConfigurationProfi
     else:
         profile_version.title = profile_version.title or "Default configuration"
         profile_version.notes = profile_version.notes or "Seeded default generation configuration."
-        profile_version.config_hash = profile_version.config_hash or _config_hash(
+        profile_version.config_hash = profile_version.config_hash or compute_config_hash(
             profile_version.config_payload
         )
     if profile_version.lifecycle_status != "valid":
@@ -100,9 +99,3 @@ def upsert_default_configuration_profile(session: Session) -> ConfigurationProfi
     session.flush()
 
     return profile_version
-
-
-def _config_hash(payload: dict[str, Any]) -> str:
-    """Return a stable hash for a configuration payload."""
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return sha256(encoded).hexdigest()

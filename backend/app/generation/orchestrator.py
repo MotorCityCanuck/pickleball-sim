@@ -8,13 +8,13 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core import (
+    ConfigurationLifecycleService,
     SimulationSettings,
-    get_configuration_payload,
     load_settings,
     settings_from_payload,
 )
 from app.db.session import session_scope
-from app.models import GenerationRun, MonthlyBatch
+from app.models import ConfigurationProfileVersion, GenerationRun, MonthlyBatch
 
 from .control_plane import GenerationControlPlane
 
@@ -34,9 +34,13 @@ class GenerationOrchestrator:
         self,
         settings: SimulationSettings | None = None,
         control_plane: GenerationControlPlane | None = None,
+        configuration_lifecycle: ConfigurationLifecycleService | None = None,
     ) -> None:
         self.settings = settings or load_settings()
         self.control_plane = control_plane or GenerationControlPlane(self.settings)
+        self.configuration_lifecycle = (
+            configuration_lifecycle or ConfigurationLifecycleService()
+        )
 
     def create_initial_generation_plan(
         self,
@@ -87,7 +91,7 @@ class GenerationOrchestrator:
         configuration_version: int | None,
         session: Session,
     ) -> InitialGenerationPlan:
-        effective_settings = self._resolve_settings(
+        effective_settings, resolved_version = self._resolve_settings(
             session,
             parameter_snapshot=parameter_snapshot,
             configuration_profile_name=configuration_profile_name,
@@ -107,6 +111,11 @@ class GenerationOrchestrator:
             settings=effective_settings,
             session=session,
         )
+        if resolved_version is not None:
+            self.configuration_lifecycle.mark_version_used(
+                session,
+                version_id=resolved_version.id,
+            )
 
         first_month = _month_start(first_batch_month)
         monthly_batches = [
@@ -132,30 +141,36 @@ class GenerationOrchestrator:
         parameter_snapshot: dict[str, Any] | None,
         configuration_profile_name: str | None,
         configuration_version: int | None,
-    ) -> SimulationSettings:
+    ) -> tuple[SimulationSettings, ConfigurationProfileVersion | None]:
         if parameter_snapshot is not None:
-            return settings_from_payload(
-                parameter_snapshot,
-                profile_name=configuration_profile_name
-                or self.settings.configuration_profile_name,
-                profile_version=configuration_version
-                or self.settings.configuration_profile_version,
+            return (
+                settings_from_payload(
+                    parameter_snapshot,
+                    profile_name=configuration_profile_name
+                    or self.settings.configuration_profile_name,
+                    profile_version=configuration_version
+                    or self.settings.configuration_profile_version,
+                ),
+                None,
             )
 
         if self.settings.config_payload is not None:
-            return self.settings
+            return self.settings, None
 
         profile_name = configuration_profile_name or self.settings.configuration_profile_name
         version_number = configuration_version or self.settings.configuration_profile_version
-        payload = get_configuration_payload(
+        profile_version = self.configuration_lifecycle.load_current_valid_version(
             session,
             profile_name=profile_name,
             version_number=version_number,
         )
-        return settings_from_payload(
-            payload,
-            profile_name=profile_name,
-            profile_version=version_number,
+        return (
+            settings_from_payload(
+                profile_version.config_payload,
+                profile_name=profile_name,
+                profile_version=profile_version.version_number,
+            ),
+            profile_version,
         )
 
 

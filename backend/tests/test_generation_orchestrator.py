@@ -13,8 +13,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import SimulationSettings  # noqa: E402
+from app.core.configuration_lifecycle import ConfigurationLifecycleService  # noqa: E402
 from app.generation import GenerationOrchestrator  # noqa: E402
-from app.models import GenerationRun, MonthlyBatch  # noqa: E402
+from app.models import ConfigurationProfileVersion, GenerationRun, MonthlyBatch  # noqa: E402
 
 
 @pytest.fixture()
@@ -58,6 +59,40 @@ def session_factory():
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null,
                 unique (generation_run_id, batch_month)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE configuration_profiles (
+                id integer primary key autoincrement,
+                profile_name varchar(255) not null unique,
+                description text,
+                is_active boolean not null default true,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE configuration_profile_versions (
+                id integer primary key autoincrement,
+                profile_id bigint not null,
+                version_number integer not null,
+                title varchar(255) not null,
+                notes text,
+                config_schema_version varchar(50) not null,
+                config_hash varchar(128),
+                config_payload json not null,
+                created_by varchar(255),
+                lifecycle_status varchar(30) not null default 'valid',
+                last_used_at datetime,
+                deprecated_at datetime,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique (profile_id, version_number),
+                foreign key(profile_id) references configuration_profiles(id)
             )
             """
         )
@@ -178,3 +213,45 @@ def test_create_initial_generation_plan_rolls_back_as_single_unit(
         assert session.query(MonthlyBatch).count() == 0
     finally:
         session.close()
+
+
+def test_create_initial_generation_plan_marks_loaded_config_version_used(session):
+    lifecycle = ConfigurationLifecycleService()
+    payload = {
+        "runtime": {},
+        "simulation": {
+            "simulation_name": "db-backed",
+            "simulation_version": "db-backed",
+            "master_seed": 123,
+            "historical_batch_count": 2,
+            "first_batch_month": "2026-01-01",
+            "target_total_players": 1000,
+        },
+    }
+    saved = lifecycle.save_new_version(
+        session,
+        title="Database config",
+        notes=None,
+        payload=payload,
+    )
+    session.commit()
+
+    orchestrator = GenerationOrchestrator(
+        SimulationSettings(
+            simulation_version="ignored",
+            default_seed_value=999,
+            initial_historical_months=1,
+            config_payload=None,
+        )
+    )
+    plan = orchestrator.create_initial_generation_plan(
+        "db config run",
+        date(2026, 1, 1),
+        session=session,
+    )
+    session.commit()
+
+    reloaded = session.get(ConfigurationProfileVersion, saved.version.id)
+    assert plan.generation_run.seed_value == 123
+    assert reloaded is not None
+    assert reloaded.last_used_at is not None
