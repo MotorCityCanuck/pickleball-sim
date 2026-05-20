@@ -12,6 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import ConfigurationLifecycleService  # noqa: E402
+from app.generation import seed_refresh_service as seed_refresh_module  # noqa: E402
 from app.generation import SeedRefreshService  # noqa: E402
 from app.models import JobStageProgress, JobStatus  # noqa: E402
 from app.seed_data_ingest.base import RawSeedLoadResult  # noqa: E402
@@ -258,3 +259,43 @@ def test_refresh_seed_data_blocks_concurrent_seed_jobs(session):
 
     with pytest.raises(ValueError, match="already running"):
         service.refresh_seed_data(session=session)
+
+
+def test_background_seed_job_persists_failed_status(session, monkeypatch):
+    _seed_valid_config(session)
+
+    local_session_factory = sessionmaker(
+        bind=session.bind,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    monkeypatch.setattr(seed_refresh_module, "SessionLocal", local_session_factory)
+
+    def failing_load(dataset, *, session=None):
+        del dataset, session
+        raise RuntimeError("planned raw load failure")
+
+    service = SeedRefreshService(
+        load_dataset_fn=failing_load,
+        normalize_dataset_fn=lambda dataset, **kwargs: SeedNormalizeResult(dataset, "completed", 1, 0, 1),
+    )
+    registration = service.register_raw_seed_ingest(session=session)
+    session.commit()
+
+    service.execute_registered_seed_job_in_background(
+        config_version_id=registration.configuration_version.id,
+        job_status_id=registration.job_status.id,
+        mode=registration.mode,
+    )
+
+    session.expire_all()
+    job = session.get(JobStatus, registration.job_status.id)
+    assert job is not None
+    assert job.status == "failed"
+    assert job.current_phase == "failed"
+    assert "planned raw load failure" in job.current_message
+
+    stage_rows = session.query(JobStageProgress).filter_by(job_status_id=job.id).all()
+    assert len(stage_rows) == 1
+    assert stage_rows[0].status == "failed"

@@ -12,6 +12,7 @@ from app.web.routes import build_control_panel_router
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Own long-lived app resources."""
+    get_default_background_job_runner()
     try:
         yield
     finally:

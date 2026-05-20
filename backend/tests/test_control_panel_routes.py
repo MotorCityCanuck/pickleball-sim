@@ -423,7 +423,7 @@ class FakeGenerationRunService:
             },
         )()
 
-    def execute_registered_generation_run(self, **kwargs):
+    def execute_registered_generation_run_in_background(self, **kwargs):
         return kwargs
 
 
@@ -477,7 +477,7 @@ class FakeSeedRefreshService:
             },
         )()
 
-    def execute_registered_seed_job(self, **kwargs):
+    def execute_registered_seed_job_in_background(self, **kwargs):
         return kwargs
 
 

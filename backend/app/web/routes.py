@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import logging
 import json
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from .control_panel_queries import (
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
+logger = logging.getLogger("uvicorn.error")
 
 
 @lru_cache(maxsize=1)
@@ -260,8 +262,13 @@ def build_control_panel_router() -> APIRouter:
                     session=session,
                 )
                 session.commit()
+                logger.warning(
+                    "Queueing generation background job generation_run_id=%s job_status_id=%s",
+                    registration.generation_run.id,
+                    registration.job_status.id,
+                )
                 background_runner.submit(
-                    run_service.execute_registered_generation_run,
+                    run_service.execute_registered_generation_run_in_background,
                     config_version_id=registration.configuration_version.id,
                     generation_run_id=registration.generation_run.id,
                     job_status_id=registration.job_status.id,
@@ -490,8 +497,13 @@ def _run_seed_action(
             if action == "load":
                 registration = seed_service.register_raw_seed_ingest(session=session)
                 session.commit()
+                logger.warning(
+                    "Queueing seed background job mode=%s job_status_id=%s",
+                    registration.mode,
+                    registration.job_status.id,
+                )
                 background_runner.submit(
-                    seed_service.execute_registered_seed_job,
+                    seed_service.execute_registered_seed_job_in_background,
                     config_version_id=registration.configuration_version.id,
                     job_status_id=registration.job_status.id,
                     mode=registration.mode,
@@ -500,8 +512,13 @@ def _run_seed_action(
             elif action == "normalize":
                 registration = seed_service.register_seed_normalization(session=session)
                 session.commit()
+                logger.warning(
+                    "Queueing seed background job mode=%s job_status_id=%s",
+                    registration.mode,
+                    registration.job_status.id,
+                )
                 background_runner.submit(
-                    seed_service.execute_registered_seed_job,
+                    seed_service.execute_registered_seed_job_in_background,
                     config_version_id=registration.configuration_version.id,
                     job_status_id=registration.job_status.id,
                     mode=registration.mode,
@@ -510,8 +527,13 @@ def _run_seed_action(
             else:
                 registration = seed_service.register_seed_refresh(session=session)
                 session.commit()
+                logger.warning(
+                    "Queueing seed background job mode=%s job_status_id=%s",
+                    registration.mode,
+                    registration.job_status.id,
+                )
                 background_runner.submit(
-                    seed_service.execute_registered_seed_job,
+                    seed_service.execute_registered_seed_job_in_background,
                     config_version_id=registration.configuration_version.id,
                     job_status_id=registration.job_status.id,
                     mode=registration.mode,

@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import ConfigurationLifecycleService, SimulationSettings  # noqa: E402
+from app.generation import run_service as run_service_module  # noqa: E402
 from app.generation import (  # noqa: E402
     GenerationRunService,
     MonthlyPipelineResult,
@@ -509,6 +510,30 @@ class FakePipeline:
         )
 
 
+class FailingPipeline:
+    def run_months(
+        self,
+        *,
+        generation_run_id,
+        months,
+        start_batch_id=None,
+        player_count=None,
+        skip_existing=True,
+        progress_listener=None,
+        session=None,
+    ):
+        del (
+            generation_run_id,
+            months,
+            start_batch_id,
+            player_count,
+            skip_existing,
+            progress_listener,
+            session,
+        )
+        raise RuntimeError("planned pipeline failure")
+
+
 def _seed_valid_config(session, *, seed=42, historical_months=2):
     lifecycle = ConfigurationLifecycleService()
     payload = {
@@ -647,3 +672,41 @@ def test_launch_generation_run_rejects_active_generation_run(session):
 
     with pytest.raises(ValueError, match="already running"):
         service.launch_generation_run("blocked run", session=session)
+
+
+def test_background_generation_run_persists_failed_status(session, monkeypatch):
+    _seed_valid_config(session, historical_months=2)
+    local_session_factory = sessionmaker(
+        bind=session.bind,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    monkeypatch.setattr(run_service_module, "SessionLocal", local_session_factory)
+
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=FailingPipeline(),
+    )
+    registration = service.register_generation_run("Background failure", session=session)
+    session.commit()
+
+    service.execute_registered_generation_run_in_background(
+        config_version_id=registration.configuration_version.id,
+        generation_run_id=registration.generation_run.id,
+        job_status_id=registration.job_status.id,
+    )
+
+    session.expire_all()
+    job = session.get(JobStatus, registration.job_status.id)
+    run = session.get(GenerationRun, registration.generation_run.id)
+    assert job is not None
+    assert run is not None
+    assert job.status == "failed"
+    assert job.current_phase == "failed"
+    assert "planned pipeline failure" in job.current_message
+    assert run.status == "failed"
+
+    stage_rows = session.query(JobStageProgress).filter_by(job_status_id=job.id).all()
+    assert stage_rows
+    assert any(row.status == "failed" for row in stage_rows)

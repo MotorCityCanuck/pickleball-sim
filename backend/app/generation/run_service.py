@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigurationLifecycleService, SimulationSettings, load_settings
-from app.db.session import session_scope
+from app.db.session import SessionLocal, session_scope
 from app.models import (
     BatchRun,
     ClubMembership,
@@ -69,6 +70,9 @@ DELETE_MODELS_IN_ORDER = (
     Tournament,
     MonthlyBatch,
 )
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -149,6 +153,43 @@ class GenerationRunService:
                 session=active_session,
             )
 
+    def execute_registered_generation_run_in_background(
+        self,
+        *,
+        config_version_id: int,
+        generation_run_id: int,
+        job_status_id: int,
+    ) -> None:
+        """Run a previously registered generation job with durable background commits."""
+        logger.info(
+            "Starting background generation job config_version_id=%s generation_run_id=%s job_status_id=%s",
+            config_version_id,
+            generation_run_id,
+            job_status_id,
+        )
+        session = SessionLocal()
+        try:
+            self._execute_registered_generation_run(
+                config_version_id=config_version_id,
+                generation_run_id=generation_run_id,
+                job_status_id=job_status_id,
+                session=session,
+                checkpoint=session.commit,
+                re_raise=False,
+            )
+            session.commit()
+            logger.info(
+                "Completed background generation job config_version_id=%s generation_run_id=%s job_status_id=%s",
+                config_version_id,
+                generation_run_id,
+                job_status_id,
+            )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def launch_generation_run(
         self,
         generation_name: str,
@@ -228,6 +269,8 @@ class GenerationRunService:
         generation_run_id: int,
         job_status_id: int,
         session: Session,
+        checkpoint: Any | None = None,
+        re_raise: bool = True,
     ) -> GenerationRunLaunchResult:
         config_version = session.get(ConfigurationProfileVersion, config_version_id)
         if config_version is None:
@@ -276,6 +319,7 @@ class GenerationRunService:
                 session,
                 job_status_id=job_status.id,
             )
+            self._checkpoint(session, checkpoint)
             self._perform_destructive_reset(
                 session,
                 preserve_job_status_id=job_status.id,
@@ -304,6 +348,7 @@ class GenerationRunService:
                 message="Running monthly generation pipeline.",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
+            self._checkpoint(session, checkpoint)
 
             pipeline_result = self.pipeline.run_months(
                 generation_run_id=generation_run.id,
@@ -313,6 +358,7 @@ class GenerationRunService:
                     session,
                     job_status=job_status,
                     event=event,
+                    checkpoint=checkpoint,
                 ),
                 session=session,
             )
@@ -329,7 +375,7 @@ class GenerationRunService:
                 percent_complete=Decimal("100.00"),
                 completed=True,
             )
-            session.flush()
+            self._checkpoint(session, checkpoint)
             return GenerationRunLaunchResult(
                 configuration_version=config_version,
                 generation_run=generation_run,
@@ -347,7 +393,27 @@ class GenerationRunService:
                 message=str(exc),
                 completed=True,
             )
-            raise
+            self._checkpoint(session, checkpoint)
+            if re_raise:
+                raise
+            monthly_batches = list(
+                session.scalars(
+                    select(MonthlyBatch)
+                    .where(MonthlyBatch.generation_run_id == generation_run.id)
+                    .order_by(MonthlyBatch.batch_sequence.asc(), MonthlyBatch.id.asc())
+                )
+            )
+            return GenerationRunLaunchResult(
+                configuration_version=config_version,
+                generation_run=generation_run,
+                job_status=job_status,
+                monthly_batches=tuple(monthly_batches),
+                pipeline_result=MultiMonthPipelineResult(
+                    generation_run_id=generation_run.id,
+                    months_requested=0,
+                    batch_results=(),
+                ),
+            )
 
     def _resolve_single_valid_config(self, session: Session) -> ConfigurationProfileVersion:
         valid_versions = list(
@@ -532,6 +598,7 @@ class GenerationRunService:
         *,
         job_status: JobStatus,
         event: PipelineProgressEvent,
+        checkpoint: Any | None = None,
     ) -> None:
         stage_row = self._get_stage_row(
             session,
@@ -580,7 +647,13 @@ class GenerationRunService:
                 message=f"{event.batch_month}: {stage_row.error_message}",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
+        self._checkpoint(session, checkpoint)
+
+    @staticmethod
+    def _checkpoint(session: Session, checkpoint: Any | None) -> None:
         session.flush()
+        if checkpoint is not None:
+            checkpoint()
 
     def _get_stage_row(
         self,

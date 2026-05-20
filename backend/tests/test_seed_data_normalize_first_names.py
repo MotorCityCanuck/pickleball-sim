@@ -283,3 +283,61 @@ def test_replace_deletes_existing_first_names_for_raw_countries_only(session):
         ("US", "TX", "Emma"),
         ("MX", "CM", "Maria"),
     }
+
+
+def test_normalizes_multiple_state_chunks(session):
+    insert_raw_first_name(
+        session,
+        country_code="US",
+        state_province_code="TX",
+        birth_year=2000,
+        gender="F",
+        first_name="Emma",
+        frequency_count=30,
+    )
+    insert_raw_first_name(
+        session,
+        country_code="US",
+        state_province_code="CA",
+        birth_year=2000,
+        gender="F",
+        first_name="Ava",
+        frequency_count=20,
+    )
+    insert_raw_first_name(
+        session,
+        country_code="US",
+        state_province_code="CA",
+        birth_year=2000,
+        gender="F",
+        first_name="Mia",
+        frequency_count=20,
+    )
+
+    result = FirstNameNormalizer().normalize(
+        replace_production=True,
+        session=session,
+    )
+
+    assert result.rows_read == 3
+    assert result.rows_loaded == 3
+    rows = (
+        session.query(FirstName)
+        .order_by(
+            FirstName.state_province_code.asc(),
+            FirstName.first_name.asc(),
+        )
+        .all()
+    )
+    assert [
+        (
+            row.state_province_code,
+            row.first_name,
+            row.normalized_probability,
+        )
+        for row in rows
+    ] == [
+        ("CA", "Ava", Decimal("0.50000000")),
+        ("CA", "Mia", Decimal("0.50000000")),
+        ("TX", "Emma", Decimal("1.00000000")),
+    ]

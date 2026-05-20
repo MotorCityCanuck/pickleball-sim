@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+import logging
 from typing import Callable
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigurationLifecycleService
-from app.db.session import session_scope
+from app.db.session import SessionLocal, session_scope
 from app.models import ConfigurationProfileVersion, JobStageProgress, JobStatus
 from app.seed_data_ingest import load_raw_seed_dataset
 from app.seed_data_ingest.base import RawSeedLoadResult
@@ -51,6 +52,9 @@ SEED_JOB_PHASES = {
     "normalize": "seed_normalization",
     "refresh": "seed_refresh",
 }
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,43 @@ class SeedRefreshService:
                 mode=mode,
                 session=active_session,
             )
+
+    def execute_registered_seed_job_in_background(
+        self,
+        *,
+        config_version_id: int,
+        job_status_id: int,
+        mode: str,
+    ) -> None:
+        """Run a previously registered seed job with durable background commits."""
+        logger.info(
+            "Starting background seed job config_version_id=%s job_status_id=%s mode=%s",
+            config_version_id,
+            job_status_id,
+            mode,
+        )
+        session = SessionLocal()
+        try:
+            self._execute_registered_seed_job(
+                config_version_id=config_version_id,
+                job_status_id=job_status_id,
+                mode=mode,
+                session=session,
+                checkpoint=session.commit,
+                re_raise=False,
+            )
+            session.commit()
+            logger.info(
+                "Completed background seed job config_version_id=%s job_status_id=%s mode=%s",
+                config_version_id,
+                job_status_id,
+                mode,
+            )
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def refresh_seed_data(
         self,
@@ -290,6 +331,8 @@ class SeedRefreshService:
         job_status_id: int,
         mode: str,
         session: Session,
+        checkpoint: Callable[[], None] | None = None,
+        re_raise: bool = True,
     ) -> SeedRefreshResult:
         config_version = session.get(ConfigurationProfileVersion, config_version_id)
         if config_version is None:
@@ -318,11 +361,13 @@ class SeedRefreshService:
                     message="Loading configured raw seed datasets.",
                     started=True,
                 )
+                self._checkpoint(session, checkpoint)
                 raw_results = self._run_raw_ingest_stage(
                     session,
                     job_status=job_status,
                     stage_name="raw_seed_ingest",
                     datasets=raw_datasets,
+                    checkpoint=checkpoint,
                 )
 
             if mode in {"normalize", "refresh"}:
@@ -333,12 +378,14 @@ class SeedRefreshService:
                     message="Normalizing staged seed datasets into reference tables.",
                     started=mode == "normalize",
                 )
+                self._checkpoint(session, checkpoint)
                 normalize_results = self._run_normalization_stage(
                     session,
                     job_status=job_status,
                     stage_name="seed_normalization",
                     datasets=normalize_datasets,
                     config_payload=payload,
+                    checkpoint=checkpoint,
                 )
 
             self._set_job_status(
@@ -353,7 +400,7 @@ class SeedRefreshService:
                 percent_complete=Decimal("100.00"),
                 completed=True,
             )
-            session.flush()
+            self._checkpoint(session, checkpoint)
             return SeedRefreshResult(
                 configuration_version=config_version,
                 job_status=job_status,
@@ -369,7 +416,15 @@ class SeedRefreshService:
                 message=str(exc),
                 completed=True,
             )
-            raise
+            self._checkpoint(session, checkpoint)
+            if re_raise:
+                raise
+            return SeedRefreshResult(
+                configuration_version=config_version,
+                job_status=job_status,
+                raw_load_results=tuple(raw_results),
+                normalize_results=tuple(normalize_results),
+            )
 
     def _run_raw_ingest_stage(
         self,
@@ -378,6 +433,7 @@ class SeedRefreshService:
         job_status: JobStatus,
         stage_name: str,
         datasets: tuple[str, ...],
+        checkpoint: Callable[[], None] | None = None,
     ) -> list[RawSeedLoadResult]:
         stage_row = self._get_stage_row(
             session,
@@ -405,7 +461,7 @@ class SeedRefreshService:
                 message=f"Loading {dataset} ({index}/{len(datasets)})",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
-            session.flush()
+            self._checkpoint(session, checkpoint)
             result = self.load_dataset_fn(dataset, session=session)
             results.append(result)
             self._update_stage_progress(
@@ -425,6 +481,7 @@ class SeedRefreshService:
                     "total_datasets": len(datasets),
                 },
             )
+            self._checkpoint(session, checkpoint)
         self._update_stage_progress(
             stage_row,
             status="succeeded",
@@ -443,7 +500,7 @@ class SeedRefreshService:
             message=f"Loaded {len(datasets)} raw seed datasets.",
             percent_complete=self._overall_percent_complete(session, job_status.id),
         )
-        session.flush()
+        self._checkpoint(session, checkpoint)
         return results
 
     def _run_normalization_stage(
@@ -454,6 +511,7 @@ class SeedRefreshService:
         stage_name: str,
         datasets: tuple[str, ...],
         config_payload: dict[str, object],
+        checkpoint: Callable[[], None] | None = None,
     ) -> list[SeedNormalizeResult]:
         stage_row = self._get_stage_row(
             session,
@@ -481,7 +539,7 @@ class SeedRefreshService:
                 message=f"Normalizing {dataset} ({index}/{len(datasets)})",
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
-            session.flush()
+            self._checkpoint(session, checkpoint)
             result = self.normalize_dataset_fn(
                 dataset,
                 replace_production=True,
@@ -506,6 +564,7 @@ class SeedRefreshService:
                     "total_datasets": len(datasets),
                 },
             )
+            self._checkpoint(session, checkpoint)
         self._update_stage_progress(
             stage_row,
             status="succeeded",
@@ -524,8 +583,17 @@ class SeedRefreshService:
             message=f"Normalized {len(datasets)} seed datasets.",
             percent_complete=self._overall_percent_complete(session, job_status.id),
         )
-        session.flush()
+        self._checkpoint(session, checkpoint)
         return results
+
+    @staticmethod
+    def _checkpoint(
+        session: Session,
+        checkpoint: Callable[[], None] | None,
+    ) -> None:
+        session.flush()
+        if checkpoint is not None:
+            checkpoint()
 
     def _resolve_single_valid_config(self, session: Session) -> ConfigurationProfileVersion:
         valid_versions = list(

@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+import logging
 from threading import Lock
 from typing import Any, Callable
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class BackgroundJobRunner:
@@ -28,7 +32,15 @@ class BackgroundJobRunner:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Background job runner is shut down.")
-            return self._executor.submit(fn, *args, **kwargs)
+            logger.warning(
+                "Submitting background job fn=%s args=%s kwargs=%s",
+                getattr(fn, "__qualname__", repr(fn)),
+                args,
+                kwargs,
+            )
+            future = self._executor.submit(self._run_job, fn, args, kwargs)
+            future.add_done_callback(self._log_background_exception)
+            return future
 
     @property
     def closed(self) -> bool:
@@ -44,8 +56,35 @@ class BackgroundJobRunner:
             self._closed = True
             self._executor.shutdown(wait=wait, cancel_futures=False)
 
+    @staticmethod
+    def _log_background_exception(future: Future[Any]) -> None:
+        """Log uncaught worker exceptions so they are visible in server logs."""
+        exc = future.exception()
+        if exc is not None:
+            logger.exception("Background job failed.", exc_info=exc)
 
-_default_runner: BackgroundJobRunner | None = BackgroundJobRunner()
+    @staticmethod
+    def _run_job(
+        fn: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Execute background work with explicit lifecycle logging."""
+        logger.warning(
+            "Starting background job fn=%s args=%s kwargs=%s",
+            getattr(fn, "__qualname__", repr(fn)),
+            args,
+            kwargs,
+        )
+        result = fn(*args, **kwargs)
+        logger.warning(
+            "Completed background job fn=%s",
+            getattr(fn, "__qualname__", repr(fn)),
+        )
+        return result
+
+
+_default_runner: BackgroundJobRunner | None = None
 
 
 def get_default_background_job_runner() -> BackgroundJobRunner:

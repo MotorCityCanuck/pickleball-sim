@@ -1,7 +1,7 @@
 """Normalize raw first names into production first-name probabilities."""
 from __future__ import annotations
 
-from sqlalchemy import Numeric, cast, delete, func, select
+from sqlalchemy import Numeric, and_, cast, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.models import FirstName, RawFirstName
@@ -40,70 +40,106 @@ class FirstNameNormalizer:
                 delete(FirstName).where(FirstName.country_code.in_(countries))
             )
 
-            grouped = (
-                select(
-                    RawFirstName.country_code.label("country_code"),
-                    RawFirstName.state_province_code.label("state_province_code"),
-                    RawFirstName.birth_year.label("birth_year"),
-                    RawFirstName.gender.label("gender"),
-                    RawFirstName.first_name.label("first_name"),
-                    func.sum(RawFirstName.frequency_count).label("frequency_count"),
-                    func.min(RawFirstName.source_dataset).label("source_dataset"),
-                )
-                .group_by(
-                    RawFirstName.country_code,
-                    RawFirstName.state_province_code,
-                    RawFirstName.birth_year,
-                    RawFirstName.gender,
-                    RawFirstName.first_name,
-                )
-                .subquery()
-            )
-
-            cohort_total = func.sum(grouped.c.frequency_count).over(
-                partition_by=(
-                    grouped.c.country_code,
-                    grouped.c.state_province_code,
-                    grouped.c.birth_year,
-                    grouped.c.gender,
+            state_chunks = list(
+                active_session.execute(
+                    select(
+                        RawFirstName.country_code,
+                        RawFirstName.state_province_code,
+                    )
+                    .distinct()
+                    .order_by(
+                        RawFirstName.country_code.asc(),
+                        RawFirstName.state_province_code.asc(),
+                    )
                 )
             )
-            normalized_probability = cast(
-                cast(grouped.c.frequency_count, Numeric(20, 8))
-                / cast(cohort_total, Numeric(20, 8)),
-                Numeric(12, 8),
-            )
-
-            insert_statement = FirstName.__table__.insert().from_select(
-                [
-                    "country_code",
-                    "state_province_code",
-                    "birth_year",
-                    "gender",
-                    "first_name",
-                    "frequency_count",
-                    "normalized_probability",
-                    "source_dataset",
-                ],
-                select(
-                    grouped.c.country_code,
-                    grouped.c.state_province_code,
-                    grouped.c.birth_year,
-                    grouped.c.gender,
-                    grouped.c.first_name,
-                    grouped.c.frequency_count,
-                    normalized_probability,
-                    grouped.c.source_dataset,
-                ),
-            )
-            insert_result = active_session.execute(insert_statement)
+            rows_loaded = 0
+            for country_code, state_province_code in state_chunks:
+                rows_loaded += self._normalize_state_chunk(
+                    active_session,
+                    country_code=country_code,
+                    state_province_code=state_province_code,
+                )
 
             return SeedNormalizeResult(
                 dataset=self.dataset,
                 status="completed",
                 rows_read=rows_read,
                 rows_deleted=delete_result.rowcount or 0,
-                rows_loaded=insert_result.rowcount or 0,
+                rows_loaded=rows_loaded,
             )
 
         return run_in_transaction(_normalize, session=session)
+
+    def _normalize_state_chunk(
+        self,
+        session: Session,
+        *,
+        country_code: str,
+        state_province_code: str,
+    ) -> int:
+        grouped = (
+            select(
+                RawFirstName.country_code.label("country_code"),
+                RawFirstName.state_province_code.label("state_province_code"),
+                RawFirstName.birth_year.label("birth_year"),
+                RawFirstName.gender.label("gender"),
+                RawFirstName.first_name.label("first_name"),
+                func.sum(RawFirstName.frequency_count).label("frequency_count"),
+                func.min(RawFirstName.source_dataset).label("source_dataset"),
+            )
+            .where(
+                and_(
+                    RawFirstName.country_code == country_code,
+                    RawFirstName.state_province_code == state_province_code,
+                )
+            )
+            .group_by(
+                RawFirstName.country_code,
+                RawFirstName.state_province_code,
+                RawFirstName.birth_year,
+                RawFirstName.gender,
+                RawFirstName.first_name,
+            )
+            .subquery()
+        )
+
+        cohort_total = func.sum(grouped.c.frequency_count).over(
+            partition_by=(
+                grouped.c.country_code,
+                grouped.c.state_province_code,
+                grouped.c.birth_year,
+                grouped.c.gender,
+            )
+        )
+        normalized_probability = cast(
+            cast(grouped.c.frequency_count, Numeric(20, 8))
+            / cast(cohort_total, Numeric(20, 8)),
+            Numeric(12, 8),
+        )
+
+        insert_statement = FirstName.__table__.insert().from_select(
+            [
+                "country_code",
+                "state_province_code",
+                "birth_year",
+                "gender",
+                "first_name",
+                "frequency_count",
+                "normalized_probability",
+                "source_dataset",
+            ],
+            select(
+                grouped.c.country_code,
+                grouped.c.state_province_code,
+                grouped.c.birth_year,
+                grouped.c.gender,
+                grouped.c.first_name,
+                grouped.c.frequency_count,
+                normalized_probability,
+                grouped.c.source_dataset,
+            ),
+        )
+        insert_result = session.execute(insert_statement)
+        session.flush()
+        return insert_result.rowcount or 0
