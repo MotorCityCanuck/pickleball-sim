@@ -191,6 +191,7 @@ class ControlPanelSnapshot:
     generation_run_summary: GenerationRunSummary | None
     batch_summaries: tuple[BatchSummary, ...]
     active_job_summary: JobSummary | None
+    active_job_stage_progress: tuple[StageProgressSummary, ...]
     allowed_actions: AllowedActions
     warnings: tuple[str, ...]
 
@@ -214,6 +215,7 @@ class ControlPanelQueries:
         run_summary = None
         batch_summaries: tuple[BatchSummary, ...] = ()
         active_job = None
+        active_job_stage_progress: tuple[StageProgressSummary, ...] = ()
         warnings: list[str] = []
 
         if config_warning is not None:
@@ -226,6 +228,12 @@ class ControlPanelQueries:
                 session,
                 generation_run_id=generation_run.id,
             )
+            if active_job is not None:
+                active_job_stage_progress = self.get_generation_job_stage_progress(
+                    session,
+                    job_status_id=active_job.job_status_id,
+                    generation_run_id=generation_run.id,
+                )
             batch_summaries = self.get_generation_run_batches(
                 session,
                 generation_run_id=generation_run.id,
@@ -250,6 +258,7 @@ class ControlPanelQueries:
             generation_run_summary=run_summary,
             batch_summaries=batch_summaries,
             active_job_summary=active_job,
+            active_job_stage_progress=active_job_stage_progress,
             allowed_actions=allowed_actions,
             warnings=tuple(dict.fromkeys(warnings)),
         )
@@ -357,6 +366,55 @@ class ControlPanelQueries:
             for row in rows
         )
 
+    def get_generation_job_stage_progress(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        generation_run_id: int,
+    ) -> tuple[StageProgressSummary, ...]:
+        rows = list(
+            session.scalars(
+                select(JobStageProgress)
+                .where(
+                    JobStageProgress.job_status_id == job_status_id,
+                    JobStageProgress.generation_run_id == generation_run_id,
+                    JobStageProgress.batch_id.is_(None),
+                )
+                .order_by(
+                    JobStageProgress.stage_sequence.asc(),
+                    JobStageProgress.id.asc(),
+                )
+            )
+        )
+        now = self.now_fn()
+        return tuple(
+            StageProgressSummary(
+                stage_name=row.stage_name,
+                stage_sequence=_coerce_int(row.stage_sequence),
+                status=row.status,
+                progress_current=_coerce_int(row.progress_current, default=0) or 0,
+                progress_total=_coerce_int(row.progress_total),
+                progress_percent=row.progress_percent,
+                progress_unit=row.progress_unit,
+                progress_message=row.progress_message,
+                completion_message=_completion_message(
+                    row.status,
+                    _coerce_mapping(row.metadata_json),
+                ),
+                last_heartbeat_at=row.last_heartbeat_at,
+                started_at=row.started_at,
+                completed_at=row.completed_at,
+                error_message=row.error_message,
+                is_stale=self._is_stale(
+                    status=row.status,
+                    last_heartbeat_at=row.last_heartbeat_at,
+                    now=now,
+                ),
+            )
+            for row in rows
+        )
+
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
         regions_count = int(session.scalar(select(func.count()).select_from(Region)) or 0)
         clubs_count = int(session.scalar(select(func.count()).select_from(Club)) or 0)
@@ -398,9 +456,6 @@ class ControlPanelQueries:
             blockers.append("Seed/reference readiness requires normalized last names.")
         if latest_seed_job is not None and latest_seed_job.status == "failed":
             blockers.append("The latest seed preparation job failed.")
-        if latest_raw_loads and latest_raw_loads[0].status == "failed":
-            blockers.append("The latest raw seed ingest failed.")
-
         return SeedDataSummary(
             is_ready=not blockers,
             readiness_label="Ready" if not blockers else "Blocked",

@@ -1,4 +1,12 @@
-<section style="display:grid; gap:16px;">
+<section
+    style="display:grid; gap:16px;"
+    {% if (snapshot.seed_data_summary.latest_seed_job and snapshot.seed_data_summary.latest_seed_job.status in ('pending', 'running')) or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+        hx-get="/control/partials/orchestration"
+        hx-trigger="every 10s"
+        hx-swap="outerHTML"
+        hx-target="this"
+    {% endif %}
+>
     <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
@@ -286,27 +294,7 @@
         </form>
     </section>
 
-    <div
-        hx-get="/control/partials/run-status"
-        hx-trigger="load, every 10s"
-        hx-swap="innerHTML"
-    >
-        {% include "partials/control_run_status.html" %}
-    </div>
-
-    <div
-        hx-get="/control/partials/batch-table"
-        hx-trigger="load, every 10s"
-        hx-swap="innerHTML"
-    >
-        {% include "partials/control_batch_table.html" %}
-    </div>
-
-    <div
-        hx-get="/control/partials/progress-bars"
-        hx-trigger="load, every 10s"
-        hx-swap="innerHTML"
-    >
-        {% include "partials/control_progress_bars.html" %}
-    </div>
+    {% include "partials/control_run_status.html" %}
+    {% include "partials/control_batch_table.html" %}
+    {% include "partials/control_progress_bars.html" %}
 </section>

@@ -563,8 +563,8 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/seed/load"' in orchestration.body.decode()
     assert 'hx-post="/control/seed/normalize"' in orchestration.body.decode()
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
-    assert 'hx-get="/control/partials/run-status"' in orchestration.body.decode()
-    assert 'hx-get="/control/partials/batch-table"' in orchestration.body.decode()
+    assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
+    assert 'hx-trigger="every 10s"' in orchestration.body.decode()
 
 
 def test_control_panel_config_validate_renders_validation_success(session_factory):

@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import RawMetroArea, RawPickleballClubDistribution, Region
+from app.models import Club, RawMetroArea, RawPickleballClubDistribution, Region
 
 from .base import SeedNormalizeResult, run_in_transaction
 
@@ -42,6 +42,14 @@ class MetroAreaNormalizer:
                 raise ValueError("No raw_metro_areas rows are available to normalize")
 
             countries = sorted({row.country_code for row in raw_rows})
+            # Regions cannot be replaced while legacy clubs still reference them.
+            active_session.execute(
+                delete(Club).where(
+                    Club.region_id.in_(
+                        select(Region.id).where(Region.country_code.in_(countries))
+                    )
+                )
+            )
             delete_result = active_session.execute(
                 delete(Region).where(Region.country_code.in_(countries))
             )

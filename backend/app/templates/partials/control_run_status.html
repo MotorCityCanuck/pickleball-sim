@@ -48,6 +48,31 @@
                 <div style="margin-top:6px; color:#5a6477;">{{ snapshot.active_job_summary.current_phase or "n/a" }}</div>
                 <div style="margin-top:6px; color:#5a6477;">{{ snapshot.active_job_summary.percent_complete or 0 }}%</div>
                 <div style="margin-top:6px; color:#5a6477;">{{ snapshot.active_job_summary.current_message or "" }}</div>
+                {% if snapshot.active_job_stage_progress %}
+                    <div style="margin-top:12px; display:grid; gap:8px;">
+                        {% for stage in snapshot.active_job_stage_progress %}
+                            <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                                <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+                                    <span>{{ stage.stage_name }}</span>
+                                    <span>
+                                        {{ stage.status }}
+                                        {% if stage.progress_percent is not none %}
+                                            | {{ stage.progress_percent }}%
+                                        {% endif %}
+                                    </span>
+                                </div>
+                                <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                                    <div
+                                        style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
+                                    ></div>
+                                </div>
+                                <div style="margin-top:4px; color:#5a6477; font-size:12px;">
+                                    {{ stage.completion_message or stage.progress_message or "" }}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
             </div>
         {% else %}
             <div style="min-width:220px; border:1px dashed #d6d9df; border-radius:8px; padding:12px;">

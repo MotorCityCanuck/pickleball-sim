@@ -385,6 +385,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.generation_run_summary.overall_progress_percent == 60
     assert snapshot.active_job_summary is not None
     assert snapshot.active_job_summary.status == "running"
+    assert snapshot.active_job_stage_progress == ()
     assert snapshot.allowed_actions.can_start_generation_run is False
     assert "A generation run is already running." in snapshot.allowed_actions.start_generation_blockers
     assert len(snapshot.batch_summaries) == 2
@@ -497,3 +498,98 @@ def test_get_control_panel_snapshot_includes_seed_job_stage_progress(session):
     assert snapshot.seed_data_summary.latest_seed_stage_progress[0].completion_message == "Datasets completed: 6"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[1].stage_name == "seed_normalization"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[1].progress_percent == 50
+
+
+def test_get_control_panel_snapshot_includes_generation_setup_stage_progress(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, started_at, created_at, updated_at
+            ) VALUES (
+                3, 'Setup run', 77, 'v1', 'running', '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, created_at, updated_at
+            ) VALUES (
+                300, 'generation_run', 'generation-run-300', 'running', 'destructive_reset', 0.00,
+                'Deleting generated data from previous runs.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, created_at, updated_at
+            ) VALUES (
+                3000, 300, 3, NULL, 'destructive_reset', 0, 'running', 0, 1, 'stage', 0.00,
+                '2026-05-20 09:01:00', 'Deleting generated data from previous runs.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(now_fn=lambda: datetime(2026, 5, 20, 9, 2, 0)).get_control_panel_snapshot(session)
+
+    assert snapshot.active_job_summary is not None
+    assert snapshot.active_job_summary.current_phase == "destructive_reset"
+    assert len(snapshot.active_job_stage_progress) == 1
+    assert snapshot.active_job_stage_progress[0].stage_name == "destructive_reset"
+    assert snapshot.active_job_stage_progress[0].status == "running"
+
+
+def test_seed_readiness_ignores_stale_failed_raw_load_when_reference_data_is_ready(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, dataset_type, source_path, source_file_count, status, rows_read, rows_loaded, rows_rejected,
+                error_message, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                2, 'first_names_us', 'data/raw/first_names/us.csv', 1, 'failed', 100, 0, 100,
+                'parse failed', '2026-05-21 10:00:00', '2026-05-21 10:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                201, 'seed_refresh', 'seed-refresh-201', 'succeeded', 'completed', 100.00,
+                'Seed refresh completed successfully.',
+                '2026-05-21 09:00:00', '2026-05-21 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 21, 10, 5, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.seed_data_summary.is_ready is True
+    assert "The latest raw seed ingest failed." not in snapshot.seed_data_summary.readiness_blockers
+    assert snapshot.seed_data_summary.latest_raw_loads[0].status == "failed"

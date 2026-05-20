@@ -12,7 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.models import Region  # noqa: E402
+from app.models import Club, Region  # noqa: E402
 from app.seed_data_normalize import MetroAreaNormalizer  # noqa: E402
 
 
@@ -73,6 +73,25 @@ def session_factory():
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null,
                 unique (country_code, state_province_code, region_name)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE clubs (
+                id integer primary key autoincrement,
+                club_name varchar(255) not null,
+                region_id bigint not null,
+                club_type varchar(50),
+                competitiveness_level varchar(50),
+                member_capacity integer,
+                founding_date date,
+                indoor_court_count integer default 0,
+                outdoor_court_count integer default 0,
+                generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                foreign key(region_id) references regions(id)
             )
             """
         )
@@ -335,3 +354,39 @@ def test_adds_fallback_regions_for_positive_club_distribution_scopes(session):
     assert nunavut.region_type == "territory"
     assert nunavut.population is None
     assert nunavut.selection_probability == Decimal("0E-8")
+
+
+def test_replace_deletes_existing_clubs_before_regions(session):
+    existing_region = Region(
+        country_code="US",
+        state_province_code="TX",
+        region_name="Old Austin",
+    )
+    session.add(existing_region)
+    session.flush()
+    session.add(
+        Club(
+            club_name="Legacy Club",
+            region_id=existing_region.id,
+            club_type="public_park",
+        )
+    )
+    session.commit()
+    insert_raw_metro(
+        session,
+        country_code="US",
+        state_province_code="TX",
+        metro_area_name="Austin",
+    )
+
+    result = MetroAreaNormalizer().normalize(
+        replace_production=True,
+        session=session,
+    )
+
+    assert result.rows_deleted == 1
+    assert session.query(Club).count() == 0
+    assert [
+        (row.country_code, row.state_province_code, row.region_name)
+        for row in session.query(Region).all()
+    ] == [("US", "TX", "Austin")]
