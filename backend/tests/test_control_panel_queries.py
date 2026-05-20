@@ -1,0 +1,297 @@
+"""Tests for control panel read-side queries."""
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+import sys
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.core import ConfigurationLifecycleService  # noqa: E402
+from app.web import ControlPanelQueries  # noqa: E402
+
+
+@pytest.fixture()
+def session():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys = ON")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE configuration_profiles (
+                id integer primary key autoincrement,
+                profile_name varchar(255) not null unique,
+                description text,
+                is_active boolean not null default true,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE configuration_profile_versions (
+                id integer primary key autoincrement,
+                profile_id bigint not null,
+                version_number integer not null,
+                title varchar(255) not null,
+                notes text,
+                config_schema_version varchar(50) not null,
+                config_hash varchar(128),
+                config_payload json not null,
+                created_by varchar(255),
+                lifecycle_status varchar(30) not null default 'valid',
+                last_used_at datetime,
+                deprecated_at datetime,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique (profile_id, version_number),
+                foreign key(profile_id) references configuration_profiles(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE generation_runs (
+                id integer primary key autoincrement,
+                generation_name varchar(255) not null,
+                seed_value bigint not null,
+                simulation_version varchar(100),
+                parameter_snapshot text,
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null default 'not_started',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE monthly_batches (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_month date not null,
+                batch_sequence integer not null,
+                batch_type varchar(30) not null default 'future_increment',
+                active_player_count_start integer,
+                new_player_count integer,
+                active_player_count_end integer,
+                match_count_generated integer,
+                rating_update_count integer,
+                assessment_update_count integer,
+                processing_status varchar(30) not null default 'pending',
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique (generation_run_id, batch_month),
+                foreign key(generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE job_status (
+                id integer primary key autoincrement,
+                job_type varchar(50) not null,
+                job_id varchar(100) not null unique,
+                status varchar(30) not null default 'pending',
+                current_phase varchar(100),
+                percent_complete numeric(5,2),
+                current_message text,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE job_stage_progress (
+                id integer primary key autoincrement,
+                job_status_id bigint not null,
+                generation_run_id bigint,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                stage_sequence integer,
+                status varchar(30) not null default 'pending',
+                progress_current bigint not null default 0,
+                progress_total bigint,
+                progress_unit varchar(100),
+                progress_percent numeric(5,2),
+                last_heartbeat_at datetime,
+                progress_message text,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                metadata_json text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique(job_status_id, batch_id, stage_name),
+                foreign key(job_status_id) references job_status(id),
+                foreign key(generation_run_id) references generation_runs(id),
+                foreign key(batch_id) references monthly_batches(id)
+            )
+            """
+        )
+    session_factory = sessionmaker(bind=engine, autoflush=False, future=True)
+    db_session = session_factory()
+    try:
+        yield db_session
+    finally:
+        db_session.close()
+
+
+def _seed_valid_config(session):
+    lifecycle = ConfigurationLifecycleService()
+    payload = {
+        "runtime": {},
+        "simulation": {
+            "simulation_name": "Control Panel Test",
+            "simulation_version": "v1",
+            "master_seed": 77,
+            "historical_batch_count": 2,
+            "first_batch_month": "2026-01-01",
+            "target_total_players": 1000,
+        },
+    }
+    lifecycle.save_new_version(
+        session,
+        title="Current config",
+        notes=None,
+        payload=payload,
+    )
+    session.commit()
+
+
+def test_get_control_panel_snapshot_returns_ui_ready_state(session):
+    _seed_valid_config(session)
+    now = datetime(2026, 5, 20, 12, 0, 0)
+    stale_at = now - timedelta(minutes=20)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, started_at, created_at, updated_at
+            ) VALUES (
+                1, 'May generation', 77, 'v1', 'running', '2026-05-20 11:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, started_at, created_at, updated_at
+            ) VALUES
+                (10, 1, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 11:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (11, 1, '2026-02-01', 2, 'historical_initial', 'running', '2026-05-20 11:15:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message, started_at, created_at, updated_at
+            ) VALUES (
+                100, 'generation_run', 'generation-run-1-aaaa1111', 'running', 'matches', 60.00,
+                '2026-02-01: matches running', '2026-05-20 11:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, completed_at, created_at, updated_at
+            ) VALUES
+                (1000, 100, 1, 10, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:02:00', 'players succeeded', '2026-05-20 11:01:00', '2026-05-20 11:02:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (1001, 100, 1, 11, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:16:00', 'players succeeded', '2026-05-20 11:15:00', '2026-05-20 11:16:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (1002, 100, 1, 11, 'matches', 4, 'running', 0, 1, 'stage', 0.00, '2026-05-20 11:58:00', 'matches running', '2026-05-20 11:20:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.commit()
+
+    queries = ControlPanelQueries(now_fn=lambda: now)
+    snapshot = queries.get_control_panel_snapshot(session)
+
+    assert snapshot.config_summary is not None
+    assert snapshot.config_summary.title == "Current config"
+    assert snapshot.config_summary.first_batch_month.isoformat() == "2026-01-01"
+    assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.generation_run_id == 1
+    assert snapshot.generation_run_summary.running_batch_count == 1
+    assert snapshot.generation_run_summary.succeeded_batch_count == 1
+    assert snapshot.generation_run_summary.overall_progress_percent == 60
+    assert snapshot.active_job_summary is not None
+    assert snapshot.active_job_summary.status == "running"
+    assert snapshot.allowed_actions.can_start_generation_run is False
+    assert "A generation run is already running." in snapshot.allowed_actions.start_generation_blockers
+    assert len(snapshot.batch_summaries) == 2
+    second_batch = snapshot.batch_summaries[1]
+    assert second_batch.batch_id == 11
+    assert len(second_batch.stage_progress) == 2
+    assert second_batch.stage_progress[1].stage_name == "matches"
+    assert second_batch.stage_progress[1].is_stale is False
+    assert snapshot.warnings == ()
+
+    session.execute(
+        text("UPDATE job_stage_progress SET last_heartbeat_at = :stale_at WHERE id = 1002"),
+        {"stale_at": stale_at},
+    )
+    session.commit()
+
+    stale_snapshot = queries.get_control_panel_snapshot(session)
+    assert "Progress heartbeat is stale for one or more running stages." in stale_snapshot.warnings
+    assert stale_snapshot.batch_summaries[1].stage_progress[1].is_stale is True
+
+
+def test_get_control_panel_snapshot_reports_missing_valid_config(session):
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, completed_at, created_at, updated_at
+            ) VALUES (
+                2, 'Completed run', 99, 'v2', 'succeeded', '2026-05-19 12:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+            ) VALUES (
+                20, 2, '2026-03-01', 1, 'historical_initial', 'succeeded', '2026-05-19 11:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)).get_control_panel_snapshot(session)
+
+    assert snapshot.config_summary is None
+    assert "No valid configuration is available." in snapshot.warnings
+    assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.status == "succeeded"
+    assert snapshot.allowed_actions.can_start_generation_run is False
+    assert "A single valid configuration is required." in snapshot.allowed_actions.start_generation_blockers
+    assert snapshot.allowed_actions.can_generate_student_dataset is True
