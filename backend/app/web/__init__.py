@@ -3,6 +3,7 @@
 from .control_panel_queries import (
     AllowedActions,
     BatchSummary,
+    ConfigEditorState,
     ConfigSummary,
     ControlPanelQueries,
     ControlPanelSnapshot,
@@ -14,6 +15,7 @@ from .control_panel_queries import (
 __all__ = [
     "AllowedActions",
     "BatchSummary",
+    "ConfigEditorState",
     "ConfigSummary",
     "ControlPanelQueries",
     "ControlPanelSnapshot",

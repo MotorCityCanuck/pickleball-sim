@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+import json
 from typing import Callable
 
 from sqlalchemy import case, select
@@ -117,6 +118,20 @@ class AllowedActions:
     can_generate_student_dataset: bool
     start_generation_blockers: tuple[str, ...]
     student_dataset_blockers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfigEditorState:
+    """Transient config editor state for validation and save workflows."""
+
+    title: str
+    notes: str
+    payload_json: str
+    validation_passed: bool
+    validation_errors: tuple[str, ...]
+    validation_hash: str | None
+    status_message: str | None
+    change_count: int | None
 
 
 @dataclass(frozen=True)
@@ -403,6 +418,40 @@ class ControlPanelQueries:
             can_generate_student_dataset=not student_blockers,
             start_generation_blockers=tuple(start_blockers),
             student_dataset_blockers=tuple(student_blockers),
+        )
+
+    def get_config_editor_state(self, session: Session) -> ConfigEditorState:
+        """Return a default editor state from the current valid configuration."""
+        valid_versions = list(
+            session.scalars(
+                select(ConfigurationProfileVersion)
+                .where(ConfigurationProfileVersion.lifecycle_status == "valid")
+                .order_by(ConfigurationProfileVersion.id.asc())
+            )
+        )
+        if len(valid_versions) != 1:
+            return ConfigEditorState(
+                title="",
+                notes="",
+                payload_json="{}",
+                validation_passed=False,
+                validation_errors=(
+                    "A single valid configuration is required before editing.",
+                ),
+                validation_hash=None,
+                status_message=None,
+                change_count=None,
+            )
+        version = valid_versions[0]
+        return ConfigEditorState(
+            title="",
+            notes=version.notes or "",
+            payload_json=json.dumps(version.config_payload, indent=2, sort_keys=True),
+            validation_passed=False,
+            validation_errors=(),
+            validation_hash=version.config_hash,
+            status_message=None,
+            change_count=0,
         )
 
     def _derive_run_warnings(

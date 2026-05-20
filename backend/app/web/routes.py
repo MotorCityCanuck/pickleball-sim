@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.core import ConfigurationLifecycleService, diff_config_payloads
 from app.db.session import get_session
 
-from .control_panel_queries import ControlPanelQueries
+from .control_panel_queries import ConfigEditorState, ControlPanelQueries, ControlPanelSnapshot
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
@@ -28,6 +30,11 @@ def get_control_panel_queries() -> ControlPanelQueries:
     return ControlPanelQueries()
 
 
+def get_configuration_lifecycle() -> ConfigurationLifecycleService:
+    """Return the configuration lifecycle service."""
+    return ConfigurationLifecycleService()
+
+
 def build_control_panel_router() -> APIRouter:
     """Build the control panel router."""
     router = APIRouter()
@@ -39,12 +46,13 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
     ) -> HTMLResponse:
-        snapshot = queries.get_control_panel_snapshot(session)
+        snapshot, editor = _config_context(session, queries=queries)
         return templates.TemplateResponse(
             request,
             "control_panel.html",
             {
                 "snapshot": snapshot,
+                "editor": editor,
             },
         )
 
@@ -54,12 +62,69 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
     ) -> HTMLResponse:
-        snapshot = queries.get_control_panel_snapshot(session)
+        snapshot, editor = _config_context(session, queries=queries)
         return templates.TemplateResponse(
             request,
             "partials/control_config_tab.html",
             {
                 "snapshot": snapshot,
+                "editor": editor,
+            },
+        )
+
+    @router.post("/control/config/validate", response_class=HTMLResponse)
+    def control_panel_config_validate(
+        request: Request,
+        config_title: str = Form(""),
+        config_notes: str = Form(""),
+        config_payload_json: str = Form("{}"),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        lifecycle: ConfigurationLifecycleService = Depends(get_configuration_lifecycle),
+    ) -> HTMLResponse:
+        snapshot, editor = _config_context(
+            session,
+            queries=queries,
+            lifecycle=lifecycle,
+            title=config_title,
+            notes=config_notes,
+            payload_json=config_payload_json,
+            action="validate",
+        )
+        return templates.TemplateResponse(
+            request,
+            "partials/control_config_tab.html",
+            {
+                "snapshot": snapshot,
+                "editor": editor,
+            },
+        )
+
+    @router.post("/control/config/save", response_class=HTMLResponse)
+    def control_panel_config_save(
+        request: Request,
+        config_title: str = Form(""),
+        config_notes: str = Form(""),
+        config_payload_json: str = Form("{}"),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        lifecycle: ConfigurationLifecycleService = Depends(get_configuration_lifecycle),
+    ) -> HTMLResponse:
+        snapshot, editor = _config_context(
+            session,
+            queries=queries,
+            lifecycle=lifecycle,
+            title=config_title,
+            notes=config_notes,
+            payload_json=config_payload_json,
+            action="save",
+        )
+        return templates.TemplateResponse(
+            request,
+            "partials/control_config_tab.html",
+            {
+                "snapshot": snapshot,
+                "editor": editor,
             },
         )
 
@@ -124,3 +189,135 @@ def build_control_panel_router() -> APIRouter:
         )
 
     return router
+
+
+def _config_context(
+    session: Session,
+    *,
+    queries: ControlPanelQueries,
+    lifecycle: ConfigurationLifecycleService | None = None,
+    title: str | None = None,
+    notes: str | None = None,
+    payload_json: str | None = None,
+    action: str | None = None,
+) -> tuple[ControlPanelSnapshot, ConfigEditorState]:
+    snapshot = queries.get_control_panel_snapshot(session)
+    default_editor = queries.get_config_editor_state(session)
+    lifecycle = lifecycle or ConfigurationLifecycleService()
+
+    if action is None:
+        return snapshot, default_editor
+
+    editor_title = (title or "").strip()
+    editor_notes = notes or ""
+    editor_payload_json = payload_json or "{}"
+    payload, json_errors = _parse_payload_json(editor_payload_json)
+    if json_errors:
+        return snapshot, ConfigEditorState(
+            title=editor_title,
+            notes=editor_notes,
+            payload_json=editor_payload_json,
+            validation_passed=False,
+            validation_errors=json_errors,
+            validation_hash=None,
+            status_message=None,
+            change_count=None,
+        )
+
+    validation = lifecycle.validate_working_copy(payload)
+    change_count = _change_count(session, lifecycle=lifecycle, payload=payload)
+    if action == "validate":
+        return snapshot, ConfigEditorState(
+            title=editor_title,
+            notes=editor_notes,
+            payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
+            validation_passed=validation.is_valid,
+            validation_errors=validation.errors,
+            validation_hash=validation.config_hash,
+            status_message=(
+                "Configuration is valid and ready to save."
+                if validation.is_valid
+                else None
+            ),
+            change_count=change_count,
+        )
+
+    if not snapshot.allowed_actions.can_edit_config:
+        return snapshot, ConfigEditorState(
+            title=editor_title,
+            notes=editor_notes,
+            payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
+            validation_passed=False,
+            validation_errors=("Configuration editing is blocked while a generation run is active.",),
+            validation_hash=validation.config_hash,
+            status_message=None,
+            change_count=change_count,
+        )
+
+    if not validation.is_valid:
+        return snapshot, ConfigEditorState(
+            title=editor_title,
+            notes=editor_notes,
+            payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
+            validation_passed=False,
+            validation_errors=validation.errors,
+            validation_hash=validation.config_hash,
+            status_message=None,
+            change_count=change_count,
+        )
+
+    if not editor_title:
+        return snapshot, ConfigEditorState(
+            title=editor_title,
+            notes=editor_notes,
+            payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
+            validation_passed=True,
+            validation_errors=("Configuration version title is required.",),
+            validation_hash=validation.config_hash,
+            status_message=None,
+            change_count=change_count,
+        )
+
+    lifecycle.save_new_version(
+        session,
+        title=editor_title,
+        notes=editor_notes or None,
+        payload=validation.normalized_payload,
+    )
+    session.commit()
+    refreshed_snapshot = queries.get_control_panel_snapshot(session)
+    refreshed_editor = queries.get_config_editor_state(session)
+    refreshed_editor = ConfigEditorState(
+        title="",
+        notes=refreshed_editor.notes,
+        payload_json=refreshed_editor.payload_json,
+        validation_passed=False,
+        validation_errors=(),
+        validation_hash=refreshed_snapshot.config_summary.config_hash if refreshed_snapshot.config_summary else None,
+        status_message="Configuration saved as the current valid version.",
+        change_count=0,
+    )
+    return refreshed_snapshot, refreshed_editor
+
+
+def _parse_payload_json(payload_json: str) -> tuple[dict[str, object], tuple[str, ...]]:
+    try:
+        parsed = json.loads(payload_json)
+    except json.JSONDecodeError as exc:
+        return {}, (f"Configuration payload is not valid JSON: {exc.msg}.",)
+    if not isinstance(parsed, dict):
+        return {}, ("Configuration payload must be a JSON object.",)
+    return parsed, ()
+
+
+def _change_count(
+    session: Session,
+    *,
+    lifecycle: ConfigurationLifecycleService,
+    payload: dict[str, object],
+) -> int | None:
+    try:
+        current_version = lifecycle.load_current_valid_version(session)
+    except ValueError:
+        return None
+    return len(diff_config_payloads(current_version.config_payload, payload))

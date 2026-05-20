@@ -1,4 +1,4 @@
-<section>
+<section id="config-tab-panel" style="display:grid; gap:16px;">
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
         <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Config</div>
@@ -46,4 +46,105 @@
             {% endif %}
         </div>
     </div>
+
+    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Config Editor</div>
+                <div style="margin-top:6px; font-size:18px;">Edit the current valid configuration and save a new immutable version.</div>
+            </div>
+            <div style="font-size:13px; color:#5a6477;">
+                {% if editor.validation_hash %}
+                    Hash {{ editor.validation_hash[:12] }}
+                {% endif %}
+            </div>
+        </div>
+
+        {% if editor.status_message %}
+            <div style="margin-top:12px; border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                {{ editor.status_message }}
+            </div>
+        {% endif %}
+
+        {% if editor.validation_errors %}
+            <div style="margin-top:12px; border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                <div style="font-weight:bold; margin-bottom:6px;">Validation errors</div>
+                <ul style="margin:0 0 0 18px; padding:0;">
+                    {% for error in editor.validation_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% elif editor.validation_passed %}
+            <div style="margin-top:12px; border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                Configuration validated successfully.
+                {% if editor.change_count is not none %}
+                    {{ editor.change_count }} field changes detected.
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <form style="margin-top:16px; display:grid; gap:12px;">
+            <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:12px;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">New version title</span>
+                    <input
+                        type="text"
+                        name="config_title"
+                        value="{{ editor.title }}"
+                        placeholder="Required when saving a new version"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                </label>
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Notes</span>
+                    <input
+                        type="text"
+                        name="config_notes"
+                        value="{{ editor.notes }}"
+                        placeholder="Optional"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                </label>
+            </div>
+
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">Configuration JSON</span>
+                <textarea
+                    name="config_payload_json"
+                    rows="28"
+                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
+                >{{ editor.payload_json }}</textarea>
+            </label>
+
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button
+                    type="submit"
+                    formaction="/control/config/validate"
+                    formmethod="post"
+                    hx-post="/control/config/validate"
+                    hx-target="#config-tab-panel"
+                    hx-swap="outerHTML"
+                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                >
+                    Validate
+                </button>
+                <button
+                    type="submit"
+                    formaction="/control/config/save"
+                    formmethod="post"
+                    hx-post="/control/config/save"
+                    hx-target="#config-tab-panel"
+                    hx-swap="outerHTML"
+                    {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}disabled{% endif %}
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; cursor:pointer; {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}opacity:0.45; cursor:not-allowed;{% endif %}"
+                >
+                    Save New Version
+                </button>
+                {% if not snapshot.allowed_actions.can_edit_config %}
+                    <span style="font-size:13px; color:#8f1d18;">Configuration editing is blocked while a generation run is active.</span>
+                {% endif %}
+            </div>
+        </form>
+    </section>
 </section>

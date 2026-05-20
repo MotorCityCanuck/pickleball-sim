@@ -15,6 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core import ConfigurationLifecycleService  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.web.routes import get_configuration_lifecycle  # noqa: E402
 from app.web.control_panel_queries import ControlPanelQueries  # noqa: E402
 
 
@@ -225,8 +226,33 @@ def _seed_snapshot_state(session_factory):
         session.close()
 
 
-def _request(path: str) -> Request:
-    return Request({"type": "http", "method": "GET", "path": path, "headers": []})
+def _seed_idle_config_state(session_factory):
+    session = session_factory()
+    try:
+        lifecycle = ConfigurationLifecycleService()
+        lifecycle.save_new_version(
+            session,
+            title="Editable config",
+            notes="base",
+            payload={
+                "runtime": {},
+                "simulation": {
+                    "simulation_name": "Editable Route Test",
+                    "simulation_version": "v1",
+                    "master_seed": 21,
+                    "historical_batch_count": 2,
+                    "first_batch_month": "2026-03-01",
+                    "target_total_players": 1000,
+                },
+            },
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _request(path: str, *, method: str = "GET") -> Request:
+    return Request({"type": "http", "method": method, "path": path, "headers": []})
 
 
 def _route_map(app):
@@ -302,3 +328,84 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert orchestration.status_code == 200
     assert 'hx-get="/control/partials/run-status"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/batch-table"' in orchestration.body.decode()
+
+
+def test_control_panel_config_validate_renders_validation_success(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        response = routes["/control/config/validate"](
+            request=_request("/control/config/validate", method="POST"),
+            config_title="March tuning",
+            config_notes="adjusted player count",
+            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 3, "first_batch_month": "2026-03-01", "target_total_players": 1200}}',
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Configuration validated successfully." in body
+    assert "Save New Version" in body
+    assert "March tuning" in body
+
+
+def test_control_panel_config_save_persists_new_version_when_idle(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        response = routes["/control/config/save"](
+            request=_request("/control/config/save", method="POST"),
+            config_title="April tuning",
+            config_notes="saved",
+            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v3", "master_seed": 21, "historical_batch_count": 4, "first_batch_month": "2026-03-01", "target_total_players": 1400}}',
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+        current_version = lifecycle.load_current_valid_version(session)
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Configuration saved as the current valid version." in body
+    assert "April tuning" in body
+    assert current_version.title == "April tuning"
+    assert current_version.version_number == 2
+    assert current_version.config_payload["simulation"]["simulation_version"] == "v3"
+
+
+def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
+    _seed_snapshot_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        response = routes["/control/config/save"](
+            request=_request("/control/config/save", method="POST"),
+            config_title="Blocked save",
+            config_notes="should not persist",
+            config_payload_json='{"runtime": {}, "simulation": {"simulation_name": "Route Test", "simulation_version": "v2", "master_seed": 11, "historical_batch_count": 2, "first_batch_month": "2026-01-01", "target_total_players": 1000}}',
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+        current_version = lifecycle.load_current_valid_version(session)
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Configuration editing is blocked while a generation run is active." in body
+    assert current_version.title == "Read only config"
