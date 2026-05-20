@@ -24,7 +24,12 @@ from .uploaded_files import UploadedFile
 from .export_runs import ExportRun
 from .validation_results import ValidationResult
 from .job_status import JobStatus
+from .job_stage_progress import JobStageProgress
 from .configuration_profiles import ConfigurationProfile, ConfigurationProfileVersion
+from .student_dataset_releases import (
+    StudentDatasetRelease,
+    StudentDatasetReleaseFile,
+)
 from .raw_seed_load_runs import RawSeedLoadRun
 from .raw_seed_load_errors import RawSeedLoadError
 from .raw_metro_areas import RawMetroArea
@@ -61,8 +66,11 @@ __all__ = [
     'ExportRun',
     'ValidationResult',
     'JobStatus',
+    'JobStageProgress',
     'ConfigurationProfile',
     'ConfigurationProfileVersion',
+    'StudentDatasetRelease',
+    'StudentDatasetReleaseFile',
     'RawSeedLoadRun',
     'RawSeedLoadError',
     'RawMetroArea',

@@ -74,8 +74,7 @@ class MonthlyBatch(Base, TimestampMixin):
         ),
         CheckConstraint(
             processing_status.in_([
-                'pending', 'running', 'validating', 'exporting',
-                'completed', 'failed', 'superseded'
+                'pending', 'running', 'succeeded', 'failed'
             ]),
             name='chk_processing_status'
         ),

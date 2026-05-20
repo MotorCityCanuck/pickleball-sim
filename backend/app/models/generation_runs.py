@@ -38,14 +38,14 @@ class GenerationRun(Base, TimestampMixin):
     status = Column(
         String(30),
         nullable=False,
-        default='pending',
-        server_default=text("'pending'")
+        default='not_started',
+        server_default=text("'not_started'")
     )
     
     # Constraints
     __table_args__ = (
         CheckConstraint(
-            status.in_(['pending', 'running', 'completed', 'failed', 'cancelled']),
+            status.in_(['not_started', 'running', 'succeeded', 'failed']),
             name='chk_generation_status'
         ),
         Index('idx_generation_runs_status', 'status'),

@@ -31,7 +31,7 @@ def session_factory():
                 parameter_snapshot text,
                 started_at datetime,
                 completed_at datetime,
-                status varchar(30) not null default 'pending',
+                status varchar(30) not null default 'not_started',
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -93,7 +93,7 @@ def test_create_generation_run_uses_settings_defaults(control_plane, session):
     assert generation_run.generation_name == "baseline"
     assert generation_run.seed_value == 12345
     assert generation_run.simulation_version == "test-version"
-    assert generation_run.status == "pending"
+    assert generation_run.status == "not_started"
 
 
 def test_generation_run_status_transitions(control_plane, session):
@@ -111,7 +111,7 @@ def test_generation_run_status_transitions(control_plane, session):
         session=session,
     )
 
-    assert completed.status == "completed"
+    assert completed.status == "succeeded"
     assert generation_run.completed_at is not None
 
 

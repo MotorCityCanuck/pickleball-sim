@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "export_runs",
     "first_names",
     "generation_runs",
+    "job_stage_progress",
     "job_status",
     "last_names",
     "match_games",
@@ -35,6 +36,8 @@ EXPECTED_TABLES = {
     "tournaments",
     "uploaded_files",
     "validation_results",
+    "student_dataset_releases",
+    "student_dataset_release_files",
 }
 
 STALE_SPLIT_NAME_TABLES = {
@@ -59,7 +62,7 @@ EXPECTED_INDEXES = {
     "idx_configuration_profiles_active",
     "idx_configuration_versions_profile",
     "idx_configuration_versions_schema",
-    "idx_configuration_versions_status",
+    "idx_configuration_versions_lifecycle",
     "idx_export_runs_batch",
     "idx_export_runs_created",
     "idx_export_runs_type",
@@ -68,6 +71,11 @@ EXPECTED_INDEXES = {
     "idx_first_names_probability",
     "idx_generation_runs_started",
     "idx_generation_runs_status",
+    "idx_job_stage_progress_batch",
+    "idx_job_stage_progress_generation_run",
+    "idx_job_stage_progress_heartbeat",
+    "idx_job_stage_progress_job",
+    "idx_job_stage_progress_status",
     "idx_job_status_started",
     "idx_job_status_status",
     "idx_job_status_type",
@@ -122,6 +130,10 @@ EXPECTED_INDEXES = {
     "idx_ratings_update_log_match",
     "idx_ratings_update_log_player",
     "idx_ratings_update_log_player_date",
+    "idx_student_dataset_release_files_release",
+    "idx_student_dataset_release_files_table",
+    "idx_student_dataset_releases_generation_run",
+    "idx_student_dataset_releases_status",
     "idx_team_memberships_dates",
     "idx_team_memberships_player",
     "idx_team_memberships_team",
@@ -135,6 +147,7 @@ EXPECTED_INDEXES = {
     "idx_validation_results_batch",
     "idx_validation_results_rule",
     "idx_validation_results_severity",
+    "uq_configuration_versions_single_valid",
 }
 
 EXPECTED_CHECK_CONSTRAINTS = {
@@ -142,8 +155,12 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "club_memberships": {"chk_membership_dates"},
     "clubs": {"chk_club_type", "chk_court_counts"},
     "configuration_profile_versions": {
-        "chk_configuration_validation_status",
+        "chk_configuration_lifecycle_status",
         "chk_configuration_version_number",
+    },
+    "job_stage_progress": {
+        "chk_job_stage_progress_percent",
+        "chk_job_stage_progress_status",
     },
     "export_runs": {"chk_export_format"},
     "first_names": {
@@ -207,6 +224,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "teams": {"chk_team_dates", "chk_team_status", "chk_team_type"},
     "tournaments": {"chk_tournament_dates"},
     "uploaded_files": {"chk_file_size"},
+    "student_dataset_releases": {
+        "chk_student_release_status",
+        "chk_student_release_type",
+    },
     "validation_results": {"chk_severity"},
 }
 
@@ -215,6 +236,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "configuration_profile_versions": {("profile_id", "version_number")},
     "configuration_profiles": {("profile_name",)},
     "job_status": {("job_id",)},
+    "job_stage_progress": {("job_status_id", "batch_id", "stage_name")},
     "match_games": {("match_id", "game_number")},
     "match_team_players": {("match_team_id", "player_id")},
     "match_teams": {("match_id", "team_number")},
@@ -241,6 +263,11 @@ EXPECTED_FOREIGN_KEYS = {
         "profile_id->configuration_profiles.id",
     },
     "export_runs": {"batch_id->monthly_batches.id"},
+    "job_stage_progress": {
+        "batch_id->monthly_batches.id",
+        "generation_run_id->generation_runs.id",
+        "job_status_id->job_status.id",
+    },
     "match_games": {"match_id->matches.id"},
     "match_team_players": {
         "match_team_id->match_teams.id",
@@ -286,6 +313,12 @@ EXPECTED_FOREIGN_KEYS = {
     "raw_pickleball_club_names": {"load_run_id->raw_seed_load_runs.id"},
     "raw_seed_load_errors": {"load_run_id->raw_seed_load_runs.id"},
     "raw_state_prov_biases": {"load_run_id->raw_seed_load_runs.id"},
+    "student_dataset_release_files": {
+        "release_id->student_dataset_releases.id",
+    },
+    "student_dataset_releases": {
+        "generation_run_id->generation_runs.id",
+    },
     "team_memberships": {"player_id->players.id", "team_id->teams.id"},
     "teams": {"generation_run_id->generation_runs.id"},
     "tournaments": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
@@ -293,8 +326,12 @@ EXPECTED_FOREIGN_KEYS = {
 }
 
 EXPECTED_SERVER_DEFAULTS = {
-    "generation_runs": {"status": "'pending'"},
-    "configuration_profile_versions": {"validation_status": "'pending'"},
+    "generation_runs": {"status": "'not_started'"},
+    "configuration_profile_versions": {"lifecycle_status": "'valid'"},
+    "job_stage_progress": {
+        "progress_current": "0",
+        "status": "'pending'",
+    },
     "configuration_profiles": {"is_active": "true"},
     "monthly_batches": {
         "batch_type": "'future_increment'",
@@ -311,4 +348,5 @@ EXPECTED_SERVER_DEFAULTS = {
     },
     "regions": {"competitiveness_multiplier": "1.0"},
     "raw_seed_load_runs": {"status": "'pending'"},
+    "student_dataset_releases": {"status": "'pending'"},
 }

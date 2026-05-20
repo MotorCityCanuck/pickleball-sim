@@ -228,7 +228,7 @@ def test_database_defaults_are_applied(engine):
                 {"match_id": match.id},
             ).one()
 
-            assert generation_run.status == "pending"
+            assert generation_run.status == "not_started"
             assert batch.batch_type == "future_increment"
             assert batch.processing_status == "pending"
             assert game.target_score == 11

@@ -170,7 +170,7 @@ class MonthlyGenerationPipeline:
         skip_existing: bool,
         session: Session,
     ) -> MonthlyPipelineResult:
-        if batch.processing_status == "completed" and skip_existing:
+        if batch.processing_status == "succeeded" and skip_existing:
             return MonthlyPipelineResult(
                 generation_run_id=generation_run_id,
                 batch_id=batch.id,

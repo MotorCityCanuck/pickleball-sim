@@ -47,7 +47,7 @@ def session_factory():
                 parameter_snapshot text,
                 started_at datetime,
                 completed_at datetime,
-                status varchar(30) not null default 'pending',
+                status varchar(30) not null default 'not_started',
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -218,7 +218,7 @@ def seed_run(session):
             generation_name="pipeline",
             seed_value=42,
             simulation_version="test",
-            status="pending",
+            status="not_started",
         )
     )
     session.add_all(
@@ -411,7 +411,7 @@ def test_pipeline_runs_successive_months_and_skips_run_setup_after_first(session
     assert session.query(RatingsUpdateLog).count() == 2
     assert {
         batch.processing_status for batch in session.query(MonthlyBatch).all()
-    } == {"completed"}
+    } == {"succeeded"}
 
 
 def test_pipeline_rejects_more_than_twelve_months(session):
@@ -444,9 +444,9 @@ def test_pipeline_creates_missing_successive_batches(session):
     assert created_batch.batch_sequence == 3
 
 
-def test_pipeline_skips_completed_batch_when_skip_existing_is_enabled(session):
+def test_pipeline_skips_succeeded_batch_when_skip_existing_is_enabled(session):
     seed_run(session)
-    session.get(MonthlyBatch, 1).processing_status = "completed"
+    session.get(MonthlyBatch, 1).processing_status = "succeeded"
     session.commit()
 
     result = fake_pipeline().run_months(

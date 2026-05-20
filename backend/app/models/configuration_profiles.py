@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -56,15 +57,20 @@ class ConfigurationProfileVersion(Base, TimestampMixin):
         nullable=False,
     )
     version_number = Column(Integer, nullable=False)
+    title = Column(String(255), nullable=False)
+    notes = Column(Text)
     config_schema_version = Column(String(50), nullable=False)
+    config_hash = Column(String(128))
     config_payload = Column(JSONB, nullable=False)
     created_by = Column(String(255))
-    validation_status = Column(
+    lifecycle_status = Column(
         String(30),
         nullable=False,
-        default="pending",
-        server_default=text("'pending'"),
+        default="valid",
+        server_default=text("'valid'"),
     )
+    last_used_at = Column(DateTime)
+    deprecated_at = Column(DateTime)
 
     profile = relationship(
         "ConfigurationProfile",
@@ -82,10 +88,16 @@ class ConfigurationProfileVersion(Base, TimestampMixin):
             name="chk_configuration_version_number",
         ),
         CheckConstraint(
-            "validation_status IN ('pending', 'valid', 'invalid')",
-            name="chk_configuration_validation_status",
+            "lifecycle_status IN ('valid', 'deprecated')",
+            name="chk_configuration_lifecycle_status",
         ),
         Index("idx_configuration_versions_profile", "profile_id"),
         Index("idx_configuration_versions_schema", "config_schema_version"),
-        Index("idx_configuration_versions_status", "validation_status"),
+        Index("idx_configuration_versions_lifecycle", "lifecycle_status"),
+        Index(
+            "uq_configuration_versions_single_valid",
+            "lifecycle_status",
+            unique=True,
+            postgresql_where=text("lifecycle_status = 'valid'"),
+        ),
     )

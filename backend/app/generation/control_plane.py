@@ -13,8 +13,8 @@ from app.db.session import session_scope
 from app.models import GenerationRun, MonthlyBatch
 
 
-GENERATION_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-BATCH_TERMINAL_STATUSES = {"completed", "failed", "superseded"}
+GENERATION_TERMINAL_STATUSES = {"succeeded", "failed"}
+BATCH_TERMINAL_STATUSES = {"succeeded", "failed"}
 
 
 def _utc_now() -> datetime:
@@ -45,7 +45,7 @@ class GenerationControlPlane:
                 else effective_settings.default_seed_value,
                 simulation_version=effective_settings.simulation_version,
                 parameter_snapshot=parameter_snapshot,
-                status="pending",
+                status="not_started",
             )
             active_session.add(generation_run)
             active_session.flush()
@@ -79,8 +79,8 @@ class GenerationControlPlane:
                 active_session,
                 generation_run_id,
             )
-            self._ensure_generation_can_transition(generation_run, "completed")
-            generation_run.status = "completed"
+            self._ensure_generation_can_transition(generation_run, "succeeded")
+            generation_run.status = "succeeded"
             generation_run.completed_at = _utc_now()
             active_session.flush()
             return generation_run
@@ -162,8 +162,8 @@ class GenerationControlPlane:
                 active_session,
                 monthly_batch_id,
             )
-            self._ensure_batch_can_transition(monthly_batch, "completed")
-            monthly_batch.processing_status = "completed"
+            self._ensure_batch_can_transition(monthly_batch, "succeeded")
+            monthly_batch.processing_status = "succeeded"
             monthly_batch.completed_at = _utc_now()
             active_session.flush()
             return monthly_batch

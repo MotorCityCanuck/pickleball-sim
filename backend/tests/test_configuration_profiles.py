@@ -39,10 +39,15 @@ def session():
                 id integer primary key autoincrement,
                 profile_id bigint not null,
                 version_number integer not null,
+                title varchar(255) not null,
+                notes text,
                 config_schema_version varchar(50) not null,
+                config_hash varchar(128),
                 config_payload json not null,
                 created_by varchar(255),
-                validation_status varchar(30) not null default 'pending',
+                lifecycle_status varchar(30) not null default 'valid',
+                last_used_at datetime,
+                deprecated_at datetime,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null,
                 unique (profile_id, version_number),
@@ -62,7 +67,9 @@ def test_upsert_default_configuration_profile_creates_valid_version(session):
     profile_version = upsert_default_configuration_profile(session)
 
     assert profile_version.version_number == DEFAULT_CONFIG_VERSION_NUMBER
-    assert profile_version.validation_status == "valid"
+    assert profile_version.lifecycle_status == "valid"
+    assert profile_version.title == "Default configuration"
+    assert profile_version.config_hash is not None
     assert profile_version.config_payload["simulation"]["master_seed"] == 42
     assert profile_version.config_payload["simulation"]["target_total_players"] == 50000
 

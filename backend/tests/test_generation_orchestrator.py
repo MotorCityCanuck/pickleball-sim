@@ -31,7 +31,7 @@ def session_factory():
                 parameter_snapshot text,
                 started_at datetime,
                 completed_at datetime,
-                status varchar(30) not null default 'pending',
+                status varchar(30) not null default 'not_started',
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -112,7 +112,7 @@ def test_create_initial_generation_plan_creates_run_and_batches(
             "historical_batch_count": 3,
         }
     }
-    assert plan.generation_run.status == "pending"
+    assert plan.generation_run.status == "not_started"
     assert [batch.batch_month for batch in plan.monthly_batches] == [
         date(2026, 1, 1),
         date(2026, 2, 1),
