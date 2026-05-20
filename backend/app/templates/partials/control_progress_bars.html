@@ -1,0 +1,46 @@
+<section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+    <div style="font-size:12px; color:#5a6477; text-transform:uppercase; margin-bottom:12px;">Stage Progress</div>
+    {% if snapshot.batch_summaries %}
+        <div style="display:grid; gap:14px;">
+            {% for batch in snapshot.batch_summaries %}
+                <div>
+                    <div style="font-size:14px; margin-bottom:8px;">
+                        {{ batch.batch_month }} | {{ batch.processing_status }}
+                    </div>
+                    {% if batch.stage_progress %}
+                        <div style="display:grid; gap:10px;">
+                            {% for stage in batch.stage_progress %}
+                                <div>
+                                    <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+                                        <span>{{ stage.stage_name }}</span>
+                                        <span>
+                                            {{ stage.status }}
+                                            {% if stage.progress_percent is not none %}
+                                                | {{ stage.progress_percent }}%
+                                            {% endif %}
+                                            {% if stage.is_stale %}
+                                                | stale
+                                            {% endif %}
+                                        </span>
+                                    </div>
+                                    <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                                        <div
+                                            style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
+                                        ></div>
+                                    </div>
+                                    {% if stage.progress_message %}
+                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ stage.progress_message }}</div>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div style="color:#5a6477; font-size:13px;">No stage progress rows available.</div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div>No progress available.</div>
+    {% endif %}
+</section>

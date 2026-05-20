@@ -1,0 +1,31 @@
+<section style="border:1px solid #d6d9df; border-radius:8px; overflow:hidden;">
+    <div style="padding:16px; border-bottom:1px solid #d6d9df;">
+        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Monthly Batches</div>
+    </div>
+    {% if snapshot.batch_summaries %}
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="background:#f6f8fb; text-align:left;">
+                    <th style="padding:12px;">Month</th>
+                    <th style="padding:12px;">Sequence</th>
+                    <th style="padding:12px;">Type</th>
+                    <th style="padding:12px;">Status</th>
+                    <th style="padding:12px;">Stages</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for batch in snapshot.batch_summaries %}
+                    <tr style="border-top:1px solid #eef1f5;">
+                        <td style="padding:12px;">{{ batch.batch_month }}</td>
+                        <td style="padding:12px;">{{ batch.batch_sequence }}</td>
+                        <td style="padding:12px;">{{ batch.batch_type }}</td>
+                        <td style="padding:12px;">{{ batch.processing_status }}</td>
+                        <td style="padding:12px;">{{ batch.stage_progress | length }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div style="padding:16px;">No monthly batches available.</div>
+    {% endif %}
+</section>

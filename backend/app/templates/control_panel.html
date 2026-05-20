@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Simulation Control Panel</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <style>
+        :root {
+            color-scheme: light;
+            --border: #d6d9df;
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --text: #1d2433;
+            --muted: #5a6477;
+            --accent: #1857c2;
+            --success: #247a3d;
+            --warn: #9a6700;
+            --error: #b42318;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+        }
+        .page {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .header p {
+            margin: 6px 0 0;
+            color: var(--muted);
+        }
+        .warnings {
+            margin: 0 0 20px;
+            padding: 0;
+            list-style: none;
+            display: grid;
+            gap: 8px;
+        }
+        .warning {
+            border: 1px solid #f3d38a;
+            background: #fff7e0;
+            color: #704f00;
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .tab-button {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .tab-button.active {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .shell {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .tab-content {
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="header">
+            <div>
+                <h1>Simulation Control Panel</h1>
+                <p>Configuration and generation orchestration for synthetic pickleball workloads.</p>
+            </div>
+        </div>
+
+        {% if snapshot.warnings %}
+            <ul class="warnings">
+                {% for warning in snapshot.warnings %}
+                    <li class="warning">{{ warning }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <div class="tabs">
+            <button
+                class="tab-button active"
+                hx-get="/control/partials/config"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+            >
+                Configuration
+            </button>
+            <button
+                class="tab-button"
+                hx-get="/control/partials/orchestration"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+            >
+                Orchestration
+            </button>
+        </div>
+
+        <div class="shell">
+            <div
+                id="control-tab-content"
+                class="tab-content"
+                hx-get="/control/partials/config"
+                hx-trigger="load"
+                hx-swap="innerHTML"
+            >
+                {% include "partials/control_config_tab.html" %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+        <div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Run</div>
+            {% if snapshot.generation_run_summary %}
+                <div style="margin-top:8px; font-size:22px;">{{ snapshot.generation_run_summary.generation_name }}</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    Status: {{ snapshot.generation_run_summary.status }}
+                    {% if snapshot.generation_run_summary.started_at %}
+                        | Started {{ snapshot.generation_run_summary.started_at }}
+                    {% endif %}
+                </div>
+            {% else %}
+                <div style="margin-top:8px; font-size:18px;">No generation run yet</div>
+            {% endif %}
+        </div>
+        {% if snapshot.active_job_summary %}
+            <div style="min-width:220px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Active Job</div>
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.active_job_summary.status }}</div>
+                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.active_job_summary.current_phase or "n/a" }}</div>
+                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.active_job_summary.percent_complete or 0 }}%</div>
+            </div>
+        {% endif %}
+    </div>
+</section>

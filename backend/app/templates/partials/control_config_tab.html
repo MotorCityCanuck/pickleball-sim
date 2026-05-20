@@ -1,0 +1,49 @@
+<section>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Config</div>
+            {% if snapshot.config_summary %}
+                <div style="margin-top:8px; font-size:20px;">{{ snapshot.config_summary.title }}</div>
+                <div style="margin-top:6px; color:#5a6477;">Version {{ snapshot.config_summary.version_number }}</div>
+                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.config_summary.profile_name }}</div>
+            {% else %}
+                <div style="margin-top:8px; font-size:18px;">No valid configuration</div>
+            {% endif %}
+        </div>
+        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Simulation</div>
+            {% if snapshot.config_summary %}
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.simulation_name or "Unnamed simulation" }}</div>
+                <div style="margin-top:6px; color:#5a6477;">Version {{ snapshot.config_summary.simulation_version or "n/a" }}</div>
+            {% else %}
+                <div style="margin-top:8px; font-size:18px;">Unavailable</div>
+            {% endif %}
+        </div>
+        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Window</div>
+            {% if snapshot.config_summary %}
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.first_batch_month or "n/a" }}</div>
+                <div style="margin-top:6px; color:#5a6477;">{{ snapshot.config_summary.historical_batch_count or 0 }} months</div>
+            {% else %}
+                <div style="margin-top:8px; font-size:18px;">Unavailable</div>
+            {% endif %}
+        </div>
+        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Eligibility</div>
+            <div style="margin-top:8px; font-size:18px;">
+                {% if snapshot.allowed_actions.can_start_generation_run %}
+                    Ready
+                {% else %}
+                    Blocked
+                {% endif %}
+            </div>
+            {% if snapshot.allowed_actions.start_generation_blockers %}
+                <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                    {% for blocker in snapshot.allowed_actions.start_generation_blockers %}
+                        <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+    </div>
+</section>

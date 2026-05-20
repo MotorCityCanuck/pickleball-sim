@@ -1,0 +1,25 @@
+<section style="display:grid; gap:16px;">
+    <div
+        hx-get="/control/partials/run-status"
+        hx-trigger="load, every 10s"
+        hx-swap="innerHTML"
+    >
+        {% include "partials/control_run_status.html" %}
+    </div>
+
+    <div
+        hx-get="/control/partials/batch-table"
+        hx-trigger="load, every 10s"
+        hx-swap="innerHTML"
+    >
+        {% include "partials/control_batch_table.html" %}
+    </div>
+
+    <div
+        hx-get="/control/partials/progress-bars"
+        hx-trigger="load, every 10s"
+        hx-swap="innerHTML"
+    >
+        {% include "partials/control_progress_bars.html" %}
+    </div>
+</section>
