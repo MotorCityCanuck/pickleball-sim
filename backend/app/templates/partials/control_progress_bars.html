@@ -28,8 +28,10 @@
                                             style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
                                         ></div>
                                     </div>
-                                    {% if stage.progress_message %}
-                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ stage.progress_message }}</div>
+                                    {% if stage.completion_message or stage.progress_message %}
+                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">
+                                            {{ stage.completion_message or stage.progress_message }}
+                                        </div>
                                     {% endif %}
                                 </div>
                             {% endfor %}

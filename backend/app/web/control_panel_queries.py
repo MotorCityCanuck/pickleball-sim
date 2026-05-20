@@ -52,6 +52,7 @@ class StageProgressSummary:
     progress_percent: Decimal | None
     progress_unit: str | None
     progress_message: str | None
+    completion_message: str | None
     last_heartbeat_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -295,6 +296,10 @@ class ControlPanelQueries:
                     progress_percent=row.progress_percent,
                     progress_unit=row.progress_unit,
                     progress_message=row.progress_message,
+                    completion_message=_completion_message(
+                        row.status,
+                        _coerce_mapping(row.metadata_json),
+                    ),
                     last_heartbeat_at=row.last_heartbeat_at,
                     started_at=row.started_at,
                     completed_at=row.completed_at,
@@ -512,6 +517,59 @@ def _coerce_date(value: object) -> date | None:
     if isinstance(value, str):
         return date.fromisoformat(value)
     return None
+
+
+def _coerce_mapping(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _completion_message(status: str, details: dict[str, object]) -> str | None:
+    if status != "succeeded" or not details:
+        return None
+
+    row_count = _first_int(
+        details,
+        "rows_loaded",
+        "membership_rows_loaded",
+        "match_count",
+        "log_count",
+        "rating_history_count",
+    )
+    if row_count is None:
+        return None
+
+    label = _first_label(details)
+    return f"{label}: {row_count:,}"
+
+
+def _first_int(details: dict[str, object], *keys: str) -> int | None:
+    for key in keys:
+        value = details.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _first_label(details: dict[str, object]) -> str:
+    if "rows_loaded" in details or "membership_rows_loaded" in details:
+        return "Rows created"
+    if "match_count" in details:
+        return "Matches created"
+    if "rating_history_count" in details:
+        return "Ratings created"
+    if "log_count" in details:
+        return "Log rows created"
+    return "Rows created"
 
 
 def _utc_now() -> datetime:

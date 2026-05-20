@@ -25,7 +25,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "simulation_name": "NAPA_Olympic_Analytics_v1",
         "simulation_version": "1.0",
         "generation_run_mode": "full",
-        "target_total_players": 50000,
+        "target_total_players": 100,
         "historical_batch_count": 12,
         "first_batch_month": "2024-01-01",
         "commit_strategy": "per_module",
@@ -51,7 +51,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "replace_production": False,
     },
     "player_generation": {
-        "player_count": 50000,
+        "player_count": 100,
         "initial_player_count": None,
         "monthly_player_growth_rate": 0.02,
         "age_min": 18,
@@ -111,7 +111,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
     },
     "club_generation": {
         "clubs_per_75k_population": 1.0,
-        "target_club_count": 4000,
+        "target_club_count": 10,
         "monthly_club_growth_rate": 0.003,
         "club_size_distribution": {
             "tiny": 0.35,

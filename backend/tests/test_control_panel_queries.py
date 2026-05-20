@@ -217,11 +217,11 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
             INSERT INTO job_stage_progress (
                 id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
                 progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
-                progress_message, started_at, completed_at, created_at, updated_at
+                progress_message, metadata_json, started_at, completed_at, created_at, updated_at
             ) VALUES
-                (1000, 100, 1, 10, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:02:00', 'players succeeded', '2026-05-20 11:01:00', '2026-05-20 11:02:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (1001, 100, 1, 11, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:16:00', 'players succeeded', '2026-05-20 11:15:00', '2026-05-20 11:16:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (1002, 100, 1, 11, 'matches', 4, 'running', 0, 1, 'stage', 0.00, '2026-05-20 11:58:00', 'matches running', '2026-05-20 11:20:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (1000, 100, 1, 10, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:02:00', 'players succeeded', '{"rows_loaded": 1250}', '2026-05-20 11:01:00', '2026-05-20 11:02:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (1001, 100, 1, 11, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:16:00', 'players succeeded', '{"rows_loaded": 1400}', '2026-05-20 11:15:00', '2026-05-20 11:16:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (1002, 100, 1, 11, 'matches', 4, 'running', 0, 1, 'stage', 0.00, '2026-05-20 11:58:00', 'matches running', NULL, '2026-05-20 11:20:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
         )
     )
@@ -246,6 +246,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     second_batch = snapshot.batch_summaries[1]
     assert second_batch.batch_id == 11
     assert len(second_batch.stage_progress) == 2
+    assert snapshot.batch_summaries[0].stage_progress[0].completion_message == "Rows created: 1,250"
     assert second_batch.stage_progress[1].stage_name == "matches"
     assert second_batch.stage_progress[1].is_stale is False
     assert snapshot.warnings == ()

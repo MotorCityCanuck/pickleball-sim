@@ -1,4 +1,87 @@
 <section style="display:grid; gap:16px;">
+    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Run Controls</div>
+                <div style="margin-top:6px; font-size:18px;">Mock-up workflow surface</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    This section is visual only for now. Start actions remain disabled until the launch route is wired.
+                </div>
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                Mock-up only
+            </div>
+        </div>
+
+        <div style="margin-top:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Valid Config</div>
+                <div style="margin-top:8px; font-size:18px;">
+                    {% if snapshot.config_summary %}
+                        {{ snapshot.config_summary.title }}
+                    {% else %}
+                        No valid configuration
+                    {% endif %}
+                </div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    {% if snapshot.config_summary %}
+                        {{ snapshot.config_summary.first_batch_month }} for {{ snapshot.config_summary.historical_batch_count }} months
+                    {% else %}
+                        Run start blocked
+                    {% endif %}
+                </div>
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Preconditions</div>
+                <div style="margin-top:8px; font-size:18px;">
+                    {% if snapshot.allowed_actions.can_start_generation_run %}
+                        Ready
+                    {% else %}
+                        Blocked
+                    {% endif %}
+                </div>
+                {% if snapshot.allowed_actions.start_generation_blockers %}
+                    <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                        {% for blocker in snapshot.allowed_actions.start_generation_blockers %}
+                            <li>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <div style="margin-top:6px; color:#5a6477;">Destructive full-run launch will be allowed when the route is enabled.</div>
+                {% endif %}
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Dataset Release</div>
+                <div style="margin-top:8px; font-size:18px;">
+                    {% if snapshot.allowed_actions.can_generate_student_dataset %}
+                        Ready
+                    {% else %}
+                        Blocked
+                    {% endif %}
+                </div>
+                {% if snapshot.allowed_actions.student_dataset_blockers %}
+                    <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                        {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
+                            <li>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button disabled style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+                Start Generation Run
+            </button>
+            <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
+                Generate Student Dataset
+            </button>
+            <button disabled style="border:1px solid #d6d9df; background:#f4f6fa; color:#5a6477; border-radius:8px; padding:10px 14px; opacity:0.75; cursor:not-allowed;">
+                View Launch Plan
+            </button>
+        </div>
+    </section>
+
     <div
         hx-get="/control/partials/run-status"
         hx-trigger="load, every 10s"

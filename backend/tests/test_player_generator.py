@@ -542,13 +542,13 @@ def test_payload_probability_validation_fails_fast(session):
         )
 
 
-def test_payload_player_count_defaults_to_current_50000():
+def test_payload_player_count_defaults_to_current_100():
     from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
     from app.generators.players import PlayerGenerationConfig
 
     config = PlayerGenerationConfig.from_payload(DEFAULT_CONFIG_PAYLOAD)
 
-    assert config.player_count == 50000
+    assert config.player_count == 100
     assert config.initial_rating_elite_tail_rate == Decimal("0.003")
     assert config.initial_rating_elite_min == Decimal("4000.0")
     assert config.initial_rating_elite_max == Decimal("4500.0")
@@ -2787,10 +2787,10 @@ def test_payload_generation_returns_namedtuple_like_fields(session):
     assert result.active_player_count_start == 0
 
 
-def test_payload_generation_default_target_is_50000_without_running_full_load():
+def test_payload_generation_default_target_is_100_without_running_full_load():
     from app.core import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 50000
+    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
 def test_payload_generation_name_probabilities_are_weighted(session):
@@ -3619,10 +3619,10 @@ def test_payload_generation_uses_first_name_country_fallback_if_state_missing(se
     assert session.query(Player).count() == 1
 
 
-def test_payload_generation_config_from_none_uses_default_50000():
+def test_payload_generation_config_from_none_uses_default_100():
     from app.generators.players import PlayerGenerationConfig
 
-    assert PlayerGenerationConfig.from_payload(None).player_count == 50000
+    assert PlayerGenerationConfig.from_payload(None).player_count == 100
 
 
 def test_payload_generation_no_region_side_effect_on_failure(session):
@@ -3753,7 +3753,7 @@ def test_payload_generation_values_are_not_none(session):
 def test_payload_generation_configured_player_count_large_does_not_run_here():
     from app.core import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 50000
+    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
 
 
 def test_payload_generation_registration_rating_fields_are_optional_but_populated(session):
@@ -4328,7 +4328,7 @@ def test_payload_generation_produces_expected_number_for_50k_config_with_overrid
         session=session,
     )
 
-    assert payload["player_generation"]["player_count"] == 50000
+    assert payload["player_generation"]["player_count"] == 100
     assert result.rows_loaded == 5
 
 
@@ -4705,11 +4705,11 @@ def test_payload_generation_count_override_one_does_not_load_snapshot_count(sess
     assert result.rows_loaded == 1
 
 
-def test_payload_generation_default_payload_is_50k():
+def test_payload_generation_default_payload_is_100():
     from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 50000
-    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 50000
+    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
+    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
 def test_payload_generation_uses_player_count_when_present_over_target_total():
@@ -4826,7 +4826,7 @@ def test_payload_generation_player_count_override_can_be_used_for_db_smoke(sessi
 def test_payload_generation_current_default_count_matches_user_limit():
     from app.core import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 50000
+    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
 def test_payload_generation_smoke_end(session):
@@ -4987,7 +4987,7 @@ def test_payload_generation_no_more_assertions(session):
 def test_payload_generation_default_limit_is_documented_by_constant():
     from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 50000
+    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
 
 
 def test_payload_generation_current_default_version_is_three():

@@ -340,6 +340,7 @@ class GenerationRunService:
 
         stage_row.status = event.status
         stage_row.progress_message = _format_progress_message(event)
+        stage_row.metadata_json = event.details or None
         stage_row.last_heartbeat_at = _utc_now()
         if event.status == "running":
             stage_row.started_at = stage_row.started_at or _utc_now()

@@ -326,6 +326,8 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "matches" in progress.body.decode()
 
     assert orchestration.status_code == 200
+    assert "Mock-up workflow surface" in orchestration.body.decode()
+    assert "Start Generation Run" in orchestration.body.decode()
     assert 'hx-get="/control/partials/run-status"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/batch-table"' in orchestration.body.decode()
 
