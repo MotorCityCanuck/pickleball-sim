@@ -121,7 +121,7 @@ class MatchGenerationConfig:
                 "locality_weight",
             ),
             games_per_match={
-                key: int(value)
+                key: _positive_int(value, f"games_per_match.{key}")
                 for key, value in games.get(
                     "games_per_match",
                     {
@@ -772,6 +772,15 @@ def _positive_decimal(value: Any, name: str) -> Decimal:
     parsed = _decimal(value)
     if parsed <= 0:
         raise ValueError(f"{name} must be positive")
+    return parsed
+
+
+def _positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
     return parsed
 
 

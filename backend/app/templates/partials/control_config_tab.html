@@ -2,15 +2,18 @@
     {% set definition = field.definition %}
     {% set current_value = field.value if field.is_present_in_payload else definition.default_value %}
     {% set tooltip = field_tooltip(definition) %}
+    {% set field_messages = validation_messages_by_path.get(definition.path, ()) %}
+    {% set field_invalid = field_messages | length > 0 %}
     <div
         data-config-control
         data-config-type="{{ definition.control_type }}"
         data-config-path="{{ definition.path }}"
-        style="border:1px solid #d8dde6; border-radius:10px; padding:14px; display:grid; gap:10px; background:#fcfcfd;"
+        {% if field_invalid %}data-config-invalid="true"{% endif %}
+        style="border:1px solid {% if field_invalid %}#e07a75{% else %}#d8dde6{% endif %}; border-radius:10px; padding:14px; display:grid; gap:10px; background:{% if field_invalid %}#fff6f5{% else %}#fcfcfd{% endif %};"
     >
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
-                <label style="font-weight:600; display:block; text-decoration:underline dotted; text-underline-offset:3px; cursor:help;" title="{{ tooltip }}">{{ definition.label }}</label>
+                <label style="font-weight:600; display:block; text-decoration:underline dotted; text-underline-offset:3px; cursor:help; color:{% if field_invalid %}#8f1d18{% else %}#1d2433{% endif %};" title="{{ tooltip }}">{{ definition.label }}</label>
                 <div style="margin-top:4px; font-size:13px; color:#5a6477;">{{ definition.description }}</div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
@@ -27,7 +30,7 @@
                 type="text"
                 value="{{ current_value if current_value is not none else '' }}"
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
             >
         {% elif definition.control_type == "date" %}
             <input
@@ -35,7 +38,7 @@
                 type="date"
                 value="{{ current_value if current_value is not none else '' }}"
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
             >
         {% elif definition.control_type == "integer" %}
             <input
@@ -47,7 +50,7 @@
                 {% if definition.max_value is not none %}max="{{ definition.max_value }}"{% endif %}
                 {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
             >
         {% elif definition.control_type == "decimal" %}
             <input
@@ -59,7 +62,7 @@
                 {% if definition.max_value is not none %}max="{{ definition.max_value }}"{% endif %}
                 {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
             >
         {% elif definition.control_type == "checkbox" %}
             <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
@@ -76,7 +79,7 @@
             <select
                 data-config-input
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:#fff;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px; background:#fff;"
             >
                 {% for option in definition.options %}
                     <option
@@ -104,7 +107,7 @@
                     {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
                     title="{{ tooltip }}"
                     oninput="this.closest('[data-config-control]').querySelector('[data-slider-value]').textContent = this.value"
-                    style="width:100%; accent-color:#1857c2;"
+                    style="width:100%; accent-color:{% if field_invalid %}#c0392b{% else %}#1857c2{% endif %};"
                 >
             </div>
         {% elif definition.control_type == "string_list" %}
@@ -112,14 +115,14 @@
                 data-config-input
                 rows="4"
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; resize:vertical;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px; resize:vertical;"
             >{{ current_value|join('\n') if current_value else '' }}</textarea>
         {% elif definition.control_type == "multi_select" %}
             <select
                 data-config-input
                 multiple
                 title="{{ tooltip }}"
-                style="width:100%; min-height:160px; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:#fff;"
+                style="width:100%; min-height:160px; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px; background:#fff;"
             >
                 {% for option in definition.options %}
                     <option value="{{ option.value }}" {% if current_value and option.value in current_value %}selected{% endif %}>
@@ -139,7 +142,7 @@
                             step="0.001"
                             value="{{ weight_value }}"
                             title="{{ tooltip }}"
-                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
                         >
                     </label>
                 {% endfor %}
@@ -162,7 +165,7 @@
                             step="1"
                             value="{{ range_value[0] if range_value|length > 0 else '' }}"
                             title="{{ tooltip }}"
-                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
                         >
                         <input
                             data-config-subkey="{{ range_key }}"
@@ -172,7 +175,7 @@
                             step="1"
                             value="{{ range_value[1] if range_value|length > 1 else '' }}"
                             title="{{ tooltip }}"
-                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
                         >
                     </div>
                 {% endfor %}
@@ -182,8 +185,16 @@
                 data-config-input
                 rows="6"
                 title="{{ tooltip }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; font-family:monospace; font-size:13px; resize:vertical;"
+                style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px; font-family:monospace; font-size:13px; resize:vertical;"
             >{{ current_value | tojson(indent=2) if current_value is not none else '{}' }}</textarea>
+        {% endif %}
+
+        {% if field_invalid %}
+            <div style="display:grid; gap:4px;">
+                {% for field_message in field_messages %}
+                    <div style="font-size:12px; color:#8f1d18;">{{ field_message }}</div>
+                {% endfor %}
+            </div>
         {% endif %}
     </div>
 {%- endmacro %}
@@ -313,37 +324,49 @@
 
         {% if editor.validation_errors %}
             <div style="margin-top:12px; border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
-                <div style="font-weight:bold; margin-bottom:6px;">Validation errors</div>
-                <ul style="margin:0 0 0 18px; padding:0;">
-                    {% for error in editor.validation_errors %}
-                        <li>{{ error }}</li>
-                    {% endfor %}
-                </ul>
+                <div style="font-weight:bold; margin-bottom:6px;">Validation failed</div>
+                {% if editor.validation_issues %}
+                    <div>{{ editor.validation_errors|length }} issue{{ '' if editor.validation_errors|length == 1 else 's' }} must be fixed before this draft can be saved. Correct the highlighted fields and sections, then run Validate again.</div>
+                {% else %}
+                    <div style="display:grid; gap:4px;">
+                        {% for error in editor.validation_errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
             </div>
         {% elif editor.validation_passed %}
             <div style="margin-top:12px; border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
-                Configuration validated successfully.
+                <strong>Validation passed.</strong>
                 {% if editor.change_count is not none %}
-                    {{ editor.change_count }} field changes detected.
+                    {{ editor.change_count }} field change{{ '' if editor.change_count == 1 else 's' }} detected.
                 {% endif %}
+                This exact draft is ready to save as a new immutable version.
             </div>
         {% endif %}
 
         <form
             id="config-editor-form"
             style="margin-top:16px; display:grid; gap:16px;"
+            data-validation-passed="{{ 'true' if editor.validation_passed else 'false' }}"
+            data-validation-error-count="{{ editor.validation_errors|length }}"
+            data-can-edit-config="{{ 'true' if snapshot.allowed_actions.can_edit_config else 'false' }}"
             onsubmit="return window.serializeControlConfigForm(this)"
         >
+            {% set title_error = "Configuration version title is required." in editor.validation_errors %}
             <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:12px;">
                 <label style="display:grid; gap:6px;">
-                    <span style="font-size:13px; color:#5a6477;">New version title</span>
+                    <span style="font-size:13px; color:{% if title_error %}#8f1d18{% else %}#5a6477{% endif %};">New version title</span>
                     <input
                         type="text"
                         name="config_title"
                         value="{{ editor.title }}"
                         placeholder="Required when saving a new version"
-                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                        style="width:100%; border:1px solid {% if title_error %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px; background:{% if title_error %}#fff6f5{% else %}#fff{% endif %};"
                     >
+                    {% if title_error %}
+                        <span style="font-size:12px; color:#8f1d18;">Configuration version title is required.</span>
+                    {% endif %}
                 </label>
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:13px; color:#5a6477;">Notes</span>
@@ -368,15 +391,18 @@
                         {% set advanced_count = section.fields | selectattr("definition.basic_or_advanced", "equalto", "advanced") | list | length %}
                         {% set field_count = section.fields | length %}
                         {% set default_open = (active_config_scope == "seed" and loop.first) or (active_config_scope == "synthetic" and section.definition.id == "synthetic_simulation_identity") %}
+                        {% set issue_count = section_issue_counts.get(section.definition.id, 0) %}
                         <details
                             class="config-section-card"
                             data-config-section="{{ active_config_scope }}:{{ section.definition.id }}"
-                            {% if default_open %}open{% endif %}
+                            {% if issue_count > 0 %}data-config-section-invalid="true"{% endif %}
+                            {% if default_open or issue_count > 0 %}open{% endif %}
+                            style="{% if issue_count > 0 %}border-color:#e07a75; background:#fff8f7;{% endif %}"
                         >
                             <summary class="config-section-summary">
                                 <div class="config-section-summary-row">
                                     <div>
-                                        <div style="font-size:17px; font-weight:600;">{{ section.definition.title }}</div>
+                                        <div style="font-size:17px; font-weight:600; color:{% if issue_count > 0 %}#8f1d18{% else %}#1d2433{% endif %};">{{ section.definition.title }}</div>
                                         <div style="margin-top:4px; color:#5a6477;">{{ section.definition.description }}</div>
                                     </div>
                                     <div style="font-size:12px; color:#5a6477; white-space:nowrap;">Click to expand</div>
@@ -385,6 +411,9 @@
                                     <span class="config-section-chip">{{ field_count }} fields</span>
                                     {% if advanced_count %}
                                         <span class="config-section-chip">{{ advanced_count }} advanced</span>
+                                    {% endif %}
+                                    {% if issue_count > 0 %}
+                                        <span class="config-section-chip" style="color:#8f1d18; border-color:#e6a6a1; background:#fff0ef;">{{ issue_count }} validation issue{{ '' if issue_count == 1 else 's' }}</span>
                                     {% endif %}
                                 </div>
                             </summary>
@@ -401,12 +430,34 @@
             <input type="hidden" name="active_config_scope" value="{{ active_config_scope }}">
             <textarea name="config_payload_json" hidden>{{ editor.working_payload_json }}</textarea>
 
+            <div
+                data-config-editor-status
+                role="status"
+                aria-live="polite"
+                style="border:1px solid #d6d9df; background:#f8fafc; color:#334155; border-radius:8px; padding:10px 12px; font-size:14px;"
+            >
+                {% if editor.validation_errors %}
+                    Validation failed. Fix the listed issues and run Validate again.
+                {% elif editor.status_message %}
+                    {{ editor.status_message }}
+                {% elif editor.validation_passed %}
+                    Draft validated successfully and is ready to save.
+                {% elif editor.change_count == 0 %}
+                    Current draft matches the saved configuration.
+                {% elif editor.change_count is not none %}
+                    Draft has {{ editor.change_count }} unvalidated change{{ '' if editor.change_count == 1 else 's' }}. Run Validate to refresh results.
+                {% else %}
+                    Edit the draft, then run Validate before saving.
+                {% endif %}
+            </div>
+
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <button
                     type="submit"
                     formaction="/control/config/validate"
                     formmethod="post"
                     hx-post="/control/config/validate"
+                    hx-include="#config-editor-form"
                     hx-target="#config-tab-panel"
                     hx-swap="outerHTML"
                     style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
@@ -418,8 +469,10 @@
                     formaction="/control/config/save"
                     formmethod="post"
                     hx-post="/control/config/save"
+                    hx-include="#config-editor-form"
                     hx-target="#config-tab-panel"
                     hx-swap="outerHTML"
+                    data-save-config-button
                     {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}disabled{% endif %}
                     style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; cursor:pointer; {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}opacity:0.45; cursor:not-allowed;{% endif %}"
                 >
@@ -435,6 +488,17 @@
 
 <script>
     (() => {
+        function stableStringify(value) {
+            if (Array.isArray(value)) {
+                return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+            }
+            if (value && typeof value === "object") {
+                const keys = Object.keys(value).sort();
+                return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+            }
+            return JSON.stringify(value);
+        }
+
         function setPath(payload, path, value) {
             const parts = path.split(".");
             let current = payload;
@@ -519,18 +583,86 @@
             return [path, input?.value ?? null];
         }
 
-        window.serializeControlConfigForm = function serializeControlConfigForm(form) {
-            const payloadField = form.querySelector('textarea[name="config_payload_json"]');
-            if (!payloadField) {
-                return true;
+        function parsePayloadField(payloadField) {
+            try {
+                return JSON.parse(payloadField.value || "{}");
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function setSaveButtonEnabled(saveButton, enabled) {
+            if (!saveButton) {
+                return;
+            }
+            saveButton.disabled = !enabled;
+            saveButton.style.opacity = enabled ? "1" : "0.45";
+            saveButton.style.cursor = enabled ? "pointer" : "not-allowed";
+        }
+
+        function updateEditorStatus(form, options) {
+            const status = form.querySelector("[data-config-editor-status]");
+            const saveButton = form.querySelector("[data-save-config-button]");
+            if (!status) {
+                return;
             }
 
-            let payload;
-            try {
-                payload = JSON.parse(payloadField.value || "{}");
-            } catch (error) {
-                window.alert("Current configuration payload is not valid JSON.");
-                return false;
+            const canEditConfig = form.dataset.canEditConfig === "true";
+            const validationPassed = form.dataset.validationPassed === "true";
+            const validationErrorCount = Number.parseInt(form.dataset.validationErrorCount || "0", 10) || 0;
+
+            let message = "Edit the draft, then run Validate before saving.";
+            let border = "#d6d9df";
+            let background = "#f8fafc";
+            let color = "#334155";
+            let saveEnabled = false;
+
+            if (options.parseError) {
+                message = "Draft could not be serialized. Fix invalid field values before validating.";
+                border = "#f1b2ad";
+                background = "#fef3f2";
+                color = "#8f1d18";
+            } else if (!canEditConfig) {
+                message = "Configuration editing is currently blocked while a background job is active.";
+            } else if (options.dirty) {
+                message = "Draft has unvalidated changes. Run Validate to refresh results before saving.";
+                border = "#e6c37a";
+                background = "#fff9eb";
+                color = "#8a5a00";
+            } else if (validationPassed) {
+                message = "Draft validated successfully and is ready to save.";
+                border = "#b7dfc2";
+                background = "#edf8f0";
+                color = "#1f5f30";
+                saveEnabled = true;
+            } else if (validationErrorCount > 0) {
+                message = "Validation failed. Fix the listed issues and run Validate again.";
+                border = "#f1b2ad";
+                background = "#fef3f2";
+                color = "#8f1d18";
+            } else {
+                message = "Current draft matches the saved configuration.";
+            }
+
+            status.textContent = message;
+            status.style.borderColor = border;
+            status.style.background = background;
+            status.style.color = color;
+            setSaveButtonEnabled(saveButton, saveEnabled && canEditConfig);
+        }
+
+        function syncSerializedPayload(form, { showAlertOnError = false } = {}) {
+            const payloadField = form.querySelector('textarea[name="config_payload_json"]');
+            if (!payloadField) {
+                return null;
+            }
+
+            const payload = parsePayloadField(payloadField);
+            if (payload === null) {
+                if (showAlertOnError) {
+                    window.alert("Current configuration payload is not valid JSON.");
+                }
+                return null;
             }
 
             try {
@@ -539,12 +671,68 @@
                     setPath(payload, path, value);
                 });
             } catch (error) {
-                return false;
+                if (showAlertOnError) {
+                    window.alert("One or more configuration fields contain invalid values.");
+                }
+                return null;
             }
 
             payloadField.value = JSON.stringify(payload, null, 2);
+            return payload;
+        };
+
+        window.serializeControlConfigForm = function serializeControlConfigForm(form) {
+            const payload = syncSerializedPayload(form, { showAlertOnError: true });
+            if (payload === null) {
+                updateEditorStatus(form, { dirty: true, parseError: true });
+                return false;
+            }
+            const baselineString = form.dataset.baselinePayload || stableStringify({});
+            updateEditorStatus(form, {
+                dirty: stableStringify(payload) !== baselineString,
+                parseError: false,
+            });
             return true;
         };
+
+        const form = document.getElementById("config-editor-form");
+        if (form) {
+            const payloadField = form.querySelector('textarea[name="config_payload_json"]');
+            const baselinePayload = parsePayloadField(payloadField);
+            form.dataset.baselinePayload = stableStringify(baselinePayload || {});
+
+            const syncAndRefresh = ({ showAlertOnError = false } = {}) => {
+                const payload = syncSerializedPayload(form, { showAlertOnError });
+                updateEditorStatus(form, {
+                    dirty: payload ? stableStringify(payload) !== form.dataset.baselinePayload : true,
+                    parseError: payload === null,
+                });
+                return payload !== null;
+            };
+
+            form.addEventListener("input", (event) => {
+                if (!event.target.closest("[data-config-control]")) {
+                    return;
+                }
+                syncAndRefresh();
+            });
+            form.addEventListener("change", (event) => {
+                if (!event.target.closest("[data-config-control]")) {
+                    return;
+                }
+                syncAndRefresh();
+            });
+            form.addEventListener("htmx:beforeRequest", (event) => {
+                if (!event.target.closest("#config-editor-form")) {
+                    return;
+                }
+                if (!syncAndRefresh({ showAlertOnError: true })) {
+                    event.preventDefault();
+                }
+            });
+
+            syncAndRefresh();
+        }
 
         document.querySelectorAll("[data-config-section]").forEach((section) => {
             const storageKey = `control-panel-config-section:${section.dataset.configSection}`;

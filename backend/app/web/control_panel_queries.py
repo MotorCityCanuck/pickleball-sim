@@ -10,6 +10,7 @@ from typing import Callable
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app.core import ConfigValidationIssue
 from app.models import (
     Club,
     ConfigurationProfileVersion,
@@ -177,6 +178,7 @@ class ConfigEditorState:
     seed_payload_json: str
     synthetic_payload_json: str
     validation_passed: bool
+    validation_issues: tuple[ConfigValidationIssue, ...]
     validation_errors: tuple[str, ...]
     validation_hash: str | None
     status_message: str | None
@@ -700,6 +702,7 @@ class ControlPanelQueries:
                 seed_payload_json="{}",
                 synthetic_payload_json="{}",
                 validation_passed=False,
+                validation_issues=(),
                 validation_errors=(
                     "A single valid configuration is required before editing.",
                 ),
@@ -716,6 +719,7 @@ class ControlPanelQueries:
             seed_payload_json=json.dumps(seed_payload, indent=2, sort_keys=True),
             synthetic_payload_json=json.dumps(synthetic_payload, indent=2, sort_keys=True),
             validation_passed=False,
+            validation_issues=(),
             validation_errors=(),
             validation_hash=version.config_hash,
             status_message=None,

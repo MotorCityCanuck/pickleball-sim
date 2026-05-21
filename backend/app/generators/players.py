@@ -99,6 +99,11 @@ class PlayerGenerationConfig:
         elite_max = _decimal(ratings.get("initial_rating_elite_max", 4500))
         if elite_min < rating_min or elite_max > rating_max or elite_max <= elite_min:
             raise ValueError("ratings elite rating bounds are invalid")
+        initial_confidence_score = _decimal(
+            confidence.get("initial_confidence_score", 0.1)
+        )
+        if initial_confidence_score < 0 or initial_confidence_score > 1:
+            raise ValueError("confidence.initial_confidence_score must be between 0 and 1")
 
         return cls(
             player_count=player_count,
@@ -155,9 +160,7 @@ class PlayerGenerationConfig:
             initial_rating_elite_tail_rate=elite_tail_rate,
             initial_rating_elite_min=elite_min,
             initial_rating_elite_max=elite_max,
-            initial_confidence_score=_decimal(
-                confidence.get("initial_confidence_score", 0.1)
-            ),
+            initial_confidence_score=initial_confidence_score,
         )
 
 

@@ -11,6 +11,13 @@ from .monthly_pipeline import (
     PipelineStepResult,
 )
 from .orchestrator import GenerationOrchestrator, InitialGenerationPlan
+from .realism_audit import (
+    REALISM_AUDIT_QUERIES,
+    RealismAuditQuery,
+    RealismAuditResult,
+    RealismAuditRunner,
+    resolve_realism_audit_parameters,
+)
 from .run_service import GenerationRunLaunchResult, GenerationRunService
 from .seed_refresh_service import SeedRefreshResult, SeedRefreshService
 
@@ -27,6 +34,11 @@ __all__ = [
     "PIPELINE_STEPS",
     "PipelineProgressEvent",
     "PipelineStepResult",
+    "REALISM_AUDIT_QUERIES",
+    "RealismAuditQuery",
+    "RealismAuditResult",
+    "RealismAuditRunner",
     "SeedRefreshResult",
     "SeedRefreshService",
+    "resolve_realism_audit_parameters",
 ]

@@ -610,6 +610,16 @@ def test_payload_player_count_requires_positive_value():
         PlayerGenerationConfig.from_payload(test_payload(0))
 
 
+def test_payload_initial_confidence_score_must_be_probability():
+    from app.generators.players import PlayerGenerationConfig
+
+    payload = test_payload(1)
+    payload["confidence"]["initial_confidence_score"] = 1.5
+
+    with pytest.raises(ValueError, match="initial_confidence_score"):
+        PlayerGenerationConfig.from_payload(payload)
+
+
 def test_payload_missing_name_distribution_fails(session):
     generation_run, monthly_batch = seed_reference_data(session)
     session.query(FirstName).delete()

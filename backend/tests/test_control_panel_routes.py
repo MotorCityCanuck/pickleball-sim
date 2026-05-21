@@ -711,15 +711,53 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Configuration validated successfully." in body
+    assert "Validation passed." in body
+    assert "Draft validated successfully and is ready to save." in body
     assert "Save New Version" in body
     assert "March tuning" in body
     assert "Synthetic Workload Configuration" in body
     assert "Player and Match Generation" in body
     assert 'type="date"' in body
     assert 'value="v2"' in body
+    assert "Valid input: whole number." in body
     assert "Monthly player growth rate" not in body
     assert 'data-config-section="synthetic:synthetic_simulation_identity"' in body
+
+
+def test_control_panel_config_validate_highlights_invalid_fields(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        response = routes["/control/config/validate"](
+            request=_request("/control/config/validate", method="POST"),
+            config_title="Broken tuning",
+            config_notes="invalid month count",
+            active_config_scope="synthetic",
+            seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us"]}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 13, "first_batch_month": "2026-03-01", "target_total_players": 1200}}',
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Validation failed" in body
+    assert "Correct the highlighted fields and sections" in body
+    assert re.search(
+        r'data-config-control[^>]*data-config-path="simulation.historical_batch_count"[^>]*data-config-invalid="true"',
+        body,
+    )
+    assert re.search(
+        r'data-config-section="synthetic:synthetic_simulation_identity"[^>]*data-config-section-invalid="true"',
+        body,
+    )
+    assert "live monthly pipeline" in body
 
 
 def test_control_panel_config_save_persists_new_version_when_idle(session_factory):
@@ -800,6 +838,7 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
     body = response.body.decode()
     assert response.status_code == 200
     assert "Seed Data Configuration" in body
+    assert "Current draft matches the saved configuration." in body
     assert "Supported raw seed datasets" in body
     assert "Club Facilities and Membership Policy" in body
     assert "Club court ranges" in body

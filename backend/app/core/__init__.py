@@ -20,6 +20,7 @@ from .configuration_lifecycle import (
     compute_config_hash,
     diff_config_payloads,
 )
+from .live_config_validation import ConfigValidationIssue
 from .config_editor_metadata import (
     CONFIG_EDITOR_FIELDS,
     CONFIG_EDITOR_SECTIONS,
@@ -54,6 +55,7 @@ __all__ = [
     "ConfigEditorSectionState",
     "ConfigurationLifecycleService",
     "ConfigurationSaveResult",
+    "ConfigValidationIssue",
     "ConfigurationValidationResult",
     "CONFIG_EDITOR_FIELDS",
     "CONFIG_EDITOR_SECTIONS",

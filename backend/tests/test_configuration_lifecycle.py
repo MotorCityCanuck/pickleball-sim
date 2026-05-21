@@ -85,6 +85,54 @@ def test_validate_working_copy_reports_required_field_errors():
     assert "simulation.master_seed must be an integer." in result.errors
 
 
+def test_validate_working_copy_reports_live_seed_dataset_errors():
+    service = ConfigurationLifecycleService()
+    payload = default_config_payload()
+    payload["raw_seed_data"]["supported_datasets"] = [
+        "metro_areas_us",
+        "metro_areas_us",
+        "future_dataset",
+    ]
+
+    result = service.validate_working_copy(payload)
+
+    assert result.is_valid is False
+    assert (
+        "raw_seed_data.supported_datasets contains duplicates: metro_areas_us."
+        in result.errors
+    )
+    assert (
+        "raw_seed_data.supported_datasets contains unsupported datasets: future_dataset."
+        in result.errors
+    )
+
+
+def test_validate_working_copy_reports_live_pipeline_bound_errors():
+    service = ConfigurationLifecycleService()
+    payload = default_config_payload()
+    payload["simulation"]["historical_batch_count"] = 13
+    payload["simulation"]["first_batch_month"] = "2026-99-01"
+    payload["confidence"]["initial_confidence_score"] = 1.5
+    payload["games_and_scores"]["games_per_match"]["league"] = 0
+
+    result = service.validate_working_copy(payload)
+
+    assert result.is_valid is False
+    assert (
+        "simulation.historical_batch_count must be <= 12 for the live monthly pipeline."
+        in result.errors
+    )
+    assert (
+        "simulation.first_batch_month must be a valid ISO date string."
+        in result.errors
+    )
+    assert "confidence.initial_confidence_score must be between 0 and 1" in result.errors
+    assert (
+        "games_and_scores.games_per_match.league must be a positive integer"
+        in result.errors
+    )
+
+
 def test_save_new_version_creates_profile_and_deprecates_prior_valid(session):
     service = ConfigurationLifecycleService()
     initial_payload = default_config_payload()

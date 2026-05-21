@@ -437,6 +437,7 @@ def _config_context(
             seed_payload_json=editor_seed_payload_json,
             synthetic_payload_json=editor_synthetic_payload_json,
             validation_passed=False,
+            validation_issues=(),
             validation_errors=json_errors,
             validation_hash=None,
             status_message=None,
@@ -454,6 +455,7 @@ def _config_context(
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=validation.is_valid,
+            validation_issues=validation.issues,
             validation_errors=validation.errors,
             validation_hash=validation.config_hash,
             status_message=(
@@ -473,6 +475,7 @@ def _config_context(
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=False,
+            validation_issues=(),
             validation_errors=("Configuration editing is blocked while a generation run is active.",),
             validation_hash=validation.config_hash,
             status_message=None,
@@ -488,6 +491,7 @@ def _config_context(
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=False,
+            validation_issues=validation.issues,
             validation_errors=validation.errors,
             validation_hash=validation.config_hash,
             status_message=None,
@@ -503,6 +507,7 @@ def _config_context(
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=True,
+            validation_issues=(),
             validation_errors=("Configuration version title is required.",),
             validation_hash=validation.config_hash,
             status_message=None,
@@ -525,6 +530,7 @@ def _config_context(
         seed_payload_json=refreshed_editor.seed_payload_json,
         synthetic_payload_json=refreshed_editor.synthetic_payload_json,
         validation_passed=False,
+        validation_issues=(),
         validation_errors=(),
         validation_hash=refreshed_snapshot.config_summary.config_hash if refreshed_snapshot.config_summary else None,
         status_message="Configuration saved as the current valid version.",
@@ -703,6 +709,14 @@ def _build_config_template_context(
     scope_sections = tuple(
         section for section in sections if section.definition.scope == normalized_scope
     )
+    validation_messages_by_path = _validation_messages_by_path(
+        scope_sections,
+        editor.validation_issues,
+    )
+    section_issue_counts = _section_issue_counts(
+        scope_sections,
+        editor.validation_issues,
+    )
     if normalized_scope == "seed":
         tab_kicker = "Seed Data Configuration"
         tab_title = "Seed Data Ingest and Preparation"
@@ -724,6 +738,8 @@ def _build_config_template_context(
         "config_tab_description": tab_description,
         "config_sections": scope_sections,
         "field_tooltip": _build_field_tooltip,
+        "validation_messages_by_path": validation_messages_by_path,
+        "section_issue_counts": section_issue_counts,
         "seed_sections": tuple(
             section for section in sections if section.definition.scope == "seed"
         ),
@@ -748,6 +764,9 @@ def _build_field_tooltip(definition: object) -> str:
     if options:
         option_values = ", ".join(str(option.value) for option in options)
         parts.append(f"Options: {option_values}.")
+    guidance = _control_type_guidance(control_type)
+    if guidance:
+        parts.append(guidance)
     if min_value is not None and max_value is not None:
         parts.append(f"Range: {min_value} to {max_value}.")
     elif min_value is not None:
@@ -760,3 +779,70 @@ def _build_field_tooltip(definition: object) -> str:
         parts.append("Required.")
 
     return " ".join(part for part in parts if part).strip()
+
+
+def _control_type_guidance(control_type: object) -> str | None:
+    guidance_by_type = {
+        "text": "Valid input: short text value.",
+        "date": "Valid input: ISO date in YYYY-MM-DD format.",
+        "integer": "Valid input: whole number.",
+        "decimal": "Valid input: numeric value; decimals allowed.",
+        "checkbox": "Valid input: enabled or disabled.",
+        "select": "Valid input: choose one listed option.",
+        "slider": "Valid input: numeric value within the shown range.",
+        "string_list": "Valid input: one item per line or comma-separated.",
+        "multi_select": "Valid input: select one or more listed options.",
+        "weight_table": "Valid input: numeric weights for each row.",
+        "range_table": "Valid input: numeric min/max pair for each row.",
+        "json": "Valid input: valid JSON object.",
+    }
+    return guidance_by_type.get(control_type if isinstance(control_type, str) else "")
+
+
+def _validation_messages_by_path(
+    sections: tuple[object, ...],
+    issues: tuple[object, ...],
+) -> dict[str, tuple[str, ...]]:
+    messages: dict[str, list[str]] = {}
+    field_paths = {
+        field.definition.path
+        for section in sections
+        for field in section.fields
+    }
+    for issue in issues:
+        issue_path = getattr(issue, "path", None)
+        issue_message = getattr(issue, "message", None)
+        if not isinstance(issue_path, str) or not issue_message:
+            continue
+        for field_path in field_paths:
+            if _issue_matches_field(issue_path, field_path):
+                messages.setdefault(field_path, []).append(str(issue_message))
+    return {
+        path: tuple(dict.fromkeys(path_messages))
+        for path, path_messages in messages.items()
+    }
+
+
+def _section_issue_counts(
+    sections: tuple[object, ...],
+    issues: tuple[object, ...],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for section in sections:
+        field_paths = [field.definition.path for field in section.fields]
+        count = sum(
+            1
+            for issue in issues
+            if isinstance(getattr(issue, "path", None), str)
+            and any(_issue_matches_field(issue.path, field_path) for field_path in field_paths)
+        )
+        counts[section.definition.id] = count
+    return counts
+
+
+def _issue_matches_field(issue_path: str, field_path: str) -> bool:
+    return (
+        issue_path == field_path
+        or issue_path.startswith(f"{field_path}.")
+        or field_path.startswith(f"{issue_path}.")
+    )

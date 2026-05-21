@@ -443,6 +443,14 @@ def test_config_validates_win_by_two_extension_rate():
         MatchGenerationConfig.from_payload(payload)
 
 
+def test_config_validates_games_per_match_values():
+    payload = test_payload()
+    payload["games_and_scores"]["games_per_match"]["league"] = 0
+
+    with pytest.raises(ValueError, match="games_per_match.league"):
+        MatchGenerationConfig.from_payload(payload)
+
+
 def test_generate_for_batch_uses_win_by_two_extension_rate(session):
     payload = test_payload()
     payload["games_and_scores"]["win_by_two_extension_rate"] = 1.0

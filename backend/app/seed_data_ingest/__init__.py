@@ -10,6 +10,21 @@ from .pickleball_clubs import (
 )
 from .state_prov_biases import StateProvBiasIngestor
 
+SUPPORTED_RAW_DATASETS = frozenset(
+    {
+        "metro_areas_us",
+        "metro_areas_ca",
+        "pickleball_club_distributions",
+        "pickleball_club_names",
+        "last_names_us",
+        "last_names_ca",
+        "state_prov_biases_us",
+        "state_prov_biases_ca",
+        "first_names_us",
+        "first_names_ca",
+    }
+)
+
 
 def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
     """Dispatch a raw seed dataset load to the owning ingestor."""
@@ -50,22 +65,7 @@ def load_raw_seed_dataset(dataset_type, *, input_path=None, session=None):
             session=session,
         )
 
-    supported = ", ".join(
-        sorted(
-            {
-                "metro_areas_us",
-                "metro_areas_ca",
-                "pickleball_club_distributions",
-                "pickleball_club_names",
-                "last_names_us",
-                "last_names_ca",
-                "state_prov_biases_us",
-                "state_prov_biases_ca",
-                "first_names_us",
-                "first_names_ca",
-            }
-        )
-    )
+    supported = ", ".join(sorted(SUPPORTED_RAW_DATASETS))
     raise ValueError(
         f"Unsupported dataset {dataset_type!r}; supported datasets: {supported}."
     )
@@ -78,5 +78,6 @@ __all__ = [
     "PickleballClubNameIngestor",
     "StateProvBiasIngestor",
     "RawSeedLoadResult",
+    "SUPPORTED_RAW_DATASETS",
     "load_raw_seed_dataset",
 ]
