@@ -23,16 +23,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--generation-run-id",
-        type=int,
-        help="Scope generation-run audits to one generation_runs.id.",
-    )
-    parser.add_argument(
-        "--batch-id",
-        type=int,
-        help="Scope batch audits to one monthly_batches.id.",
-    )
-    parser.add_argument(
         "--query",
         action="append",
         dest="queries",
@@ -58,13 +48,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         runner = RealismAuditRunner(session)
         if args.list_queries:
             for query in runner.available_queries():
-                print(f"{query.name}\t{query.scope}\t{query.description}")
+                print(
+                    f"{query.name}\t{query.scope}\t{query.category}\t{query.description}"
+                )
             return
 
         results = runner.run(
             query_names=args.queries,
-            generation_run_id=args.generation_run_id,
-            batch_id=args.batch_id,
         )
         if args.format == "json":
             print(json.dumps(_json_ready(results), indent=2, sort_keys=True))
@@ -86,7 +76,10 @@ def _json_ready(results: Sequence[Any]) -> list[dict[str, Any]]:
             {
                 "query": result.query.name,
                 "scope": result.query.scope,
+                "category": result.query.category,
                 "description": result.query.description,
+                "tags": list(result.query.tags),
+                "related_config_keys": list(result.query.related_config_keys),
                 "rows": [_json_value(row) for row in result.rows],
             }
         )
