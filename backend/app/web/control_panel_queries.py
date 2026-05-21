@@ -713,7 +713,7 @@ class ControlPanelQueries:
         version = valid_versions[0]
         seed_payload, synthetic_payload = split_payload_sections(version.config_payload)
         return ConfigEditorState(
-            title="",
+            title=version.title,
             notes=version.notes or "",
             working_payload_json=json.dumps(version.config_payload, indent=2, sort_keys=True),
             seed_payload_json=json.dumps(seed_payload, indent=2, sort_keys=True),

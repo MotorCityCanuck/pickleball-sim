@@ -713,7 +713,7 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
     assert response.status_code == 200
     assert "Validation passed." in body
     assert "Draft validated successfully and is ready to save." in body
-    assert "Save New Version" in body
+    assert "Validate and Save" in body
     assert "March tuning" in body
     assert "Synthetic Workload Configuration" in body
     assert "Player and Match Generation" in body
@@ -724,15 +724,15 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
     assert 'data-config-section="synthetic:synthetic_simulation_identity"' in body
 
 
-def test_control_panel_config_validate_highlights_invalid_fields(session_factory):
+def test_control_panel_config_save_highlights_invalid_fields_without_persisting(session_factory):
     _seed_idle_config_state(session_factory)
     app = create_app()
     routes = _route_map(app)
     session = session_factory()
     lifecycle = get_configuration_lifecycle()
     try:
-        response = routes["/control/config/validate"](
-            request=_request("/control/config/validate", method="POST"),
+        response = routes["/control/config/save"](
+            request=_request("/control/config/save", method="POST"),
             config_title="Broken tuning",
             config_notes="invalid month count",
             active_config_scope="synthetic",
@@ -742,13 +742,14 @@ def test_control_panel_config_validate_highlights_invalid_fields(session_factory
             queries=ControlPanelQueries(),
             lifecycle=lifecycle,
         )
+        current_version = lifecycle.load_current_valid_version(session)
     finally:
         session.close()
 
     body = response.body.decode()
     assert response.status_code == 200
     assert "Validation failed" in body
-    assert "Correct the highlighted fields and sections" in body
+    assert "Validate and Save again" in body
     assert re.search(
         r'data-config-control[^>]*data-config-path="simulation.historical_batch_count"[^>]*data-config-invalid="true"',
         body,
@@ -758,6 +759,8 @@ def test_control_panel_config_validate_highlights_invalid_fields(session_factory
         body,
     )
     assert "live monthly pipeline" in body
+    assert current_version.title == "Editable config"
+    assert current_version.version_number == 1
 
 
 def test_control_panel_config_save_persists_new_version_when_idle(session_factory):
@@ -784,12 +787,45 @@ def test_control_panel_config_save_persists_new_version_when_idle(session_factor
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Configuration saved as the current valid version." in body
+    assert "Configuration validated and saved as the current valid version." in body
     assert "April tuning" in body
     assert "Simulation Scale and Determinism" in body
     assert current_version.title == "April tuning"
     assert current_version.version_number == 2
     assert current_version.config_payload["simulation"]["simulation_version"] == "v3"
+
+
+def test_control_panel_config_save_requires_title_and_marks_title_field(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        response = routes["/control/config/save"](
+            request=_request("/control/config/save", method="POST"),
+            config_title="",
+            config_notes="missing title",
+            active_config_scope="synthetic",
+            seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us"]}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v3", "master_seed": 21, "historical_batch_count": 4, "first_batch_month": "2026-03-01", "target_total_players": 1400}}',
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+        current_version = lifecycle.load_current_valid_version(session)
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Configuration version title is required." in body
+    assert re.search(
+        r'<input[^>]*name="config_title"[^>]*border:1px solid #e07a75',
+        body,
+    )
+    assert current_version.title == "Editable config"
+    assert current_version.version_number == 1
 
 
 def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
@@ -839,6 +875,8 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
     assert response.status_code == 200
     assert "Seed Data Configuration" in body
     assert "Current draft matches the saved configuration." in body
+    assert 'name="config_title"' in body
+    assert 'value="Editable config"' in body
     assert "Supported raw seed datasets" in body
     assert "Club Facilities and Membership Policy" in body
     assert "Club court ranges" in body

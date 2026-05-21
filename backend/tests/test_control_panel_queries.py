@@ -316,6 +316,16 @@ def _seed_ready_reference_data(session):
     )
 
 
+def test_get_config_editor_state_uses_current_valid_version_title(session):
+    _seed_valid_config(session)
+
+    editor = ControlPanelQueries().get_config_editor_state(session)
+
+    assert editor.title == "Current config"
+    assert editor.change_count == 0
+    assert editor.validation_errors == ()
+
+
 def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)

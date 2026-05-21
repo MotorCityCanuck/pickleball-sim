@@ -326,7 +326,7 @@
             <div style="margin-top:12px; border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
                 <div style="font-weight:bold; margin-bottom:6px;">Validation failed</div>
                 {% if editor.validation_issues %}
-                    <div>{{ editor.validation_errors|length }} issue{{ '' if editor.validation_errors|length == 1 else 's' }} must be fixed before this draft can be saved. Correct the highlighted fields and sections, then run Validate again.</div>
+                    <div>{{ editor.validation_errors|length }} issue{{ '' if editor.validation_errors|length == 1 else 's' }} must be fixed before this draft can be saved. Correct the highlighted fields and sections, then try Validate and Save again.</div>
                 {% else %}
                     <div style="display:grid; gap:4px;">
                         {% for error in editor.validation_errors %}
@@ -351,6 +351,7 @@
             data-validation-passed="{{ 'true' if editor.validation_passed else 'false' }}"
             data-validation-error-count="{{ editor.validation_errors|length }}"
             data-can-edit-config="{{ 'true' if snapshot.allowed_actions.can_edit_config else 'false' }}"
+            data-server-status-message="{{ editor.status_message or '' }}"
             onsubmit="return window.serializeControlConfigForm(this)"
         >
             {% set title_error = "Configuration version title is required." in editor.validation_errors %}
@@ -437,7 +438,7 @@
                 style="border:1px solid #d6d9df; background:#f8fafc; color:#334155; border-radius:8px; padding:10px 12px; font-size:14px;"
             >
                 {% if editor.validation_errors %}
-                    Validation failed. Fix the listed issues and run Validate again.
+                    Validation failed. Fix the listed issues and try Validate and Save again.
                 {% elif editor.status_message %}
                     {{ editor.status_message }}
                 {% elif editor.validation_passed %}
@@ -445,25 +446,13 @@
                 {% elif editor.change_count == 0 %}
                     Current draft matches the saved configuration.
                 {% elif editor.change_count is not none %}
-                    Draft has {{ editor.change_count }} unvalidated change{{ '' if editor.change_count == 1 else 's' }}. Run Validate to refresh results.
+                    Draft has {{ editor.change_count }} unsaved change{{ '' if editor.change_count == 1 else 's' }}. Use Validate and Save to validate and persist this draft.
                 {% else %}
-                    Edit the draft, then run Validate before saving.
+                    Edit the draft, then use Validate and Save.
                 {% endif %}
             </div>
 
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <button
-                    type="submit"
-                    formaction="/control/config/validate"
-                    formmethod="post"
-                    hx-post="/control/config/validate"
-                    hx-include="#config-editor-form"
-                    hx-target="#config-tab-panel"
-                    hx-swap="outerHTML"
-                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
-                >
-                    Validate
-                </button>
                 <button
                     type="submit"
                     formaction="/control/config/save"
@@ -473,10 +462,10 @@
                     hx-target="#config-tab-panel"
                     hx-swap="outerHTML"
                     data-save-config-button
-                    {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}disabled{% endif %}
-                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; cursor:pointer; {% if not editor.validation_passed or not snapshot.allowed_actions.can_edit_config %}opacity:0.45; cursor:not-allowed;{% endif %}"
+                    {% if not snapshot.allowed_actions.can_edit_config %}disabled{% endif %}
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; cursor:pointer; {% if not snapshot.allowed_actions.can_edit_config %}opacity:0.45; cursor:not-allowed;{% endif %}"
                 >
-                    Save New Version
+                    Validate and Save
                 </button>
                 {% if not snapshot.allowed_actions.can_edit_config %}
                     <span style="font-size:13px; color:#8f1d18;">Configuration editing is blocked while a seed or synthetic generation job is active.</span>
@@ -497,6 +486,26 @@
                 return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
             }
             return JSON.stringify(value);
+        }
+
+        function buildEditorFingerprint(form, payload) {
+            return stableStringify({
+                payload,
+                title: form.querySelector('[name="config_title"]')?.value ?? "",
+                notes: form.querySelector('[name="config_notes"]')?.value ?? "",
+            });
+        }
+
+        function isTrackedEditorInput(target, form) {
+            if (!target || !form.contains(target)) {
+                return false;
+            }
+            if (target.matches?.('textarea[name="config_payload_json"]')) {
+                return false;
+            }
+            return Boolean(
+                target.matches?.("input, select, textarea") || target.closest?.("[data-config-control]")
+            );
         }
 
         function setPath(payload, path, value) {
@@ -610,22 +619,24 @@
             const canEditConfig = form.dataset.canEditConfig === "true";
             const validationPassed = form.dataset.validationPassed === "true";
             const validationErrorCount = Number.parseInt(form.dataset.validationErrorCount || "0", 10) || 0;
+            const serverStatusMessage = form.dataset.serverStatusMessage || "";
 
-            let message = "Edit the draft, then run Validate before saving.";
+            let message = "Edit the draft, then use Validate and Save.";
             let border = "#d6d9df";
             let background = "#f8fafc";
             let color = "#334155";
-            let saveEnabled = false;
+            let saveEnabled = canEditConfig;
 
             if (options.parseError) {
-                message = "Draft could not be serialized. Fix invalid field values before validating.";
+                message = "Draft could not be serialized. Fix invalid field values before saving.";
                 border = "#f1b2ad";
                 background = "#fef3f2";
                 color = "#8f1d18";
+                saveEnabled = false;
             } else if (!canEditConfig) {
                 message = "Configuration editing is currently blocked while a background job is active.";
             } else if (options.dirty) {
-                message = "Draft has unvalidated changes. Run Validate to refresh results before saving.";
+                message = "Draft has unsaved changes. Use Validate and Save to validate and persist this draft.";
                 border = "#e6c37a";
                 background = "#fff9eb";
                 color = "#8a5a00";
@@ -634,9 +645,13 @@
                 border = "#b7dfc2";
                 background = "#edf8f0";
                 color = "#1f5f30";
-                saveEnabled = true;
+            } else if (serverStatusMessage) {
+                message = serverStatusMessage;
+                border = "#b7dfc2";
+                background = "#edf8f0";
+                color = "#1f5f30";
             } else if (validationErrorCount > 0) {
-                message = "Validation failed. Fix the listed issues and run Validate again.";
+                message = "Validation failed. Fix the listed issues and try Validate and Save again.";
                 border = "#f1b2ad";
                 background = "#fef3f2";
                 color = "#8f1d18";
@@ -687,9 +702,9 @@
                 updateEditorStatus(form, { dirty: true, parseError: true });
                 return false;
             }
-            const baselineString = form.dataset.baselinePayload || stableStringify({});
+            const baselineString = form.dataset.baselineEditorState || stableStringify({});
             updateEditorStatus(form, {
-                dirty: stableStringify(payload) !== baselineString,
+                dirty: buildEditorFingerprint(form, payload) !== baselineString,
                 parseError: false,
             });
             return true;
@@ -699,25 +714,25 @@
         if (form) {
             const payloadField = form.querySelector('textarea[name="config_payload_json"]');
             const baselinePayload = parsePayloadField(payloadField);
-            form.dataset.baselinePayload = stableStringify(baselinePayload || {});
+            form.dataset.baselineEditorState = buildEditorFingerprint(form, baselinePayload || {});
 
             const syncAndRefresh = ({ showAlertOnError = false } = {}) => {
                 const payload = syncSerializedPayload(form, { showAlertOnError });
                 updateEditorStatus(form, {
-                    dirty: payload ? stableStringify(payload) !== form.dataset.baselinePayload : true,
+                    dirty: payload ? buildEditorFingerprint(form, payload) !== form.dataset.baselineEditorState : true,
                     parseError: payload === null,
                 });
                 return payload !== null;
             };
 
             form.addEventListener("input", (event) => {
-                if (!event.target.closest("[data-config-control]")) {
+                if (!isTrackedEditorInput(event.target, form)) {
                     return;
                 }
                 syncAndRefresh();
             });
             form.addEventListener("change", (event) => {
-                if (!event.target.closest("[data-config-control]")) {
+                if (!isTrackedEditorInput(event.target, form)) {
                     return;
                 }
                 syncAndRefresh();

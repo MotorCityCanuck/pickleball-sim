@@ -524,7 +524,7 @@ def _config_context(
     refreshed_snapshot = queries.get_control_panel_snapshot(session)
     refreshed_editor = queries.get_config_editor_state(session)
     refreshed_editor = ConfigEditorState(
-        title="",
+        title=refreshed_editor.title,
         notes=refreshed_editor.notes,
         working_payload_json=refreshed_editor.working_payload_json,
         seed_payload_json=refreshed_editor.seed_payload_json,
@@ -533,7 +533,7 @@ def _config_context(
         validation_issues=(),
         validation_errors=(),
         validation_hash=refreshed_snapshot.config_summary.config_hash if refreshed_snapshot.config_summary else None,
-        status_message="Configuration saved as the current valid version.",
+        status_message="Configuration validated and saved as the current valid version.",
         change_count=0,
     )
     return refreshed_snapshot, refreshed_editor
