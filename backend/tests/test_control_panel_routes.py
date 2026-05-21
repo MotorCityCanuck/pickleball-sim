@@ -801,6 +801,9 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
     assert response.status_code == 200
     assert "Seed Data Configuration" in body
     assert "Supported raw seed datasets" in body
+    assert "Club Facilities and Membership Policy" in body
+    assert "Club court ranges" in body
+    assert "Multi-club membership rate" in body
     assert "Name Assignment" not in body
     assert 'data-config-section="seed:seed_raw_ingest"' in body
     assert re.search(
@@ -831,6 +834,22 @@ def test_control_panel_player_match_config_partial_renders_current_values_in_con
     assert "Simulation Scale and Determinism" in body
     assert 'value="v1"' in body
     assert 'value="2026-03-01"' in body
+    assert "Player Traits and Skill Seeding" in body
+    assert "Dominant hand weights" in body
+    assert "Player status weights" in body
+    assert "Initial skill mean" in body
+    assert "Games and Score Dynamics" in body
+    assert "Games per match" in body
+    assert "Win-by-two extension rate" in body
+    assert "Upset probability boost" in body
+    assert "Rating Initialization and Updates" in body
+    assert "New-player K factor" in body
+    assert "Confidence increment per match" in body
+    assert "Matchmaking locality weight" in body
+    assert "Match Scheduling" in body
+    assert "Matches per team per month" in body
+    assert "Saturday scheduling weight" in body
+    assert "Max daily matches per team" in body
     assert "Generation run mode" not in body
     assert "Commit strategy" not in body
     assert "Batch retry max attempts" not in body

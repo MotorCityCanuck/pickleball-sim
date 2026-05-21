@@ -50,6 +50,11 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["simulation"]["master_seed"] = 123
     payload["team_formation"]["rating_gap_max"] = 1750.0
     payload["club_generation"]["cross_region_assignment_enabled"] = True
+    payload["club_generation"]["multi_club_membership_rate"] = 0.12
+    payload["match_scheduling"]["matches_per_team_per_month"] = 5.5
+    payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
+    payload["ratings"]["k_factor_new_player"] = 52.0
+    payload["games_and_scores"]["win_by_two_extension_rate"] = 0.2
 
     sections = build_config_editor_sections(payload)
     field_states = {
@@ -62,6 +67,28 @@ def test_build_config_editor_sections_attaches_current_values():
     assert field_states["simulation.master_seed"].is_default_value is False
     assert field_states["team_formation.rating_gap_max"].value == 1750.0
     assert field_states["team_formation.rating_gap_max"].is_default_value is False
+    assert field_states["match_scheduling.matches_per_team_per_month"].value == 5.5
+    assert (
+        field_states["match_scheduling.matches_per_team_per_month"].is_default_value
+        is False
+    )
+    assert field_states["player_generation.initial_skill_seed.mean"].value == 1650
+    assert (
+        field_states["player_generation.initial_skill_seed.mean"].is_default_value
+        is False
+    )
+    assert field_states["ratings.k_factor_new_player"].value == 52.0
+    assert field_states["ratings.k_factor_new_player"].is_default_value is False
+    assert field_states["games_and_scores.win_by_two_extension_rate"].value == 0.2
+    assert (
+        field_states["games_and_scores.win_by_two_extension_rate"].is_default_value
+        is False
+    )
+    assert field_states["club_generation.multi_club_membership_rate"].value == 0.12
+    assert (
+        field_states["club_generation.multi_club_membership_rate"].is_default_value
+        is False
+    )
     assert (
         field_states["club_generation.cross_region_assignment_enabled"].value
         is True
