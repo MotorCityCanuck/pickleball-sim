@@ -21,7 +21,7 @@ The first implementation should stay intentionally narrow.
 
 - One FastAPI route serving a server-rendered `/control` page.
 - Jinja2 templates and HTMX partial updates.
-- Two primary tabs: Configuration Control and Workload Orchestration.
+- Three primary tabs: Seed Data Config, Player and Match Config, and Workload Orchestration.
 - Read-only operational status panels for existing generation runs, monthly batches, raw seed load runs, and jobs.
 - HTMX polling for the active job status panel.
 - Schema-driven generated configuration forms using backend configuration models as the source of truth.
@@ -70,10 +70,11 @@ Use a single server-rendered page:
 /control
 ```
 
-The page should have two primary tabs:
+The page should have three primary tabs:
 
-1. Configuration Control
-2. Workload Orchestration
+1. Seed Data Config
+2. Player and Match Config
+3. Workload Orchestration
 
 Recommended secondary layout:
 
@@ -85,7 +86,8 @@ Header
 - Current operator mode: development or production
 
 Tabs
-- Configuration Control
+- Seed Data Config
+- Player and Match Config
 - Workload Orchestration
 
 Persistent Status Bar
@@ -141,12 +143,17 @@ Recommended environment guardrails:
 
 The control panel should make it difficult to accidentally run a large or destructive workload against the wrong database.
 
-## Tab 1: Configuration Control
+## Tab 1: Seed Data Config
 
-The Configuration Control tab should edit and version the full generation configuration payload stored in:
+The Seed Data Config tab should edit the seed-preparation subset of the full
+generation configuration payload stored in:
 
 - `configuration_profiles`
 - `configuration_profile_versions`
+
+This tab is one view into the canonical configuration working copy. It does not
+own a separate save pipeline or a separate saved payload. Validation and save
+must still operate on the recombined full configuration payload.
 
 Configuration edits should create new immutable profile versions. There should
 be exactly one current valid configuration set. A generation run must freeze
@@ -237,20 +244,21 @@ The authoritative configuration schema should come from backend configuration mo
 
 The UI should still present fields in manually curated domain groups so the page remains understandable. Generated fields should appear inside these groups, not as one giant undifferentiated editor.
 
-Suggested sections:
+Suggested configuration-tab split:
 
-1. Seed Data Ingest and Preparation Configuration
-2. Player and Match Generation Configuration
+1. Seed Data Config
+2. Player and Match Config
 
-The first section should contain raw ingest and seed-preparation settings such
-as:
+The Seed Data Config tab should contain raw ingest and seed-preparation
+settings such as:
 
 - `raw_seed_data`
 - `name_assignment`
 - `regional`
 - `club_generation`
 
-The second section should contain synthetic workload settings such as:
+The Player and Match Config tab should contain synthetic workload settings such
+as:
 
 - `runtime`
 - `simulation`
@@ -262,8 +270,19 @@ The second section should contain synthetic workload settings such as:
 
 The control panel may still store and validate one full configuration payload,
 but the editing experience should present the seed-preparation subset and the
-player/match-generation subset as separate editor sections that are recombined
-before validation and save.
+player/match-generation subset on separate top-level config tabs that are
+recombined before validation and save.
+
+Within each config tab, the page should use manually curated section cards.
+Because the total parameter count is large, the page should not rely on one
+fully expanded scroll. The preferred interaction pattern is:
+
+- collapsible section panels
+- one or a few open sections at a time by default
+- section summaries when collapsed
+- `Basic` versus `Advanced` visibility toggles driven by metadata
+- search/filter across labels, field paths, and help text
+- advanced JSON fallback at the section level for rare or not-yet-promoted settings
 
 - Simulation identity and target scale
 - Player generation
@@ -458,7 +477,40 @@ The initial version should show:
 
 This is important for debugging, reproducibility, and explaining why simulation results changed across runs.
 
-## Tab 2: Workload Orchestration
+## Tab 2: Player and Match Config
+
+The Player and Match Config tab should edit the synthetic workload subset of
+the same full generation configuration payload.
+
+This tab is a second view into the same working copy used by Seed Data Config.
+Both config tabs should support `Validate Configuration` and `Save New Version`
+without introducing separate draft states. Switching between tabs should not
+discard edits.
+
+Suggested major groups inside this tab:
+
+- Simulation Identity and Execution
+- Player Population and Demographics
+- Team Formation
+- Match Scheduling
+- Matchmaking
+- Games and Scores
+- Ratings and Confidence
+- Availability, Injury, and Seasonality
+- Validation and Export
+- Experimental / Future Extensions
+
+For usability, this tab should not render all configuration groups fully
+expanded at once. It should prefer:
+
+- collapsible section panels
+- section summary rows when collapsed
+- a `Show advanced settings` toggle using backend `basic_or_advanced` metadata
+- search/filter by field label, path, or help text
+- structured fallback editors such as weight tables, range tables, and
+  section-level JSON editors for rarely changed or still-unmapped settings
+
+## Tab 3: Workload Orchestration
 
 The Workload Orchestration tab should present two independent operational
 stages:
@@ -467,7 +519,7 @@ stages:
 2. Generate Player and Match Data
 
 Student-facing parquet dataset generation remains the final step inside Stage 2.
-It is not a separate top-level orchestration stage.
+It is not a separate top-level orchestration stage or a separate top-level tab.
 
 These two stages should be visible as separate panels inside the same tab.
 
@@ -1800,8 +1852,9 @@ backend/app/web/
   templates/
     control.html
     partials/
-      config_tab.html
-      workload_tab.html
+      seed_config_tab.html
+      player_match_config_tab.html
+      orchestration_tab.html
       job_status.html
       generation_runs.html
       monthly_batches.html
@@ -1831,7 +1884,7 @@ Use restrained operational styling:
 - Clear status chips.
 - Compact form groups.
 - Sticky job status area.
-- Tabs for the two major workflows.
+- Tabs for the three major workflows.
 - No landing page.
 - No decorative cards inside cards.
 - No SPA framework for the first implementation.
@@ -1841,7 +1894,7 @@ The first screen should be the control panel itself.
 ## Suggested Build Order
 
 1. Add FastAPI app shell and `/control` route.
-2. Render one-page layout with two tabs.
+2. Render one-page layout with three tabs.
 3. Add environment header and persistent status strip.
 4. Add read-only status panels for configuration, generation runs, monthly batches, raw load runs, and jobs.
 5. Add job-status polling partial.
@@ -1968,6 +2021,6 @@ The first screen should be the control panel itself.
 
 ## Recommendation
 
-Build the first version as a single-page HTMX control panel with server-rendered partials and background jobs. Keep it intentionally operational: configuration editing on one tab, workload orchestration on the other, with a persistent job status strip that always tells the operator what is running and what happened last.
+Build the first version as a single-page HTMX control panel with server-rendered partials and background jobs. Keep it intentionally operational: seed-data configuration on one tab, player-and-match configuration on a second tab, workload orchestration on a third, with a persistent job status strip that always tells the operator what is running and what happened last.
 
 The most important architectural boundary is that the web layer should remain a control plane. It should expose, validate, launch, and observe backend workflows. It should not become the owner of simulation, generation, rating, or pipeline business logic.

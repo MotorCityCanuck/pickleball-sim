@@ -36,7 +36,10 @@ def test_default_payload_provides_values_for_scaffolded_fields():
     missing = [
         field.path
         for field in CONFIG_EDITOR_FIELDS
-        if get_payload_value(payload, field.path) is None
+        if (
+            get_payload_value(payload, field.path) is None
+            and field.default_value is not None
+        )
     ]
 
     assert missing == []
@@ -45,6 +48,7 @@ def test_default_payload_provides_values_for_scaffolded_fields():
 def test_build_config_editor_sections_attaches_current_values():
     payload = default_config_payload()
     payload["simulation"]["master_seed"] = 123
+    payload["team_formation"]["rating_gap_max"] = 1750.0
     payload["club_generation"]["cross_region_assignment_enabled"] = True
 
     sections = build_config_editor_sections(payload)
@@ -56,6 +60,8 @@ def test_build_config_editor_sections_attaches_current_values():
 
     assert field_states["simulation.master_seed"].value == 123
     assert field_states["simulation.master_seed"].is_default_value is False
+    assert field_states["team_formation.rating_gap_max"].value == 1750.0
+    assert field_states["team_formation.rating_gap_max"].is_default_value is False
     assert (
         field_states["club_generation.cross_region_assignment_enabled"].value
         is True

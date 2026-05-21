@@ -76,6 +76,7 @@
         .tab-button.active {
             border-color: var(--accent);
             color: var(--accent);
+            background: #eef3ff;
         }
         .shell {
             border: 1px solid var(--border);
@@ -107,18 +108,35 @@
 
         <div class="tabs">
             <button
+                id="control-tab-button-seed"
                 class="tab-button active"
-                hx-get="/control/partials/config"
+                type="button"
+                hx-get="/control/partials/config/seed"
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
+                onclick="window.setControlPanelTab(this)"
             >
-                Configuration
+                Seed Data Config
             </button>
             <button
+                id="control-tab-button-player-match"
                 class="tab-button"
+                type="button"
+                hx-get="/control/partials/config/player-match"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+                onclick="window.setControlPanelTab(this)"
+            >
+                Player and Match Config
+            </button>
+            <button
+                id="control-tab-button-orchestration"
+                class="tab-button"
+                type="button"
                 hx-get="/control/partials/orchestration"
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
+                onclick="window.setControlPanelTab(this)"
             >
                 Orchestration
             </button>
@@ -128,7 +146,7 @@
             <div
                 id="control-tab-content"
                 class="tab-content"
-                hx-get="/control/partials/config"
+                hx-get="/control/partials/config/seed"
                 hx-trigger="load"
                 hx-swap="innerHTML"
             >
@@ -136,5 +154,14 @@
             </div>
         </div>
     </div>
+    <script>
+        (() => {
+            window.setControlPanelTab = function setControlPanelTab(activeButton) {
+                document.querySelectorAll(".tab-button").forEach((button) => {
+                    button.classList.toggle("active", button === activeButton);
+                });
+            };
+        })();
+    </script>
 </body>
 </html>

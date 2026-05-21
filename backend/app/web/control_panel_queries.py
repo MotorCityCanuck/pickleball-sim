@@ -173,6 +173,7 @@ class ConfigEditorState:
 
     title: str
     notes: str
+    working_payload_json: str
     seed_payload_json: str
     synthetic_payload_json: str
     validation_passed: bool
@@ -695,6 +696,7 @@ class ControlPanelQueries:
             return ConfigEditorState(
                 title="",
                 notes="",
+                working_payload_json="{}",
                 seed_payload_json="{}",
                 synthetic_payload_json="{}",
                 validation_passed=False,
@@ -710,6 +712,7 @@ class ControlPanelQueries:
         return ConfigEditorState(
             title="",
             notes=version.notes or "",
+            working_payload_json=json.dumps(version.config_payload, indent=2, sort_keys=True),
             seed_payload_json=json.dumps(seed_payload, indent=2, sort_keys=True),
             synthetic_payload_json=json.dumps(synthetic_payload, indent=2, sort_keys=True),
             validation_passed=False,

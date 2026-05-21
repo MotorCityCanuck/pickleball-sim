@@ -36,6 +36,31 @@ rendering configuration fields:
 - `Read-only computed`: derived values shown but not directly edited
 - `Advanced JSON editor`: structured object values that should remain in an advanced editor until a richer purpose-built control exists
 
+### 1.2 Recommended Control-Panel Organization
+
+The web control panel should organize configuration editing into two dedicated
+top-level configuration tabs plus one orchestration tab:
+
+- `Seed Data Config`
+- `Player and Match Config`
+- `Orchestration`
+
+The two configuration tabs are separate views into one canonical configuration
+working copy. They must not create separate saved payloads or separate save
+lifecycles.
+
+Within each configuration tab, controls should be organized as:
+
+- visually separated domain sections with titles
+- collapsible panels so the page does not become one long fully expanded form
+- `Basic` and `Advanced` visibility modes driven by field metadata
+- search/filter support across labels, parameter names, and help text
+- grouped editors for weight distributions and range maps
+- section-level advanced JSON fallback for rare, highly technical, or not-yet-promoted settings
+
+The intent is to keep frequently tuned parameters convenient while preserving a
+path to the full configuration surface as the metadata-driven editor expands.
+
 ---
 
 ## 2. Global Simulation Parameters

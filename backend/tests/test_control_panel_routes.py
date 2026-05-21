@@ -1,5 +1,6 @@
 """Route tests for the read-only control panel shell."""
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -581,10 +582,14 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert response.status_code == 200
     assert "/control" in routes
     assert "/control/partials/config" in routes
+    assert "/control/partials/config/seed" in routes
+    assert "/control/partials/config/player-match" in routes
     assert "Simulation Control Panel" in body
-    assert "Configuration" in body
+    assert "Seed Data Config" in body
+    assert "Player and Match Config" in body
     assert "Orchestration" in body
-    assert 'hx-get="/control/partials/config"' in body
+    assert 'hx-get="/control/partials/config/seed"' in body
+    assert 'hx-get="/control/partials/config/player-match"' in body
     assert "Read only config" in body
 
 
@@ -694,6 +699,7 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
             request=_request("/control/config/validate", method="POST"),
             config_title="March tuning",
             config_notes="adjusted player count",
+            active_config_scope="synthetic",
             seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us"]}}',
             synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 3, "first_batch_month": "2026-03-01", "target_total_players": 1200}}',
             session=session,
@@ -708,7 +714,12 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
     assert "Configuration validated successfully." in body
     assert "Save New Version" in body
     assert "March tuning" in body
-    assert "Seed Data Ingest and Preparation JSON" in body
+    assert "Synthetic Workload Configuration" in body
+    assert "Player and Match Generation" in body
+    assert 'type="date"' in body
+    assert 'value="v2"' in body
+    assert "Monthly player growth rate" not in body
+    assert 'data-config-section="synthetic:synthetic_simulation_identity"' in body
 
 
 def test_control_panel_config_save_persists_new_version_when_idle(session_factory):
@@ -722,6 +733,7 @@ def test_control_panel_config_save_persists_new_version_when_idle(session_factor
             request=_request("/control/config/save", method="POST"),
             config_title="April tuning",
             config_notes="saved",
+            active_config_scope="synthetic",
             seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us", "first_names_us"]}}',
             synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v3", "master_seed": 21, "historical_batch_count": 4, "first_batch_month": "2026-03-01", "target_total_players": 1400}}',
             session=session,
@@ -736,6 +748,7 @@ def test_control_panel_config_save_persists_new_version_when_idle(session_factor
     assert response.status_code == 200
     assert "Configuration saved as the current valid version." in body
     assert "April tuning" in body
+    assert "Simulation Scale and Determinism" in body
     assert current_version.title == "April tuning"
     assert current_version.version_number == 2
     assert current_version.config_payload["simulation"]["simulation_version"] == "v3"
@@ -752,6 +765,7 @@ def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
             request=_request("/control/config/save", method="POST"),
             config_title="Blocked save",
             config_notes="should not persist",
+            active_config_scope="seed",
             seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw"}}',
             synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Route Test", "simulation_version": "v2", "master_seed": 11, "historical_batch_count": 2, "first_batch_month": "2026-01-01", "target_total_players": 1000}}',
             session=session,
@@ -765,7 +779,71 @@ def test_control_panel_config_save_is_blocked_while_run_active(session_factory):
     body = response.body.decode()
     assert response.status_code == 200
     assert "Configuration editing is blocked while a generation run is active." in body
+    assert "Seed Data Ingest and Preparation" in body
     assert current_version.title == "Read only config"
+
+
+def test_control_panel_seed_config_partial_renders_current_values_in_controls(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/config/seed"](
+            request=_request("/control/partials/config/seed"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Seed Data Configuration" in body
+    assert "Supported raw seed datasets" in body
+    assert "Name Assignment" not in body
+    assert 'data-config-section="seed:seed_raw_ingest"' in body
+    assert re.search(
+        r'<details[^>]*data-config-section="seed:seed_raw_ingest"[^>]*open',
+        body,
+    )
+    assert "Raw seed data root" not in body
+    assert "Player and Match Generation" not in body
+
+
+def test_control_panel_player_match_config_partial_renders_current_values_in_controls(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/config/player-match"](
+            request=_request("/control/partials/config/player-match"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Synthetic Workload Configuration" in body
+    assert "Simulation Scale and Determinism" in body
+    assert 'value="v1"' in body
+    assert 'value="2026-03-01"' in body
+    assert "Generation run mode" not in body
+    assert "Commit strategy" not in body
+    assert "Batch retry max attempts" not in body
+    assert "Allow destructive rerun" not in body
+    assert "Multi-team player rate" not in body
+    assert "Rating gap max" in body
+    assert "Monthly team dissolution rate" not in body
+    assert re.search(
+        r'<details[^>]*data-config-section="synthetic:synthetic_simulation_identity"[^>]*open',
+        body,
+    )
+    assert "Simulation version" in body
+    assert "Supported raw seed datasets" not in body
 
 
 def test_control_panel_generation_start_requires_destructive_confirmation(session_factory):

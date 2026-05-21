@@ -1,3 +1,251 @@
+{% macro render_config_field(field) -%}
+    {% set definition = field.definition %}
+    {% set current_value = field.value if field.is_present_in_payload else definition.default_value %}
+    {% set tooltip = field_tooltip(definition) %}
+    <div
+        data-config-control
+        data-config-type="{{ definition.control_type }}"
+        data-config-path="{{ definition.path }}"
+        style="border:1px solid #d8dde6; border-radius:10px; padding:14px; display:grid; gap:10px; background:#fcfcfd;"
+    >
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div>
+                <label style="font-weight:600; display:block; text-decoration:underline dotted; text-underline-offset:3px; cursor:help;" title="{{ tooltip }}">{{ definition.label }}</label>
+                <div style="margin-top:4px; font-size:13px; color:#5a6477;">{{ definition.description }}</div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                <span style="font-size:11px; color:#5a6477; text-transform:uppercase; border:1px solid #d6d9df; border-radius:999px; padding:2px 8px; background:#f8fafc;">{{ definition.basic_or_advanced }}</span>
+                {% if definition.required %}
+                    <span style="font-size:11px; color:#1857c2; text-transform:uppercase; border:1px solid #cdd8f6; border-radius:999px; padding:2px 8px; background:#eef3ff;">Required</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if definition.control_type == "text" %}
+            <input
+                data-config-input
+                type="text"
+                value="{{ current_value if current_value is not none else '' }}"
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+            >
+        {% elif definition.control_type == "date" %}
+            <input
+                data-config-input
+                type="date"
+                value="{{ current_value if current_value is not none else '' }}"
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+            >
+        {% elif definition.control_type == "integer" %}
+            <input
+                data-config-input
+                type="number"
+                inputmode="numeric"
+                value="{{ current_value if current_value is not none else '' }}"
+                {% if definition.min_value is not none %}min="{{ definition.min_value }}"{% endif %}
+                {% if definition.max_value is not none %}max="{{ definition.max_value }}"{% endif %}
+                {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+            >
+        {% elif definition.control_type == "decimal" %}
+            <input
+                data-config-input
+                type="number"
+                inputmode="decimal"
+                value="{{ current_value if current_value is not none else '' }}"
+                {% if definition.min_value is not none %}min="{{ definition.min_value }}"{% endif %}
+                {% if definition.max_value is not none %}max="{{ definition.max_value }}"{% endif %}
+                {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+            >
+        {% elif definition.control_type == "checkbox" %}
+            <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                <input
+                    data-config-input
+                    type="checkbox"
+                    {% if current_value %}checked{% endif %}
+                    title="{{ tooltip }}"
+                    style="width:18px; height:18px;"
+                >
+                <span style="color:#1d2433;">Enabled</span>
+            </label>
+        {% elif definition.control_type == "select" %}
+            <select
+                data-config-input
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:#fff;"
+            >
+                {% for option in definition.options %}
+                    <option
+                        value="{{ option.value }}"
+                        {% if current_value == option.value %}selected{% endif %}
+                        title="{{ option.description or tooltip }}"
+                    >
+                        {{ option.label }}
+                    </option>
+                {% endfor %}
+            </select>
+        {% elif definition.control_type == "slider" %}
+            <div style="display:grid; gap:8px;">
+                <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px; color:#5a6477;">
+                    <span>{{ definition.min_value if definition.min_value is not none else 0 }}</span>
+                    <strong data-slider-value style="color:#1d2433;">{{ current_value if current_value is not none else 0 }}</strong>
+                    <span>{{ definition.max_value if definition.max_value is not none else 1 }}</span>
+                </div>
+                <input
+                    data-config-input
+                    type="range"
+                    value="{{ current_value if current_value is not none else 0 }}"
+                    {% if definition.min_value is not none %}min="{{ definition.min_value }}"{% endif %}
+                    {% if definition.max_value is not none %}max="{{ definition.max_value }}"{% endif %}
+                    {% if definition.step is not none %}step="{{ definition.step }}"{% endif %}
+                    title="{{ tooltip }}"
+                    oninput="this.closest('[data-config-control]').querySelector('[data-slider-value]').textContent = this.value"
+                    style="width:100%; accent-color:#1857c2;"
+                >
+            </div>
+        {% elif definition.control_type == "string_list" %}
+            <textarea
+                data-config-input
+                rows="4"
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; resize:vertical;"
+            >{{ current_value|join('\n') if current_value else '' }}</textarea>
+        {% elif definition.control_type == "multi_select" %}
+            <select
+                data-config-input
+                multiple
+                title="{{ tooltip }}"
+                style="width:100%; min-height:160px; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:#fff;"
+            >
+                {% for option in definition.options %}
+                    <option value="{{ option.value }}" {% if current_value and option.value in current_value %}selected{% endif %}>
+                        {{ option.label }}
+                    </option>
+                {% endfor %}
+            </select>
+        {% elif definition.control_type == "weight_table" %}
+            <div style="display:grid; gap:8px;">
+                {% for weight_key, weight_value in current_value.items() %}
+                    <label style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 160px); gap:12px; align-items:center;">
+                        <span style="color:#1d2433;">{{ weight_key.replace('_', ' ')|title }}</span>
+                        <input
+                            data-config-subkey="{{ weight_key }}"
+                            type="number"
+                            inputmode="decimal"
+                            step="0.001"
+                            value="{{ weight_value }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                        >
+                    </label>
+                {% endfor %}
+            </div>
+        {% elif definition.control_type == "range_table" %}
+            <div style="display:grid; gap:8px;">
+                <div style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 120px) minmax(0, 120px); gap:12px; font-size:12px; color:#5a6477; text-transform:uppercase;">
+                    <span>Bucket</span>
+                    <span>Min</span>
+                    <span>Max</span>
+                </div>
+                {% for range_key, range_value in current_value.items() %}
+                    <div style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 120px) minmax(0, 120px); gap:12px; align-items:center;">
+                        <span style="color:#1d2433;">{{ range_key.replace('_', ' ')|title }}</span>
+                        <input
+                            data-config-subkey="{{ range_key }}"
+                            data-config-bound="min"
+                            type="number"
+                            inputmode="decimal"
+                            step="1"
+                            value="{{ range_value[0] if range_value|length > 0 else '' }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                        >
+                        <input
+                            data-config-subkey="{{ range_key }}"
+                            data-config-bound="max"
+                            type="number"
+                            inputmode="decimal"
+                            step="1"
+                            value="{{ range_value[1] if range_value|length > 1 else '' }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                        >
+                    </div>
+                {% endfor %}
+            </div>
+        {% elif definition.control_type == "json" %}
+            <textarea
+                data-config-input
+                rows="6"
+                title="{{ tooltip }}"
+                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; font-family:monospace; font-size:13px; resize:vertical;"
+            >{{ current_value | tojson(indent=2) if current_value is not none else '{}' }}</textarea>
+        {% endif %}
+    </div>
+{%- endmacro %}
+
+<style>
+    #config-tab-panel .config-scope-card {
+        border: 1px solid #d6d9df;
+        border-radius: 12px;
+        padding: 18px;
+        background: #f9fbff;
+    }
+    #config-tab-panel .config-section-grid {
+        display: grid;
+        gap: 14px;
+    }
+    #config-tab-panel .config-section-card {
+        border: 1px solid #d6d9df;
+        border-radius: 12px;
+        background: #e4e8ee;
+        overflow: hidden;
+    }
+    #config-tab-panel .config-section-card[open] {
+        box-shadow: inset 0 0 0 1px #d0d7e2;
+    }
+    #config-tab-panel .config-section-summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 16px;
+        display: grid;
+        gap: 10px;
+    }
+    #config-tab-panel .config-section-summary::-webkit-details-marker {
+        display: none;
+    }
+    #config-tab-panel .config-section-summary-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+    }
+    #config-tab-panel .config-section-summary-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    #config-tab-panel .config-section-body {
+        padding: 0 16px 16px;
+        display: grid;
+        gap: 12px;
+    }
+    #config-tab-panel .config-section-chip {
+        font-size: 11px;
+        color: #5a6477;
+        text-transform: uppercase;
+        border: 1px solid #cfd6e0;
+        border-radius: 999px;
+        padding: 2px 8px;
+        background: #f4f6f9;
+    }
+</style>
+
 <section id="config-tab-panel" style="display:grid; gap:16px;">
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
         <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
@@ -48,7 +296,7 @@
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Configuration Editor</div>
                 <div style="margin-top:6px; font-size:18px;">Edit the current valid configuration and save a new immutable version.</div>
-                <div style="margin-top:6px; color:#5a6477;">Seed preparation settings and player/match generation settings are edited separately, then validated as one payload.</div>
+                <div style="margin-top:6px; color:#5a6477;">Fields are grouped by configuration section and mapped to the control types documented in the configuration parameter specification.</div>
             </div>
             <div style="font-size:13px; color:#5a6477;">
                 {% if editor.validation_hash %}
@@ -81,7 +329,11 @@
             </div>
         {% endif %}
 
-        <form style="margin-top:16px; display:grid; gap:12px;">
+        <form
+            id="config-editor-form"
+            style="margin-top:16px; display:grid; gap:16px;"
+            onsubmit="return window.serializeControlConfigForm(this)"
+        >
             <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:12px;">
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:13px; color:#5a6477;">New version title</span>
@@ -105,25 +357,49 @@
                 </label>
             </div>
 
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:12px;">
-                <label style="display:grid; gap:6px;">
-                    <span style="font-size:13px; color:#5a6477;">Seed Data Ingest and Preparation JSON</span>
-                    <textarea
-                        name="seed_config_json"
-                        rows="24"
-                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
-                    >{{ editor.seed_payload_json }}</textarea>
-                </label>
+            <section class="config-scope-card">
+                <div style="display:grid; gap:4px; margin-bottom:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">{{ config_tab_kicker }}</div>
+                    <div style="font-size:20px; color:#1d2433;">{{ config_tab_title }}</div>
+                    <div style="color:#5a6477;">{{ config_tab_description }}</div>
+                </div>
+                <div class="config-section-grid">
+                    {% for section in config_sections %}
+                        {% set advanced_count = section.fields | selectattr("definition.basic_or_advanced", "equalto", "advanced") | list | length %}
+                        {% set field_count = section.fields | length %}
+                        {% set default_open = (active_config_scope == "seed" and loop.first) or (active_config_scope == "synthetic" and section.definition.id == "synthetic_simulation_identity") %}
+                        <details
+                            class="config-section-card"
+                            data-config-section="{{ active_config_scope }}:{{ section.definition.id }}"
+                            {% if default_open %}open{% endif %}
+                        >
+                            <summary class="config-section-summary">
+                                <div class="config-section-summary-row">
+                                    <div>
+                                        <div style="font-size:17px; font-weight:600;">{{ section.definition.title }}</div>
+                                        <div style="margin-top:4px; color:#5a6477;">{{ section.definition.description }}</div>
+                                    </div>
+                                    <div style="font-size:12px; color:#5a6477; white-space:nowrap;">Click to expand</div>
+                                </div>
+                                <div class="config-section-summary-meta">
+                                    <span class="config-section-chip">{{ field_count }} fields</span>
+                                    {% if advanced_count %}
+                                        <span class="config-section-chip">{{ advanced_count }} advanced</span>
+                                    {% endif %}
+                                </div>
+                            </summary>
+                            <div class="config-section-body">
+                                {% for field in section.fields %}
+                                    {{ render_config_field(field) }}
+                                {% endfor %}
+                            </div>
+                        </details>
+                    {% endfor %}
+                </div>
+            </section>
 
-                <label style="display:grid; gap:6px;">
-                    <span style="font-size:13px; color:#5a6477;">Player and Match Generation JSON</span>
-                    <textarea
-                        name="synthetic_config_json"
-                        rows="24"
-                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:12px; font-family:monospace; font-size:13px; resize:vertical;"
-                    >{{ editor.synthetic_payload_json }}</textarea>
-                </label>
-            </div>
+            <input type="hidden" name="active_config_scope" value="{{ active_config_scope }}">
+            <textarea name="config_payload_json" hidden>{{ editor.working_payload_json }}</textarea>
 
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <button
@@ -156,3 +432,131 @@
         </form>
     </section>
 </section>
+
+<script>
+    (() => {
+        function setPath(payload, path, value) {
+            const parts = path.split(".");
+            let current = payload;
+            for (let index = 0; index < parts.length - 1; index += 1) {
+                const part = parts[index];
+                if (!current[part] || typeof current[part] !== "object" || Array.isArray(current[part])) {
+                    current[part] = {};
+                }
+                current = current[part];
+            }
+            current[parts[parts.length - 1]] = value;
+        }
+
+        function parseNumeric(value, controlType) {
+            if (value === "") {
+                return null;
+            }
+            if (controlType === "integer") {
+                return Number.parseInt(value, 10);
+            }
+            return Number.parseFloat(value);
+        }
+
+        function parseStringList(value) {
+            return value
+                .split(/\n|,/)
+                .map((item) => item.trim())
+                .filter(Boolean);
+        }
+
+        function serializeControl(control) {
+            const controlType = control.dataset.configType;
+            const path = control.dataset.configPath;
+
+            if (controlType === "checkbox") {
+                return [path, Boolean(control.querySelector("[data-config-input]")?.checked)];
+            }
+            if (controlType === "multi_select") {
+                const select = control.querySelector("[data-config-input]");
+                const values = Array.from(select?.selectedOptions || []).map((option) => option.value);
+                return [path, values];
+            }
+            if (controlType === "string_list") {
+                const input = control.querySelector("[data-config-input]");
+                return [path, parseStringList(input?.value || "")];
+            }
+            if (controlType === "json") {
+                const input = control.querySelector("[data-config-input]");
+                try {
+                    return [path, JSON.parse(input?.value || "{}")];
+                } catch (error) {
+                    window.alert(`Invalid JSON for ${path}.`);
+                    throw error;
+                }
+            }
+            if (controlType === "weight_table") {
+                const weights = {};
+                control.querySelectorAll("[data-config-subkey]").forEach((input) => {
+                    weights[input.dataset.configSubkey] = Number.parseFloat(input.value || "0");
+                });
+                return [path, weights];
+            }
+            if (controlType === "range_table") {
+                const ranges = {};
+                control.querySelectorAll("[data-config-subkey]").forEach((input) => {
+                    const key = input.dataset.configSubkey;
+                    const bound = input.dataset.configBound;
+                    if (!ranges[key]) {
+                        ranges[key] = [null, null];
+                    }
+                    const numericValue = input.value === "" ? null : Number.parseFloat(input.value);
+                    ranges[key][bound === "min" ? 0 : 1] = numericValue;
+                });
+                return [path, ranges];
+            }
+            if (controlType === "integer" || controlType === "decimal" || controlType === "slider") {
+                const input = control.querySelector("[data-config-input]");
+                return [path, parseNumeric(input?.value || "", controlType)];
+            }
+
+            const input = control.querySelector("[data-config-input]");
+            return [path, input?.value ?? null];
+        }
+
+        window.serializeControlConfigForm = function serializeControlConfigForm(form) {
+            const payloadField = form.querySelector('textarea[name="config_payload_json"]');
+            if (!payloadField) {
+                return true;
+            }
+
+            let payload;
+            try {
+                payload = JSON.parse(payloadField.value || "{}");
+            } catch (error) {
+                window.alert("Current configuration payload is not valid JSON.");
+                return false;
+            }
+
+            try {
+                form.querySelectorAll("[data-config-control]").forEach((control) => {
+                    const [path, value] = serializeControl(control);
+                    setPath(payload, path, value);
+                });
+            } catch (error) {
+                return false;
+            }
+
+            payloadField.value = JSON.stringify(payload, null, 2);
+            return true;
+        };
+
+        document.querySelectorAll("[data-config-section]").forEach((section) => {
+            const storageKey = `control-panel-config-section:${section.dataset.configSection}`;
+            const savedState = window.localStorage.getItem(storageKey);
+            if (savedState === "open") {
+                section.open = true;
+            } else if (savedState === "closed") {
+                section.open = false;
+            }
+            section.addEventListener("toggle", () => {
+                window.localStorage.setItem(storageKey, section.open ? "open" : "closed");
+            });
+        });
+    })();
+</script>

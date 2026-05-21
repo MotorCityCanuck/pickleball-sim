@@ -15,7 +15,11 @@ from app.background_jobs import (
     BackgroundJobRunner,
     get_default_background_job_runner,
 )
-from app.core import ConfigurationLifecycleService, diff_config_payloads
+from app.core import (
+    ConfigurationLifecycleService,
+    build_config_editor_sections,
+    diff_config_payloads,
+)
 from app.db.session import get_session
 from app.generation import GenerationRunService, SeedRefreshService
 
@@ -24,11 +28,13 @@ from .control_panel_queries import (
     ControlPanelQueries,
     ControlPanelSnapshot,
     merge_payload_sections,
+    split_payload_sections,
 )
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
 logger = logging.getLogger("uvicorn.error")
+DEFAULT_CONFIG_SCOPE = "seed"
 
 
 @lru_cache(maxsize=1)
@@ -77,10 +83,7 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "control_panel.html",
-            {
-                "snapshot": snapshot,
-                "editor": editor,
-            },
+            _build_config_template_context(snapshot, editor),
         )
 
     @router.get("/control/partials/config", response_class=HTMLResponse)
@@ -89,14 +92,40 @@ def build_control_panel_router() -> APIRouter:
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
     ) -> HTMLResponse:
-        snapshot, editor = _config_context(session, queries=queries)
-        return templates.TemplateResponse(
+        return _render_config_tab_response(
             request,
-            "partials/control_config_tab.html",
-            {
-                "snapshot": snapshot,
-                "editor": editor,
-            },
+            session=session,
+            queries=queries,
+            templates=templates,
+            active_config_scope=DEFAULT_CONFIG_SCOPE,
+        )
+
+    @router.get("/control/partials/config/seed", response_class=HTMLResponse)
+    def control_panel_seed_config_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        return _render_config_tab_response(
+            request,
+            session=session,
+            queries=queries,
+            templates=templates,
+            active_config_scope="seed",
+        )
+
+    @router.get("/control/partials/config/player-match", response_class=HTMLResponse)
+    def control_panel_player_match_config_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        return _render_config_tab_response(
+            request,
+            session=session,
+            queries=queries,
+            templates=templates,
+            active_config_scope="synthetic",
         )
 
     @router.post("/control/config/validate", response_class=HTMLResponse)
@@ -104,8 +133,10 @@ def build_control_panel_router() -> APIRouter:
         request: Request,
         config_title: str = Form(""),
         config_notes: str = Form(""),
-        seed_config_json: str = Form("{}"),
-        synthetic_config_json: str = Form("{}"),
+        active_config_scope: str | None = Form(None),
+        config_payload_json: str | None = Form(None),
+        seed_config_json: str | None = Form(None),
+        synthetic_config_json: str | None = Form(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         lifecycle: ConfigurationLifecycleService = Depends(get_configuration_lifecycle),
@@ -116,6 +147,7 @@ def build_control_panel_router() -> APIRouter:
             lifecycle=lifecycle,
             title=config_title,
             notes=config_notes,
+            working_payload_json=config_payload_json,
             seed_payload_json=seed_config_json,
             synthetic_payload_json=synthetic_config_json,
             action="validate",
@@ -123,10 +155,11 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_config_tab.html",
-            {
-                "snapshot": snapshot,
-                "editor": editor,
-            },
+            _build_config_template_context(
+                snapshot,
+                editor,
+                active_config_scope=_normalize_config_scope(active_config_scope),
+            ),
         )
 
     @router.post("/control/config/save", response_class=HTMLResponse)
@@ -134,8 +167,10 @@ def build_control_panel_router() -> APIRouter:
         request: Request,
         config_title: str = Form(""),
         config_notes: str = Form(""),
-        seed_config_json: str = Form("{}"),
-        synthetic_config_json: str = Form("{}"),
+        active_config_scope: str | None = Form(None),
+        config_payload_json: str | None = Form(None),
+        seed_config_json: str | None = Form(None),
+        synthetic_config_json: str | None = Form(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         lifecycle: ConfigurationLifecycleService = Depends(get_configuration_lifecycle),
@@ -146,6 +181,7 @@ def build_control_panel_router() -> APIRouter:
             lifecycle=lifecycle,
             title=config_title,
             notes=config_notes,
+            working_payload_json=config_payload_json,
             seed_payload_json=seed_config_json,
             synthetic_payload_json=synthetic_config_json,
             action="save",
@@ -153,10 +189,11 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_config_tab.html",
-            {
-                "snapshot": snapshot,
-                "editor": editor,
-            },
+            _build_config_template_context(
+                snapshot,
+                editor,
+                active_config_scope=_normalize_config_scope(active_config_scope),
+            ),
         )
 
     @router.get("/control/partials/orchestration", response_class=HTMLResponse)
@@ -349,6 +386,7 @@ def _config_context(
     lifecycle: ConfigurationLifecycleService | None = None,
     title: str | None = None,
     notes: str | None = None,
+    working_payload_json: str | None = None,
     seed_payload_json: str | None = None,
     synthetic_payload_json: str | None = None,
     action: str | None = None,
@@ -356,28 +394,46 @@ def _config_context(
     snapshot = queries.get_control_panel_snapshot(session)
     default_editor = queries.get_config_editor_state(session)
     lifecycle = lifecycle or ConfigurationLifecycleService()
+    working_payload_json = working_payload_json if isinstance(working_payload_json, str) else None
+    seed_payload_json = seed_payload_json if isinstance(seed_payload_json, str) else None
+    synthetic_payload_json = (
+        synthetic_payload_json if isinstance(synthetic_payload_json, str) else None
+    )
 
     if action is None:
         return snapshot, default_editor
 
     editor_title = (title or "").strip()
     editor_notes = notes or ""
-    editor_seed_payload_json = seed_payload_json or "{}"
-    editor_synthetic_payload_json = synthetic_payload_json or "{}"
-    seed_payload, seed_errors = _parse_payload_json(
-        editor_seed_payload_json,
-        label="Seed configuration",
-    )
-    synthetic_payload, synthetic_errors = _parse_payload_json(
-        editor_synthetic_payload_json,
-        label="Player and match configuration",
-    )
-    payload, merge_errors = merge_payload_sections(seed_payload, synthetic_payload)
-    json_errors = seed_errors + synthetic_errors + merge_errors
+    payload: dict[str, object] = {}
+
+    if working_payload_json is not None:
+        editor_working_payload_json = working_payload_json or "{}"
+        payload, json_errors = _parse_payload_json(
+            editor_working_payload_json,
+            label="Configuration payload",
+        )
+        editor_seed_payload_json, editor_synthetic_payload_json = _split_editor_payloads(payload)
+    else:
+        editor_seed_payload_json = seed_payload_json or "{}"
+        editor_synthetic_payload_json = synthetic_payload_json or "{}"
+        seed_payload, seed_errors = _parse_payload_json(
+            editor_seed_payload_json,
+            label="Seed configuration",
+        )
+        synthetic_payload, synthetic_errors = _parse_payload_json(
+            editor_synthetic_payload_json,
+            label="Player and match configuration",
+        )
+        payload, merge_errors = merge_payload_sections(seed_payload, synthetic_payload)
+        json_errors = seed_errors + synthetic_errors + merge_errors
+        editor_working_payload_json = json.dumps(payload, indent=2, sort_keys=True)
+
     if json_errors:
         return snapshot, ConfigEditorState(
             title=editor_title,
             notes=editor_notes,
+            working_payload_json=editor_working_payload_json,
             seed_payload_json=editor_seed_payload_json,
             synthetic_payload_json=editor_synthetic_payload_json,
             validation_passed=False,
@@ -394,6 +450,7 @@ def _config_context(
         return snapshot, ConfigEditorState(
             title=editor_title,
             notes=editor_notes,
+            working_payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=validation.is_valid,
@@ -412,6 +469,7 @@ def _config_context(
         return snapshot, ConfigEditorState(
             title=editor_title,
             notes=editor_notes,
+            working_payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=False,
@@ -426,6 +484,7 @@ def _config_context(
         return snapshot, ConfigEditorState(
             title=editor_title,
             notes=editor_notes,
+            working_payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=False,
@@ -440,6 +499,7 @@ def _config_context(
         return snapshot, ConfigEditorState(
             title=editor_title,
             notes=editor_notes,
+            working_payload_json=json.dumps(validation.normalized_payload, indent=2, sort_keys=True),
             seed_payload_json=seed_editor_json,
             synthetic_payload_json=synthetic_editor_json,
             validation_passed=True,
@@ -461,6 +521,7 @@ def _config_context(
     refreshed_editor = ConfigEditorState(
         title="",
         notes=refreshed_editor.notes,
+        working_payload_json=refreshed_editor.working_payload_json,
         seed_payload_json=refreshed_editor.seed_payload_json,
         synthetic_payload_json=refreshed_editor.synthetic_payload_json,
         validation_passed=False,
@@ -592,14 +653,110 @@ def _default_generation_name(snapshot: ControlPanelSnapshot) -> str:
 
 
 def _split_editor_payloads(payload: dict[str, object]) -> tuple[str, str]:
-    seed_payload: dict[str, object] = {}
-    synthetic_payload: dict[str, object] = {}
-    for key, value in payload.items():
-        if key in {"raw_seed_data", "name_assignment", "regional", "club_generation"}:
-            seed_payload[key] = value
-        else:
-            synthetic_payload[key] = value
+    seed_payload, synthetic_payload = split_payload_sections(payload)
     return (
         json.dumps(seed_payload, indent=2, sort_keys=True),
         json.dumps(synthetic_payload, indent=2, sort_keys=True),
     )
+
+
+def _normalize_config_scope(scope: str | None) -> str:
+    if scope == "synthetic":
+        return "synthetic"
+    return "seed"
+
+
+def _render_config_tab_response(
+    request: Request,
+    *,
+    session: Session,
+    queries: ControlPanelQueries,
+    templates: Jinja2Templates,
+    active_config_scope: str,
+) -> HTMLResponse:
+    snapshot, editor = _config_context(session, queries=queries)
+    return templates.TemplateResponse(
+        request,
+        "partials/control_config_tab.html",
+        _build_config_template_context(
+            snapshot,
+            editor,
+            active_config_scope=_normalize_config_scope(active_config_scope),
+        ),
+    )
+
+
+def _build_config_template_context(
+    snapshot: ControlPanelSnapshot,
+    editor: ConfigEditorState,
+    *,
+    active_config_scope: str = DEFAULT_CONFIG_SCOPE,
+) -> dict[str, object]:
+    payload, errors = _parse_payload_json(
+        editor.working_payload_json or "{}",
+        label="Configuration payload",
+    )
+    if errors:
+        payload = {}
+    sections = build_config_editor_sections(payload)
+    normalized_scope = _normalize_config_scope(active_config_scope)
+    scope_sections = tuple(
+        section for section in sections if section.definition.scope == normalized_scope
+    )
+    if normalized_scope == "seed":
+        tab_kicker = "Seed Data Configuration"
+        tab_title = "Seed Data Ingest and Preparation"
+        tab_description = (
+            "Raw datasets, naming, regional distribution, and club baseline configuration."
+        )
+    else:
+        tab_kicker = "Synthetic Workload Configuration"
+        tab_title = "Player and Match Generation"
+        tab_description = (
+            "Simulation identity, player generation, team formation, match logic, and export settings."
+        )
+    return {
+        "snapshot": snapshot,
+        "editor": editor,
+        "active_config_scope": normalized_scope,
+        "config_tab_kicker": tab_kicker,
+        "config_tab_title": tab_title,
+        "config_tab_description": tab_description,
+        "config_sections": scope_sections,
+        "field_tooltip": _build_field_tooltip,
+        "seed_sections": tuple(
+            section for section in sections if section.definition.scope == "seed"
+        ),
+        "synthetic_sections": tuple(
+            section for section in sections if section.definition.scope == "synthetic"
+        ),
+    }
+
+
+def _build_field_tooltip(definition: object) -> str:
+    if not hasattr(definition, "description"):
+        return ""
+
+    parts = [str(getattr(definition, "description", ""))]
+    options = getattr(definition, "options", ()) or ()
+    min_value = getattr(definition, "min_value", None)
+    max_value = getattr(definition, "max_value", None)
+    step = getattr(definition, "step", None)
+    required = bool(getattr(definition, "required", False))
+    control_type = getattr(definition, "control_type", None)
+
+    if options:
+        option_values = ", ".join(str(option.value) for option in options)
+        parts.append(f"Options: {option_values}.")
+    if min_value is not None and max_value is not None:
+        parts.append(f"Range: {min_value} to {max_value}.")
+    elif min_value is not None:
+        parts.append(f"Minimum: {min_value}.")
+    elif max_value is not None:
+        parts.append(f"Maximum: {max_value}.")
+    if step is not None and control_type in {"integer", "decimal", "slider"}:
+        parts.append(f"Step: {step}.")
+    if required:
+        parts.append("Required.")
+
+    return " ".join(part for part in parts if part).strip()
