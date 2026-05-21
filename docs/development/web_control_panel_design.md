@@ -297,9 +297,11 @@ Use appropriate controls:
 
 - Numeric inputs for counts and thresholds.
 - Sliders only for bounded probability-style values when precision is not critical.
-- Checkboxes for booleans.
-- Select menus for enumerations.
+- Checkboxes or toggle switches for booleans.
+- Radio groups only for small mutually exclusive enumerations where seeing all options at once improves comprehension.
+- Select menus for enumerations with more options or less frequent use.
 - Editable key/value tables for weight maps.
+- Editable min/max tables for bounded range maps.
 - Text inputs for names and versions.
 - Read-only display for computed or deprecated values.
 
@@ -402,6 +404,46 @@ Recommended save flow:
 7. Server marks the previous valid version as deprecated in the same transaction.
 8. UI updates the current version display.
 9. UI shows a version-to-version change summary.
+
+### Metadata-Driven Editor Rollout
+
+The preferred end state is a metadata-driven configuration editor generated from
+backend-owned field definitions. The backend should remain the source of truth
+for:
+
+- field paths
+- labels
+- help text
+- defaults
+- min/max/step constraints
+- enum options
+- control types
+- basic versus advanced visibility
+- section grouping
+
+The frontend should not hardcode these rules independently.
+
+Recommended incremental rollout:
+
+1. Keep the current JSON editor as the active editing surface.
+2. Add backend metadata definitions and payload-reading helpers for the future generated editor.
+3. Expand backend validation coverage so the validation model matches the metadata model.
+4. Render metadata-driven read-only or prototype form sections beside or behind the JSON editor during review.
+5. Replace the JSON editor only after the generated form coverage is complete enough for day-to-day operator use.
+
+During the transition period, the JSON editor should remain available as an
+advanced fallback and debugging tool.
+
+The initial metadata scaffold should include:
+
+- typed section definitions for seed and synthetic scopes
+- typed field definitions for the major simulation domains
+- support for scalar inputs, booleans, enums, sliders, weight tables, range tables, and JSON fallback controls
+- helpers that resolve current field values from the canonical payload
+- tests confirming metadata paths resolve against the default configuration payload
+
+The metadata scaffold is not itself a second configuration store. It is only a
+view model over the canonical validated payload.
 
 ### Configuration Diffing
 
@@ -1804,17 +1846,18 @@ The first screen should be the control panel itself.
 4. Add read-only status panels for configuration, generation runs, monthly batches, raw load runs, and jobs.
 5. Add job-status polling partial.
 6. Add configuration viewer.
-7. Add schema-driven generated configuration form renderer.
-8. Add configuration validation and save-new-version flow.
-9. Add configuration diff summary.
-10. Add raw ingest and normalize job launch actions.
-11. Add full generation preview action.
-12. Add full destructive generation launch action.
-13. Add persisted per-stage progress updates and progress bars.
-14. Add student dataset release generation as the final workload stage.
-15. Add structured job metadata.
-16. Add structured job logs.
-17. Add cancellation and log detail views.
+7. Add configuration validation and save-new-version flow with the temporary JSON editor.
+8. Add backend metadata scaffolding for the future generated editor.
+9. Add schema-driven generated configuration form renderer.
+10. Add configuration diff summary.
+11. Add raw ingest and normalize job launch actions.
+12. Add full generation preview action.
+13. Add full destructive generation launch action.
+14. Add persisted per-stage progress updates and progress bars.
+15. Add student dataset release generation as the final workload stage.
+16. Add structured job metadata.
+17. Add structured job logs.
+18. Add cancellation and log detail views.
 
 ## Open Design Questions
 

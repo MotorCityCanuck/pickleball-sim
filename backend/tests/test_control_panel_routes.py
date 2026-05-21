@@ -661,6 +661,28 @@ def test_completed_generation_run_renders_completion_popup_script(session_factor
     assert "generation-complete-notified:${runId}" in body
 
 
+def test_completed_generation_run_marks_student_dataset_as_coming_soon(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        orchestration = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = orchestration.body.decode()
+    assert orchestration.status_code == 200
+    assert "Student Dataset Release" in body
+    assert "Prereqs met" in body
+    assert "Generation export is not wired into the control panel yet." in body
+    assert "Generate Student Dataset (coming soon)" in body
+
+
 def test_control_panel_config_validate_renders_validation_success(session_factory):
     _seed_idle_config_state(session_factory)
     app = create_app()

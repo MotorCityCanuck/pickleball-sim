@@ -251,12 +251,16 @@
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Dataset Release</div>
                 <div style="margin-top:8px; font-size:18px;">
                     {% if snapshot.allowed_actions.can_generate_student_dataset %}
-                        Ready
+                        Prereqs met
                     {% else %}
                         Blocked
                     {% endif %}
                 </div>
-                {% if snapshot.allowed_actions.student_dataset_blockers %}
+                {% if snapshot.allowed_actions.can_generate_student_dataset %}
+                    <div style="margin-top:8px; color:#5a6477;">
+                        Generation export is not wired into the control panel yet.
+                    </div>
+                {% elif snapshot.allowed_actions.student_dataset_blockers %}
                     <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
                         {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
                             <li>{{ blocker }}</li>
@@ -296,8 +300,13 @@
                 >
                     Start Generation Run
                 </button>
-                <button disabled style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;">
-                    Generate Student Dataset
+                <button
+                    type="button"
+                    disabled
+                    title="{% if snapshot.allowed_actions.can_generate_student_dataset %}Student dataset generation is not wired into the control panel yet.{% else %}Student dataset generation is unavailable until the listed blockers are cleared.{% endif %}"
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;"
+                >
+                    Generate Student Dataset (coming soon)
                 </button>
             </div>
         </form>
