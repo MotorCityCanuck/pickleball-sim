@@ -265,6 +265,17 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         step=1,
     ),
     ConfigEditorFieldDefinition(
+        path="player_generation.monthly_player_growth_rate",
+        label="Monthly player growth rate",
+        control_type="slider",
+        scope="synthetic",
+        description="Share of net player growth targeted for each monthly batch after the initial population load.",
+        default_value=_path_default("player_generation.monthly_player_growth_rate"),
+        min_value=0.0,
+        max_value=1.0,
+        step=0.01,
+    ),
+    ConfigEditorFieldDefinition(
         path="player_generation.monthly_player_inactivation_rate",
         label="Monthly player inactivation rate",
         control_type="slider",
@@ -927,6 +938,7 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         description="Starting population size and demographic distributions used by player generation.",
         field_paths=(
             "player_generation.player_count",
+            "player_generation.monthly_player_growth_rate",
             "player_generation.monthly_player_inactivation_rate",
             "player_generation.age_min",
             "player_generation.age_max",

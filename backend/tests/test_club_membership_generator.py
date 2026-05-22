@@ -18,7 +18,13 @@ from app.generators import (  # noqa: E402
     ClubMembershipGenerationConfig,
     ClubMembershipGenerator,
 )
-from app.models import Club, ClubMembership, GenerationRun, Player  # noqa: E402
+from app.models import (  # noqa: E402
+    Club,
+    ClubMembership,
+    GenerationRun,
+    Player,
+    PlayerRegistration,
+)
 
 
 def test_payload(player_count=100):
@@ -100,6 +106,22 @@ def session_factory():
                 end_date date,
                 is_primary boolean default true,
                 generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE player_registrations (
+                id integer primary key autoincrement,
+                player_id bigint not null,
+                batch_id bigint not null,
+                registration_month date not null,
+                registration_source varchar(50) not null default 'synthetic',
+                assigned_region_id bigint,
+                initial_rating_value numeric(8, 3),
+                initial_confidence_score numeric(8, 3),
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -233,6 +255,76 @@ def test_generate_for_run_rejects_existing_memberships(session):
             generation_run_id=generation_run.id,
             session=session,
         )
+
+
+def test_generate_for_batch_registrations_assigns_only_new_players(session):
+    payload = test_payload(4)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 0
+    generation_run = seed_players_and_clubs(
+        session,
+        payload=payload,
+        player_count=4,
+    )
+    generator = ClubMembershipGenerator()
+    generator.generate_for_run(
+        generation_run_id=generation_run.id,
+        session=session,
+    )
+    existing_membership_player_ids = {
+        row.player_id for row in session.query(ClubMembership).all()
+    }
+
+    new_players = [
+        Player(
+            first_name="NewA",
+            last_name="Test",
+            birth_date=date(1985, 1, 1),
+            home_region_id=1,
+            registration_date=date(2024, 2, 1),
+            player_status="ACTIVE",
+            generation_run_id=generation_run.id,
+        ),
+        Player(
+            first_name="NewB",
+            last_name="Test",
+            birth_date=date(1986, 1, 1),
+            home_region_id=2,
+            registration_date=date(2024, 2, 1),
+            player_status="ACTIVE",
+            generation_run_id=generation_run.id,
+        ),
+    ]
+    session.add_all(new_players)
+    session.flush()
+    session.add_all(
+        [
+            PlayerRegistration(
+                player_id=player.id,
+                batch_id=2,
+                registration_month=date(2024, 2, 1),
+            )
+            for player in new_players
+        ]
+    )
+    session.commit()
+
+    result = generator.generate_for_batch_registrations(
+        generation_run_id=generation_run.id,
+        batch_id=2,
+        session=session,
+    )
+
+    assert result.players_evaluated == 2
+    assert result.affiliated_player_count == 2
+    assert result.unaffiliated_player_count == 0
+    assert result.rows_loaded == 2
+    new_membership_player_ids = {
+        row.player_id
+        for row in session.query(ClubMembership)
+        if row.player_id not in existing_membership_player_ids
+    }
+    assert new_membership_player_ids == {player.id for player in new_players}
 
 
 def test_generate_for_run_requires_players(session):

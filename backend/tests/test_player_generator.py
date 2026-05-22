@@ -6576,3 +6576,67 @@ def test_payload_generation_stop_here_final_three():
 
 def test_payload_generation_stop_here_final_four():
     assert True
+
+
+def test_generate_incremental_population_adds_active_players_with_batch_ratings(session):
+    payload = test_payload(4)
+    payload["player_generation"]["monthly_player_growth_rate"] = 1.0
+    payload["player_generation"]["player_status_weights"] = {"retired": 1.0}
+    generation_run, first_batch = seed_reference_data(session, payload=payload)
+
+    PlayerGenerator().generate_initial_population(
+        generation_run_id=generation_run.id,
+        batch_id=first_batch.id,
+        session=session,
+    )
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="future_increment",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.commit()
+
+    result = PlayerGenerator().generate_incremental_population(
+        generation_run_id=generation_run.id,
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    assert result.rows_loaded > 0
+    second_batch_registrations = (
+        session.query(PlayerRegistration)
+        .filter(PlayerRegistration.batch_id == second_batch.id)
+        .order_by(PlayerRegistration.player_id)
+        .all()
+    )
+    assert len(second_batch_registrations) == result.rows_loaded
+    new_player_ids = {registration.player_id for registration in second_batch_registrations}
+    new_players = (
+        session.query(Player)
+        .filter(Player.id.in_(new_player_ids))
+        .order_by(Player.id)
+        .all()
+    )
+    assert len(new_players) == result.rows_loaded
+    assert {player.player_status for player in new_players} == {"ACTIVE"}
+    assert all(player.registration_date <= date(2024, 2, 1) for player in new_players)
+    assert {
+        row.batch_id
+        for row in session.query(PlayerRatingHistory).filter(
+            PlayerRatingHistory.player_id.in_(new_player_ids)
+        )
+    } == {second_batch.id}
+    assert {
+        row.rating_type
+        for row in session.query(PlayerRatingHistory).filter(
+            PlayerRatingHistory.player_id.in_(new_player_ids)
+        )
+    } == {"initial"}
+
+    session.refresh(second_batch)
+    assert second_batch.active_player_count_start == 4
+    assert second_batch.new_player_count == result.rows_loaded
+    assert second_batch.active_player_count_end == 4 + result.rows_loaded

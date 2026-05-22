@@ -261,12 +261,15 @@ class FakePlayerGenerator:
                 for index in range(1, rows_loaded + 1)
             ]
         )
-        session.add(
-            PlayerRegistration(
-                player_id=1,
-                batch_id=batch_id,
-                registration_month=date(2024, 1, 1),
-            )
+        session.add_all(
+            [
+                PlayerRegistration(
+                    player_id=index,
+                    batch_id=batch_id,
+                    registration_month=date(2024, 1, 1),
+                )
+                for index in range(1, rows_loaded + 1)
+            ]
         )
         session.flush()
         return PlayerGenerationResult(
@@ -275,6 +278,35 @@ class FakePlayerGenerator:
             rows_loaded=rows_loaded,
             active_player_count_start=0,
             active_player_count_end=rows_loaded,
+        )
+
+    def generate_incremental_population(self, *, generation_run_id, batch_id, session):
+        next_player_id = session.query(Player).count() + 1
+        session.add(
+            Player(
+                id=next_player_id,
+                first_name=f"Player{next_player_id}",
+                last_name="Pipeline",
+                birth_date=date(1990, 1, 1),
+                registration_date=date(2024, batch_id, 1),
+                player_status="ACTIVE",
+                generation_run_id=generation_run_id,
+            )
+        )
+        session.add(
+            PlayerRegistration(
+                player_id=next_player_id,
+                batch_id=batch_id,
+                registration_month=date(2024, batch_id, 1),
+            )
+        )
+        session.flush()
+        return PlayerGenerationResult(
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            rows_loaded=1,
+            active_player_count_start=next_player_id - 1,
+            active_player_count_end=next_player_id,
         )
 
 
@@ -296,6 +328,28 @@ class FakeClubMembershipGenerator:
             players_evaluated=2,
             affiliated_player_count=1,
             unaffiliated_player_count=1,
+            multi_club_player_count=0,
+            rows_loaded=1,
+        )
+
+    def generate_for_batch_registrations(self, *, generation_run_id, batch_id, session):
+        latest_player_id = session.query(Player.id).order_by(Player.id.desc()).first()[0]
+        session.add(
+            ClubMembership(
+                player_id=latest_player_id,
+                club_id=1,
+                membership_type="member",
+                start_date=date(2024, batch_id, 1),
+                is_primary=True,
+                generation_run_id=generation_run_id,
+            )
+        )
+        session.flush()
+        return ClubMembershipGenerationResult(
+            generation_run_id=generation_run_id,
+            players_evaluated=1,
+            affiliated_player_count=1,
+            unaffiliated_player_count=0,
             multi_club_player_count=0,
             rows_loaded=1,
         )
@@ -406,9 +460,12 @@ def test_pipeline_runs_successive_months_and_skips_run_setup_after_first(session
     ] == ["generated", "generated", "generated", "generated", "generated"]
     assert [
         step.status for step in result.batch_results[1].step_results
-    ] == ["skipped", "skipped", "skipped", "generated", "generated"]
+    ] == ["generated", "generated", "skipped", "generated", "generated"]
     assert session.query(Match).count() == 2
     assert session.query(RatingsUpdateLog).count() == 2
+    assert session.query(Player).count() == 3
+    assert session.query(PlayerRegistration).count() == 3
+    assert session.query(ClubMembership).count() == 2
     assert {
         batch.processing_status for batch in session.query(MonthlyBatch).all()
     } == {"succeeded"}

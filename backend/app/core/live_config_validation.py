@@ -189,6 +189,10 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     "player_generation": (
         ("player_count", "player_generation.player_count"),
         (
+            "monthly_player_growth_rate",
+            "player_generation.monthly_player_growth_rate",
+        ),
+        (
             "monthly_player_inactivation_rate",
             "player_generation.monthly_player_inactivation_rate",
         ),

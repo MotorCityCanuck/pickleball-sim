@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.db.session import session_scope
-from app.models import Club, ClubMembership, GenerationRun, Player
+from app.models import Club, ClubMembership, GenerationRun, Player, PlayerRegistration
 
 from .players import WeightedSampler, _decimal
 
@@ -216,6 +216,124 @@ class ClubMembershipGenerator:
                 f"Generation run {generation_run_id} has no players to assign"
             )
 
+        return self._assign_memberships(
+            generation_run=generation_run,
+            players=players,
+            session=session,
+            rng_seed=int(generation_run.seed_value) * 1_000_003 + 17,
+        )
+
+    def generate_for_batch_registrations(
+        self,
+        *,
+        generation_run_id: int,
+        batch_id: int,
+        session: Session | None = None,
+    ) -> ClubMembershipGenerationResult:
+        """Generate memberships for players registered in one batch who do not yet have them."""
+        if session is not None:
+            return self._generate_for_batch_registrations(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=session,
+            )
+
+        with session_scope() as active_session:
+            return self._generate_for_batch_registrations(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=active_session,
+            )
+
+    def _generate_for_batch_registrations(
+        self,
+        *,
+        generation_run_id: int,
+        batch_id: int,
+        session: Session,
+    ) -> ClubMembershipGenerationResult:
+        generation_run = session.get(GenerationRun, generation_run_id)
+        if generation_run is None:
+            raise ValueError(f"Generation run {generation_run_id} does not exist")
+
+        player_ids = [
+            player_id
+            for (player_id,) in session.execute(
+                select(PlayerRegistration.player_id)
+                .where(PlayerRegistration.batch_id == batch_id)
+                .order_by(PlayerRegistration.player_id)
+            )
+        ]
+        if not player_ids:
+            return ClubMembershipGenerationResult(
+                generation_run_id=generation_run_id,
+                players_evaluated=0,
+                affiliated_player_count=0,
+                unaffiliated_player_count=0,
+                multi_club_player_count=0,
+                rows_loaded=0,
+            )
+
+        player_ids_with_memberships = {
+            player_id
+            for (player_id,) in session.execute(
+                select(ClubMembership.player_id)
+                .where(
+                    ClubMembership.generation_run_id == generation_run_id,
+                    ClubMembership.player_id.in_(player_ids),
+                )
+                .distinct()
+            )
+        }
+        target_player_ids = [
+            player_id
+            for player_id in player_ids
+            if player_id not in player_ids_with_memberships
+        ]
+        if not target_player_ids:
+            return ClubMembershipGenerationResult(
+                generation_run_id=generation_run_id,
+                players_evaluated=0,
+                affiliated_player_count=0,
+                unaffiliated_player_count=0,
+                multi_club_player_count=0,
+                rows_loaded=0,
+            )
+
+        players = list(
+            session.scalars(
+                select(Player)
+                .where(
+                    Player.generation_run_id == generation_run_id,
+                    Player.id.in_(target_player_ids),
+                )
+                .order_by(Player.id)
+            )
+        )
+        if not players:
+            raise ValueError(
+                f"Generation run {generation_run_id} has no registered players eligible for club assignment"
+            )
+
+        return self._assign_memberships(
+            generation_run=generation_run,
+            players=players,
+            session=session,
+            rng_seed=int(generation_run.seed_value) * 1_000_003 + int(batch_id) * 17 + 19,
+        )
+
+    def _assign_memberships(
+        self,
+        *,
+        generation_run: GenerationRun,
+        players: list[Player],
+        session: Session,
+        rng_seed: int,
+    ) -> ClubMembershipGenerationResult:
+        generation_run_id = generation_run.id
+        if generation_run_id is None:
+            raise ValueError("Generation run must be persisted before club assignment")
+
         club_index = ClubIndex(session)
         if not club_index.all_clubs:
             raise ValueError("No clubs are available for club assignment")
@@ -223,7 +341,7 @@ class ClubMembershipGenerator:
         config = ClubMembershipGenerationConfig.from_payload(
             generation_run.parameter_snapshot
         )
-        rng = random.Random(int(generation_run.seed_value) * 1_000_003 + 17)
+        rng = random.Random(rng_seed)
         memberships: list[ClubMembership] = []
         affiliated_count = 0
         unaffiliated_count = 0

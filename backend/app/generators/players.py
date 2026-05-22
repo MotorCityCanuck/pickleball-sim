@@ -45,6 +45,7 @@ class PlayerGenerationConfig:
     """Player generation settings resolved from a configuration payload."""
 
     player_count: int
+    monthly_player_growth_rate: Decimal
     monthly_player_inactivation_rate: Decimal
     age_min: int
     age_max: int
@@ -84,6 +85,13 @@ class PlayerGenerationConfig:
         )
         if player_count < 1:
             raise ValueError("player_generation.player_count must be at least 1")
+        monthly_player_growth_rate = _decimal(
+            player_config.get("monthly_player_growth_rate", 0.02)
+        )
+        if monthly_player_growth_rate < 0 or monthly_player_growth_rate > 1:
+            raise ValueError(
+                "player_generation.monthly_player_growth_rate must be between 0 and 1"
+            )
         monthly_player_inactivation_rate = _decimal(
             player_config.get("monthly_player_inactivation_rate", 0.01)
         )
@@ -118,6 +126,7 @@ class PlayerGenerationConfig:
 
         return cls(
             player_count=player_count,
+            monthly_player_growth_rate=monthly_player_growth_rate,
             monthly_player_inactivation_rate=monthly_player_inactivation_rate,
             age_min=age_min,
             age_max=age_max,
@@ -541,6 +550,120 @@ class PlayerGenerator:
         if target_count < 1:
             raise ValueError("player_count must be at least 1")
 
+        return self._generate_population_for_batch(
+            generation_run=generation_run,
+            batch=batch,
+            target_count=target_count,
+            active_start=int(existing_run_players or 0),
+            session=session,
+            force_active=False,
+            rng_seed=int(generation_run.seed_value),
+        )
+
+    def generate_incremental_population(
+        self,
+        *,
+        generation_run_id: int,
+        batch_id: int,
+        session: Session | None = None,
+    ) -> PlayerGenerationResult:
+        """Generate later-batch player additions using the configured monthly growth rate."""
+        if session is not None:
+            return self._generate_incremental_population(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=session,
+            )
+
+        with session_scope() as active_session:
+            return self._generate_incremental_population(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=active_session,
+            )
+
+    def _generate_incremental_population(
+        self,
+        *,
+        generation_run_id: int,
+        batch_id: int,
+        session: Session,
+    ) -> PlayerGenerationResult:
+        generation_run = session.get(GenerationRun, generation_run_id)
+        if generation_run is None:
+            raise ValueError(f"Generation run {generation_run_id} does not exist")
+
+        batch = session.get(MonthlyBatch, batch_id)
+        if batch is None:
+            raise ValueError(f"Monthly batch {batch_id} does not exist")
+        if batch.generation_run_id != generation_run_id:
+            raise ValueError("Batch does not belong to the generation run")
+
+        existing_run_players = session.scalar(
+            select(func.count()).select_from(Player).where(
+                Player.generation_run_id == generation_run_id
+            )
+        )
+        if not existing_run_players:
+            raise ValueError(
+                f"Generation run {generation_run_id} has no existing players for incremental growth"
+            )
+
+        existing_batch_registrations = session.scalar(
+            select(func.count()).select_from(PlayerRegistration).where(
+                PlayerRegistration.batch_id == batch_id
+            )
+        )
+        if existing_batch_registrations:
+            raise ValueError(f"Monthly batch {batch_id} already has registrations")
+
+        config = PlayerGenerationConfig.from_payload(generation_run.parameter_snapshot)
+        target_count = _incremental_player_count(
+            seed_value=int(generation_run.seed_value),
+            batch_id=batch_id,
+            base_player_count=int(existing_run_players),
+            monthly_growth_rate=config.monthly_player_growth_rate,
+        )
+        if target_count <= 0:
+            batch.active_player_count_start = int(existing_run_players)
+            batch.new_player_count = 0
+            batch.active_player_count_end = int(existing_run_players)
+            session.flush()
+            return PlayerGenerationResult(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                rows_loaded=0,
+                active_player_count_start=int(existing_run_players),
+                active_player_count_end=int(existing_run_players),
+            )
+
+        return self._generate_population_for_batch(
+            generation_run=generation_run,
+            batch=batch,
+            target_count=target_count,
+            active_start=int(existing_run_players),
+            session=session,
+            force_active=True,
+            rng_seed=int(generation_run.seed_value) * 1_000_003 + int(batch_id) * 10_009 + 31,
+        )
+
+    def _generate_population_for_batch(
+        self,
+        *,
+        generation_run: GenerationRun,
+        batch: MonthlyBatch,
+        target_count: int,
+        active_start: int,
+        session: Session,
+        force_active: bool,
+        rng_seed: int,
+    ) -> PlayerGenerationResult:
+        generation_run_id = generation_run.id
+        batch_id = batch.id
+        if generation_run_id is None or batch_id is None:
+            raise ValueError("Generation run and batch must be persisted before player generation")
+
+        config = PlayerGenerationConfig.from_payload(generation_run.parameter_snapshot)
         regions = list(
             session.scalars(
                 select(Region)
@@ -564,8 +687,7 @@ class PlayerGenerator:
         gender_sampler = WeightedSampler(config.gender_weights)
         dominant_hand_sampler = WeightedSampler(config.dominant_hand_weights)
         player_status_sampler = WeightedSampler(config.player_status_weights)
-        rng = random.Random(int(generation_run.seed_value))
-        active_start = int(existing_run_players or 0)
+        rng = random.Random(rng_seed)
         registration_month = _month_start(batch.batch_month)
         chunk_size = 5_000
 
@@ -613,7 +735,11 @@ class PlayerGenerator:
                             home_region_id=region.id,
                             registration_date=registration_date,
                             initial_skill_seed=initial_skill_seed(rng, config),
-                            player_status=player_status_sampler.choose(rng),
+                            player_status=(
+                                "ACTIVE"
+                                if force_active
+                                else player_status_sampler.choose(rng)
+                            ),
                             generation_run_id=generation_run_id,
                         )
                     )
@@ -899,3 +1025,24 @@ def _nearest(target: int, candidates: set[int]) -> int | None:
 
 def _month_start(value: date) -> date:
     return date(value.year, value.month, 1)
+
+
+def _incremental_player_count(
+    *,
+    seed_value: int,
+    batch_id: int,
+    base_player_count: int,
+    monthly_growth_rate: Decimal,
+) -> int:
+    if base_player_count <= 0 or monthly_growth_rate <= 0:
+        return 0
+
+    rng = random.Random(int(seed_value) * 1_000_003 + int(batch_id) * 65_537 + 97)
+    growth_noise = Decimal("1") + (
+        Decimal(str(rng.random())) - Decimal("0.5")
+    ) * Decimal("0.20")
+    growth_target = Decimal(base_player_count) * monthly_growth_rate * growth_noise
+    return max(
+        0,
+        int(growth_target.quantize(Decimal("1"), rounding=ROUND_HALF_UP)),
+    )

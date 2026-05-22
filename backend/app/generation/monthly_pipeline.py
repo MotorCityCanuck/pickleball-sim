@@ -227,6 +227,7 @@ class MonthlyGenerationPipeline:
                     step="club_memberships",
                     runner=lambda: self._run_club_memberships(
                         generation_run_id,
+                        batch.id,
                         skip_existing,
                         session,
                     ),
@@ -341,7 +342,7 @@ class MonthlyGenerationPipeline:
                 PlayerRegistration.batch_id == batch_id
             ),
         )
-        if existing_players or existing_registrations:
+        if existing_registrations:
             if skip_existing:
                 return PipelineStepResult(
                     "players",
@@ -351,14 +352,21 @@ class MonthlyGenerationPipeline:
                         "existing_registrations": existing_registrations,
                     },
                 )
-            raise ValueError("Player generation already exists for this run or batch")
+            raise ValueError("Player registrations already exist for this batch")
 
-        result = self.player_generator.generate_initial_population(
-            generation_run_id=generation_run_id,
-            batch_id=batch_id,
-            player_count=player_count,
-            session=session,
-        )
+        if existing_players:
+            result = self.player_generator.generate_incremental_population(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=session,
+            )
+        else:
+            result = self.player_generator.generate_initial_population(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                player_count=player_count,
+                session=session,
+            )
         return PipelineStepResult(
             "players",
             "generated",
@@ -371,34 +379,47 @@ class MonthlyGenerationPipeline:
     def _run_club_memberships(
         self,
         generation_run_id: int,
+        batch_id: int,
         skip_existing: bool,
         session: Session,
     ) -> PipelineStepResult:
+        batch_registrations = _count(
+            session,
+            select(func.count()).select_from(PlayerRegistration).where(
+                PlayerRegistration.batch_id == batch_id
+            ),
+        )
+        if batch_registrations == 0:
+            return PipelineStepResult(
+                "club_memberships",
+                "skipped",
+                {"batch_registrations": 0},
+            )
+
         existing = _count(
             session,
             select(func.count()).select_from(ClubMembership).where(
                 ClubMembership.generation_run_id == generation_run_id
             ),
         )
-        if existing:
-            if skip_existing:
-                return PipelineStepResult(
-                    "club_memberships",
-                    "skipped",
-                    {"existing_rows": existing},
-                )
-            raise ValueError("Club memberships already exist for this generation run")
-
-        result = self.club_membership_generator.generate_for_run(
-            generation_run_id=generation_run_id,
-            session=session,
-        )
+        if existing == 0:
+            result = self.club_membership_generator.generate_for_run(
+                generation_run_id=generation_run_id,
+                session=session,
+            )
+        else:
+            result = self.club_membership_generator.generate_for_batch_registrations(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                session=session,
+            )
         return PipelineStepResult(
             "club_memberships",
             "generated",
             {
                 "players_evaluated": result.players_evaluated,
                 "rows_loaded": result.rows_loaded,
+                "batch_registrations": batch_registrations,
             },
         )
 

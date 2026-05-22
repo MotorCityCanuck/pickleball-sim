@@ -147,6 +147,20 @@ def test_validate_working_copy_reports_monthly_player_inactivation_rate_errors()
     )
 
 
+def test_validate_working_copy_reports_monthly_player_growth_rate_errors():
+    service = ConfigurationLifecycleService()
+    payload = default_config_payload()
+    payload["player_generation"]["monthly_player_growth_rate"] = 1.5
+
+    result = service.validate_working_copy(payload)
+
+    assert result.is_valid is False
+    assert (
+        "player_generation.monthly_player_growth_rate must be between 0 and 1"
+        in result.errors
+    )
+
+
 def test_save_new_version_creates_profile_and_deprecates_prior_valid(session):
     service = ConfigurationLifecycleService()
     initial_payload = default_config_payload()
