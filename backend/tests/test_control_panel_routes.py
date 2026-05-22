@@ -720,7 +720,7 @@ def test_control_panel_config_validate_renders_validation_success(session_factor
     assert 'type="date"' in body
     assert 'value="v2"' in body
     assert "Valid input: whole number." in body
-    assert "Monthly player growth rate" not in body
+    assert "Monthly player inactivation rate" in body
     assert 'data-config-section="synthetic:synthetic_simulation_identity"' in body
 
 

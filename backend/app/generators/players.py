@@ -45,6 +45,7 @@ class PlayerGenerationConfig:
     """Player generation settings resolved from a configuration payload."""
 
     player_count: int
+    monthly_player_inactivation_rate: Decimal
     age_min: int
     age_max: int
     age_distribution: tuple[tuple[tuple[int, int], Decimal], ...]
@@ -83,6 +84,16 @@ class PlayerGenerationConfig:
         )
         if player_count < 1:
             raise ValueError("player_generation.player_count must be at least 1")
+        monthly_player_inactivation_rate = _decimal(
+            player_config.get("monthly_player_inactivation_rate", 0.01)
+        )
+        if (
+            monthly_player_inactivation_rate < 0
+            or monthly_player_inactivation_rate > 1
+        ):
+            raise ValueError(
+                "player_generation.monthly_player_inactivation_rate must be between 0 and 1"
+            )
 
         age_min = int(player_config.get("age_min", 18))
         age_max = int(player_config.get("age_max", 85))
@@ -107,6 +118,7 @@ class PlayerGenerationConfig:
 
         return cls(
             player_count=player_count,
+            monthly_player_inactivation_rate=monthly_player_inactivation_rate,
             age_min=age_min,
             age_max=age_max,
             age_distribution=_age_distribution(

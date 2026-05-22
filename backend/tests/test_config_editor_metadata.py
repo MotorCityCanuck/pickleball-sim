@@ -52,6 +52,7 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["club_generation"]["cross_region_assignment_enabled"] = True
     payload["club_generation"]["multi_club_membership_rate"] = 0.12
     payload["match_scheduling"]["matches_per_team_per_month"] = 5.5
+    payload["player_generation"]["monthly_player_inactivation_rate"] = 0.07
     payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
     payload["ratings"]["k_factor_new_player"] = 52.0
     payload["games_and_scores"]["win_by_two_extension_rate"] = 0.2
@@ -70,6 +71,11 @@ def test_build_config_editor_sections_attaches_current_values():
     assert field_states["match_scheduling.matches_per_team_per_month"].value == 5.5
     assert (
         field_states["match_scheduling.matches_per_team_per_month"].is_default_value
+        is False
+    )
+    assert field_states["player_generation.monthly_player_inactivation_rate"].value == 0.07
+    assert (
+        field_states["player_generation.monthly_player_inactivation_rate"].is_default_value
         is False
     )
     assert field_states["player_generation.initial_skill_seed.mean"].value == 1650

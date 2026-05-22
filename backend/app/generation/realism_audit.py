@@ -1466,10 +1466,12 @@ class RealismAuditRunner:
         self,
         *,
         query_names: Sequence[str] | None = None,
+        params: Mapping[str, Any] | None = None,
     ) -> tuple[RealismAuditResult, ...]:
         """Run one or more realism audit queries and return row mappings."""
         selected_queries = self._select_queries(query_names)
-        params = resolve_realism_audit_parameters(self.session)
+        if params is None:
+            params = resolve_realism_audit_parameters(self.session)
 
         results: list[RealismAuditResult] = []
         dialect_name = (

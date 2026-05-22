@@ -24,6 +24,8 @@ Examples:
 Notes:
   - The audit always uses the latest generation run and the latest batch within that run.
   - Historical run or batch targeting is intentionally disabled.
+  - A JSON snapshot is saved by default under data/realism_audit_snapshots/.
+  - Use --no-save-snapshot to skip snapshot persistence.
 EOF
 }
 

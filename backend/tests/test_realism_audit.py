@@ -1,4 +1,5 @@
 """Tests for reusable realism audit queries."""
+import json
 from pathlib import Path
 import sys
 
@@ -11,7 +12,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.generation import RealismAuditRunner, resolve_realism_audit_parameters  # noqa: E402
+from app.generation import (  # noqa: E402
+    RealismAuditRunner,
+    RealismAuditService,
+    execution_to_json_ready,
+    resolve_realism_audit_parameters,
+    save_realism_audit_snapshot,
+)
 
 
 @pytest.fixture()
@@ -803,3 +810,46 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
     assert float(params["weekend_concentration_max"]) == pytest.approx(0.68)
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(180.0)
     assert params["max_daily_matches_per_team"] == 3
+
+
+def test_realism_audit_service_returns_scope_metadata(session):
+    seed_audit_dataset(session)
+    service = RealismAuditService(session)
+
+    execution = service.run(query_names=["match_volume_summary"])
+
+    assert execution.generation_run_id == 1
+    assert execution.batch_id == 10
+    assert str(execution.batch_month) == "2026-01-01"
+    assert execution.results[0].query.name == "match_volume_summary"
+
+
+def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
+    seed_audit_dataset(session)
+    service = RealismAuditService(session)
+
+    execution = service.run(query_names=["weekend_match_share"])
+    payload = execution_to_json_ready(execution)
+
+    assert payload["generation_run_id"] == 1
+    assert payload["batch_id"] == 10
+    assert payload["batch_month"] == "2026-01-01"
+    assert payload["executed_at"].endswith("+00:00")
+    assert payload["results"][0]["query"] == "weekend_match_share"
+
+
+def test_realism_audit_snapshot_is_saved_with_batch_metadata(session, tmp_path):
+    seed_audit_dataset(session)
+    service = RealismAuditService(session)
+
+    execution = service.run(query_names=["weekend_match_share"])
+    snapshot_path = save_realism_audit_snapshot(execution, snapshot_dir=tmp_path)
+    payload = json.loads(snapshot_path.read_text())
+
+    assert snapshot_path.parent.name == "generation_run_000001"
+    assert "run_000001_batch_000010_2026-01-01_" in snapshot_path.name
+    assert payload["generation_run_id"] == 1
+    assert payload["batch_id"] == 10
+    assert payload["batch_month"] == "2026-01-01"
+    assert payload["query_count"] == 1
+    assert payload["results"][0]["query"] == "weekend_match_share"

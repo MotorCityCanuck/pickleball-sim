@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import Any, Sequence
+from typing import Sequence
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -13,7 +13,13 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.db.session import session_scope  # noqa: E402
-from app.generation import RealismAuditRunner  # noqa: E402
+from app.generation import (  # noqa: E402
+    DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+    RealismAuditService,
+    format_table,
+    results_to_json_ready,
+    save_realism_audit_snapshot,
+)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -39,86 +45,63 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="List available audit queries and exit.",
     )
+    parser.add_argument(
+        "--snapshot-dir",
+        default=str(DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR),
+        help=(
+            "Directory where JSON realism-audit snapshots should be saved. "
+            "Defaults to data/realism_audit_snapshots."
+        ),
+    )
+    parser.add_argument(
+        "--no-save-snapshot",
+        action="store_true",
+        help="Run the audit without persisting a JSON snapshot to disk.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     with session_scope() as session:
-        runner = RealismAuditRunner(session)
+        service = RealismAuditService(session)
         if args.list_queries:
-            for query in runner.available_queries():
+            for query in service.available_queries():
                 print(
                     f"{query.name}\t{query.scope}\t{query.category}\t{query.description}"
                 )
             return
 
-        results = runner.run(
+        execution = service.run(
             query_names=args.queries,
         )
+        snapshot_path = None
+        if not args.no_save_snapshot:
+            snapshot_path = save_realism_audit_snapshot(
+                execution,
+                snapshot_dir=args.snapshot_dir,
+            )
         if args.format == "json":
-            print(json.dumps(_json_ready(results), indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    results_to_json_ready(execution.results),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            if snapshot_path is not None:
+                print(f"[realism-audit] snapshot saved to {snapshot_path}", file=sys.stderr)
             return
 
-        for result in results:
+        for result in execution.results:
             print(f"[{result.query.name}] {result.query.description}")
             if not result.rows:
                 print("(no rows)")
                 continue
-            print(_format_table(result.rows))
+            print(format_table(result.rows))
             print("")
-
-
-def _json_ready(results: Sequence[Any]) -> list[dict[str, Any]]:
-    serialized: list[dict[str, Any]] = []
-    for result in results:
-        serialized.append(
-            {
-                "query": result.query.name,
-                "scope": result.query.scope,
-                "category": result.query.category,
-                "description": result.query.description,
-                "tags": list(result.query.tags),
-                "related_config_keys": list(result.query.related_config_keys),
-                "rows": [_json_value(row) for row in result.rows],
-            }
-        )
-    return serialized
-
-
-def _json_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value) if not isinstance(value, (str, int, float, bool)) and value is not None else value
-
-
-def _format_table(rows: Sequence[dict[str, Any]]) -> str:
-    headers = list(rows[0].keys())
-    normalized_rows = [
-        ["" if value is None else _display_value(value) for value in (row.get(header) for header in headers)]
-        for row in rows
-    ]
-    widths = [
-        max(len(str(header)), *(len(str(row[index])) for row in normalized_rows))
-        for index, header in enumerate(headers)
-    ]
-    header_row = " | ".join(str(header).ljust(widths[index]) for index, header in enumerate(headers))
-    separator = "-+-".join("-" * widths[index] for index in range(len(headers)))
-    body = [
-        " | ".join(str(row[index]).ljust(widths[index]) for index in range(len(headers)))
-        for row in normalized_rows
-    ]
-    return "\n".join([header_row, separator, *body])
-
-
-def _display_value(value: Any) -> str:
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value)
+        if snapshot_path is not None:
+            print(f"[realism-audit] snapshot saved to {snapshot_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -54,6 +54,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "player_count": 100,
         "initial_player_count": None,
         "monthly_player_growth_rate": 0.02,
+        "monthly_player_inactivation_rate": 0.01,
         "age_min": 18,
         "age_max": 85,
         "age_distribution": {
