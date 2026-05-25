@@ -5,11 +5,16 @@
             {% if snapshot.generation_run_summary %}
                 <div style="margin-top:8px; font-size:22px;">{{ snapshot.generation_run_summary.generation_name }}</div>
                 <div style="margin-top:6px; color:#5a6477;">
-                    Status: {{ snapshot.generation_run_summary.status }}
+                    Status: {{ snapshot.generation_run_summary.display_status }}
                     {% if snapshot.generation_run_summary.started_at %}
                         | Started {{ snapshot.generation_run_summary.started_at }}
                     {% endif %}
                 </div>
+                {% if snapshot.generation_run_summary.status_detail %}
+                    <div style="margin-top:6px; color:#8f1d18;">
+                        {{ snapshot.generation_run_summary.status_detail }}
+                    </div>
+                {% endif %}
                 <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
                     <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Seed</div>

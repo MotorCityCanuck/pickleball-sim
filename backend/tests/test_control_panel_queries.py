@@ -468,6 +468,76 @@ def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(ses
     )
 
 
+def test_stale_running_generation_run_does_not_block_config_editing(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, started_at, created_at, updated_at
+            ) VALUES (
+                4, 'Stale running run', 88, 'v1', 'running', '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+            ) VALUES (
+                40, 4, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                400, 'generation_run', 'generation-run-400', 'succeeded', 'completed', 100.00,
+                'Generation run completed successfully.',
+                '2026-05-20 09:00:00', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                4000, 400, 4, 40, 'matches', 4, 'succeeded', 1, 1, 'stage', 100.00,
+                '2026-05-20 09:30:00', 'matches succeeded',
+                '2026-05-20 09:10:00', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.generation_run_id == 4
+    assert snapshot.generation_run_summary.status == "running"
+    assert snapshot.generation_run_summary.display_status == "completed"
+    assert snapshot.generation_run_summary.status_detail is not None
+    assert snapshot.allowed_actions.can_edit_config is True
+    assert snapshot.allowed_actions.can_start_generation_run is True
+    assert "A generation run is already running." not in snapshot.allowed_actions.start_generation_blockers
+
+
 def test_get_control_panel_snapshot_includes_seed_job_stage_progress(session):
     _seed_valid_config(session)
     session.execute(

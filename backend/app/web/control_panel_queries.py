@@ -143,6 +143,8 @@ class GenerationRunSummary:
     generation_run_id: int
     generation_name: str
     status: str
+    display_status: str
+    status_detail: str | None
     seed_value: int
     simulation_version: str | None
     started_at: datetime | None
@@ -214,7 +216,7 @@ class ControlPanelQueries:
     def get_control_panel_snapshot(self, session: Session) -> ControlPanelSnapshot:
         config_summary, config_warning = self._get_current_valid_config_summary(session)
         seed_summary = self.get_seed_data_summary(session)
-        generation_run = self.get_active_generation_run(session) or self.get_latest_generation_run(session)
+        generation_run = self.get_active_generation_run(session)
         run_summary = None
         batch_summaries: tuple[BatchSummary, ...] = ()
         active_job = None
@@ -247,6 +249,42 @@ class ControlPanelQueries:
                 active_job=active_job,
             )
             warnings.extend(self._derive_run_warnings(generation_run, batch_summaries, active_job))
+            if not self._generation_run_is_actively_processing(
+                generation_run,
+                batch_summaries=batch_summaries,
+                active_job=active_job,
+            ):
+                generation_run = None
+                run_summary = None
+                batch_summaries = ()
+                active_job = None
+                active_job_stage_progress = ()
+
+        if generation_run is None:
+            generation_run = self.get_latest_generation_run(session)
+            if generation_run is not None:
+                active_job = self.get_job_for_generation_run(
+                    session,
+                    generation_run_id=generation_run.id,
+                )
+                if active_job is not None:
+                    active_job_stage_progress = self.get_generation_job_stage_progress(
+                        session,
+                        job_status_id=active_job.job_status_id,
+                        generation_run_id=generation_run.id,
+                    )
+                batch_summaries = self.get_generation_run_batches(
+                    session,
+                    generation_run_id=generation_run.id,
+                )
+                run_summary = self._build_generation_run_summary(
+                    generation_run,
+                    batch_summaries=batch_summaries,
+                    active_job=active_job,
+                )
+                warnings.extend(
+                    self._derive_run_warnings(generation_run, batch_summaries, active_job)
+                )
 
         allowed_actions = self._build_allowed_actions(
             config_summary=config_summary,
@@ -607,10 +645,17 @@ class ControlPanelQueries:
         active_job: JobSummary | None,
     ) -> GenerationRunSummary:
         counts = _count_batch_statuses(batch_summaries)
+        display_status, status_detail = self._display_generation_run_status(
+            generation_run,
+            batch_summaries=batch_summaries,
+            active_job=active_job,
+        )
         return GenerationRunSummary(
             generation_run_id=generation_run.id,
             generation_name=generation_run.generation_name,
             status=generation_run.status,
+            display_status=display_status,
+            status_detail=status_detail,
             seed_value=generation_run.seed_value,
             simulation_version=generation_run.simulation_version,
             started_at=generation_run.started_at,
@@ -632,10 +677,15 @@ class ControlPanelQueries:
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
     ) -> AllowedActions:
+        generation_run_active = self._generation_run_is_actively_processing(
+            generation_run,
+            batch_summaries=batch_summaries,
+            active_job=active_job,
+        )
         seed_blockers: list[str] = []
         if config_summary is None:
             seed_blockers.append("A single valid configuration is required.")
-        if generation_run is not None and generation_run.status in {"not_started", "running"}:
+        if generation_run_active:
             seed_blockers.append("Seed preparation cannot run while a generation run is running.")
         if active_job is not None and active_job.status in {"pending", "running"}:
             seed_blockers.append("Another write-heavy generation job is still running.")
@@ -647,7 +697,7 @@ class ControlPanelQueries:
             start_blockers.append("A single valid configuration is required.")
         if not seed_summary.is_ready:
             start_blockers.append("Seed/reference data must be prepared before synthetic generation can start.")
-        if generation_run is not None and generation_run.status in {"not_started", "running"}:
+        if generation_run_active:
             start_blockers.append("A generation run is already running.")
         if active_job is not None and active_job.status in {"pending", "running"}:
             start_blockers.append("A generation job is still running.")
@@ -669,7 +719,7 @@ class ControlPanelQueries:
             student_blockers.append("No seed preparation job can be active during student dataset generation.")
 
         can_edit_config = (
-            (generation_run is None or generation_run.status not in {"not_started", "running"})
+            not generation_run_active
             and (
                 seed_summary.latest_seed_job is None
                 or seed_summary.latest_seed_job.status not in {"pending", "running"}
@@ -746,6 +796,52 @@ class ControlPanelQueries:
         if active_job is not None and active_job.status == "failed":
             warnings.append("The most recent generation job failed.")
         return warnings
+
+    def _generation_run_is_actively_processing(
+        self,
+        generation_run: GenerationRun | None,
+        *,
+        batch_summaries: tuple[BatchSummary, ...],
+        active_job: JobSummary | None,
+    ) -> bool:
+        if generation_run is None:
+            return False
+        if generation_run.status == "not_started":
+            return True
+        if generation_run.status != "running":
+            return False
+        if active_job is not None and active_job.status in {"pending", "running"}:
+            return True
+        return any(
+            batch.processing_status in {"pending", "running"}
+            for batch in batch_summaries
+        )
+
+    def _display_generation_run_status(
+        self,
+        generation_run: GenerationRun,
+        *,
+        batch_summaries: tuple[BatchSummary, ...],
+        active_job: JobSummary | None,
+    ) -> tuple[str, str | None]:
+        if self._generation_run_is_actively_processing(
+            generation_run,
+            batch_summaries=batch_summaries,
+            active_job=active_job,
+        ):
+            return generation_run.status, None
+        if generation_run.status != "running":
+            return generation_run.status, None
+        if any(batch.processing_status == "failed" for batch in batch_summaries):
+            return "stalled", "Stored run status is still running, but a batch has already failed."
+        if active_job is not None and active_job.status == "failed":
+            return "stalled", "Stored run status is still running, but the latest generation job has failed."
+        if batch_summaries and all(
+            batch.processing_status == "succeeded"
+            for batch in batch_summaries
+        ):
+            return "completed", "Stored run status is still running, but all tracked batches have completed."
+        return "stalled", "Stored run status is still running, but no active job or batch remains."
 
     def _is_stale(
         self,
