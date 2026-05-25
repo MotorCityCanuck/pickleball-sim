@@ -635,6 +635,64 @@ def test_get_control_panel_snapshot_includes_generation_setup_stage_progress(ses
     assert snapshot.active_job_stage_progress[0].status == "running"
 
 
+def test_stale_running_generation_setup_job_does_not_block_config_editing(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, started_at, created_at, updated_at
+            ) VALUES (
+                5, 'Stale setup run', 77, 'v1', 'running', '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, created_at, updated_at
+            ) VALUES (
+                500, 'generation_run', 'generation-run-500', 'running', 'destructive_reset', 0.00,
+                'Deleting generated data from previous runs.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, created_at, updated_at
+            ) VALUES (
+                5000, 500, 5, NULL, 'destructive_reset', 0, 'running', 0, 1, 'stage', 0.00,
+                '2026-05-20 09:01:00', 'Deleting generated data from previous runs.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.generation_run_id == 5
+    assert snapshot.generation_run_summary.display_status == "stalled"
+    assert snapshot.active_job_summary is None
+    assert snapshot.allowed_actions.can_edit_config is True
+    assert snapshot.allowed_actions.can_start_generation_run is True
+    assert "A generation run is already running." not in snapshot.allowed_actions.start_generation_blockers
+
+
 def test_seed_readiness_ignores_stale_failed_raw_load_when_reference_data_is_ready(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)

@@ -245,20 +245,33 @@ class ControlPanelQueries:
                 session,
                 generation_run_id=generation_run.id,
             )
+            active_job_is_active = self._job_is_actively_processing(
+                active_job,
+                stage_progress=active_job_stage_progress,
+            ) or any(
+                batch.processing_status in {"pending", "running"}
+                for batch in batch_summaries
+            )
             run_summary = self._build_generation_run_summary(
                 generation_run,
                 batch_summaries=batch_summaries,
                 active_job=active_job,
+                active_job_stage_progress=active_job_stage_progress,
             )
             warnings.extend(self._derive_run_warnings(generation_run, batch_summaries, active_job))
             if not self._generation_run_is_actively_processing(
                 generation_run,
                 batch_summaries=batch_summaries,
                 active_job=active_job,
+                active_job_stage_progress=active_job_stage_progress,
             ):
                 generation_run = None
                 run_summary = None
                 batch_summaries = ()
+                active_job = None
+                active_job_stage_progress = ()
+                active_job_is_active = False
+            elif not active_job_is_active:
                 active_job = None
                 active_job_stage_progress = ()
 
@@ -279,14 +292,25 @@ class ControlPanelQueries:
                     session,
                     generation_run_id=generation_run.id,
                 )
+                active_job_is_active = self._job_is_actively_processing(
+                    active_job,
+                    stage_progress=active_job_stage_progress,
+                ) or any(
+                    batch.processing_status in {"pending", "running"}
+                    for batch in batch_summaries
+                )
                 run_summary = self._build_generation_run_summary(
                     generation_run,
                     batch_summaries=batch_summaries,
                     active_job=active_job,
+                    active_job_stage_progress=active_job_stage_progress,
                 )
                 warnings.extend(
                     self._derive_run_warnings(generation_run, batch_summaries, active_job)
                 )
+                if not active_job_is_active:
+                    active_job = None
+                    active_job_stage_progress = ()
 
         allowed_actions = self._build_allowed_actions(
             config_summary=config_summary,
@@ -294,6 +318,7 @@ class ControlPanelQueries:
             generation_run=generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
+            active_job_stage_progress=active_job_stage_progress,
         )
         return ControlPanelSnapshot(
             config_summary=config_summary,
@@ -650,12 +675,14 @@ class ControlPanelQueries:
         *,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
+        active_job_stage_progress: tuple[StageProgressSummary, ...],
     ) -> GenerationRunSummary:
         counts = _count_batch_statuses(batch_summaries)
         display_status, status_detail = self._display_generation_run_status(
             generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
+            active_job_stage_progress=active_job_stage_progress,
         )
         return GenerationRunSummary(
             generation_run_id=generation_run.id,
@@ -683,11 +710,13 @@ class ControlPanelQueries:
         generation_run: GenerationRun | None,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
+        active_job_stage_progress: tuple[StageProgressSummary, ...],
     ) -> AllowedActions:
         generation_run_active = self._generation_run_is_actively_processing(
             generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
+            active_job_stage_progress=active_job_stage_progress,
         )
         seed_blockers: list[str] = []
         if config_summary is None:
@@ -809,6 +838,7 @@ class ControlPanelQueries:
         *,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
+        active_job_stage_progress: tuple[StageProgressSummary, ...],
     ) -> bool:
         if generation_run is None:
             return False
@@ -816,7 +846,10 @@ class ControlPanelQueries:
             return True
         if generation_run.status != "running":
             return False
-        if active_job is not None and active_job.status in {"pending", "running"}:
+        if self._job_is_actively_processing(
+            active_job,
+            stage_progress=active_job_stage_progress,
+        ):
             return True
         return any(
             batch.processing_status in {"pending", "running"}
@@ -829,11 +862,13 @@ class ControlPanelQueries:
         *,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
+        active_job_stage_progress: tuple[StageProgressSummary, ...],
     ) -> tuple[str, str | None]:
         if self._generation_run_is_actively_processing(
             generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
+            active_job_stage_progress=active_job_stage_progress,
         ):
             return generation_run.status, None
         if generation_run.status != "running":
