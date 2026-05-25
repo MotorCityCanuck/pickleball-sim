@@ -573,6 +573,7 @@ def test_get_control_panel_snapshot_includes_seed_job_stage_progress(session):
 
     assert snapshot.seed_data_summary.latest_seed_job is not None
     assert snapshot.seed_data_summary.latest_seed_job.job_type == "seed_refresh"
+    assert snapshot.seed_data_summary.latest_seed_job_is_active is True
     assert len(snapshot.seed_data_summary.latest_seed_stage_progress) == 2
     assert snapshot.seed_data_summary.latest_seed_stage_progress[0].stage_name == "raw_seed_ingest"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[0].completion_message == "Datasets completed: 6"
@@ -716,3 +717,49 @@ def test_seed_job_prefers_newer_succeeded_job_over_older_failed_job_without_star
     assert snapshot.seed_data_summary.latest_seed_job.job_status_id == 302
     assert snapshot.seed_data_summary.latest_seed_job.status == "succeeded"
     assert snapshot.seed_data_summary.is_ready is True
+
+
+def test_stale_running_seed_job_does_not_block_config_editing(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, created_at, updated_at
+            ) VALUES (
+                401, 'seed_refresh', 'seed-refresh-401', 'running', 'seed_normalization', 50.00,
+                'Seed normalization appears stuck.',
+                '2026-05-20 09:00:00', '2026-05-20 09:00:00', CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, created_at, updated_at
+            ) VALUES (
+                4010, 401, NULL, NULL, 'seed_normalization', 2, 'running', 2, 4, 'dataset', 50.00,
+                '2026-05-20 09:05:00', 'Seed normalization appears stuck.',
+                '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.seed_data_summary.latest_seed_job is not None
+    assert snapshot.seed_data_summary.latest_seed_job.status == "running"
+    assert snapshot.seed_data_summary.latest_seed_job_is_active is False
+    assert snapshot.allowed_actions.can_edit_config is True
+    assert snapshot.allowed_actions.can_start_generation_run is True
+    assert "A seed preparation job is already running." not in snapshot.allowed_actions.seed_refresh_blockers

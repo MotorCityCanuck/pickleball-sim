@@ -9,7 +9,7 @@
 
 <section
     style="display:grid; gap:16px;"
-    {% if (snapshot.seed_data_summary.latest_seed_job and snapshot.seed_data_summary.latest_seed_job.status in ('pending', 'running')) or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+    {% if snapshot.seed_data_summary.latest_seed_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
         hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
         hx-swap="outerHTML"

@@ -83,6 +83,7 @@ class JobSummary:
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
+    created_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class SeedDataSummary:
     readiness_label: str
     readiness_blockers: tuple[str, ...]
     latest_seed_job: JobSummary | None
+    latest_seed_job_is_active: bool
     latest_seed_stage_progress: tuple[StageProgressSummary, ...]
     latest_raw_loads: tuple[SeedLoadRunSummary, ...]
     regions_count: int
@@ -478,6 +480,10 @@ class ControlPanelQueries:
             if latest_seed_job is not None
             else ()
         )
+        latest_seed_job_is_active = self._job_is_actively_processing(
+            latest_seed_job,
+            stage_progress=latest_seed_stage_progress,
+        )
         latest_raw_loads = tuple(
             SeedLoadRunSummary(
                 load_run_id=load.id,
@@ -513,6 +519,7 @@ class ControlPanelQueries:
             readiness_label="Ready" if not blockers else "Blocked",
             readiness_blockers=tuple(blockers),
             latest_seed_job=latest_seed_job,
+            latest_seed_job_is_active=latest_seed_job_is_active,
             latest_seed_stage_progress=latest_seed_stage_progress,
             latest_raw_loads=latest_raw_loads,
             regions_count=regions_count,
@@ -689,7 +696,7 @@ class ControlPanelQueries:
             seed_blockers.append("Seed preparation cannot run while a generation run is running.")
         if active_job is not None and active_job.status in {"pending", "running"}:
             seed_blockers.append("Another write-heavy generation job is still running.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
+        if seed_summary.latest_seed_job_is_active:
             seed_blockers.append("A seed preparation job is already running.")
 
         start_blockers: list[str] = []
@@ -701,7 +708,7 @@ class ControlPanelQueries:
             start_blockers.append("A generation run is already running.")
         if active_job is not None and active_job.status in {"pending", "running"}:
             start_blockers.append("A generation job is still running.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
+        if seed_summary.latest_seed_job_is_active:
             start_blockers.append("Seed preparation must finish before synthetic generation can start.")
 
         student_blockers: list[str] = []
@@ -715,14 +722,13 @@ class ControlPanelQueries:
             student_blockers.append("All monthly batches must be succeeded before student dataset generation.")
         if active_job is not None and active_job.status in {"pending", "running"}:
             student_blockers.append("No write-heavy job can be active during student dataset generation.")
-        if seed_summary.latest_seed_job is not None and seed_summary.latest_seed_job.status in {"pending", "running"}:
+        if seed_summary.latest_seed_job_is_active:
             student_blockers.append("No seed preparation job can be active during student dataset generation.")
 
         can_edit_config = (
             not generation_run_active
             and (
-                seed_summary.latest_seed_job is None
-                or seed_summary.latest_seed_job.status not in {"pending", "running"}
+                not seed_summary.latest_seed_job_is_active
             )
         )
         return AllowedActions(
@@ -843,6 +849,26 @@ class ControlPanelQueries:
             return "completed", "Stored run status is still running, but all tracked batches have completed."
         return "stalled", "Stored run status is still running, but no active job or batch remains."
 
+    def _job_is_actively_processing(
+        self,
+        job: JobSummary | None,
+        *,
+        stage_progress: tuple[StageProgressSummary, ...],
+    ) -> bool:
+        if job is None:
+            return False
+        if job.status in {"succeeded", "failed"}:
+            return False
+        if any(
+            stage.status in {"pending", "running"} and not stage.is_stale
+            for stage in stage_progress
+        ):
+            return True
+        reference_time = job.started_at or job.created_at
+        if reference_time is None:
+            return False
+        return (self.now_fn() - reference_time) <= self.stale_after
+
     def _is_stale(
         self,
         *,
@@ -869,6 +895,7 @@ def _job_summary(job: JobStatus | None) -> JobSummary | None:
         started_at=job.started_at,
         completed_at=job.completed_at,
         error_message=job.error_message,
+        created_at=job.created_at,
     )
 
 
