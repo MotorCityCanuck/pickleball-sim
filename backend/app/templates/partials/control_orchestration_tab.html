@@ -16,6 +16,17 @@
         hx-target="this"
     {% endif %}
 >
+    {% if status_recovery_message %}
+        <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+            {{ status_recovery_message }}
+        </div>
+    {% endif %}
+    {% if status_recovery_error %}
+        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+            {{ status_recovery_error }}
+        </div>
+    {% endif %}
+
     <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
@@ -64,6 +75,22 @@
                     <div style="margin-top:6px; color:#5a6477;">{{ snapshot.seed_data_summary.latest_seed_job.status }}</div>
                     {% if snapshot.seed_data_summary.latest_seed_job.current_message %}
                         <div style="margin-top:6px; color:#5a6477;">{{ snapshot.seed_data_summary.latest_seed_job.current_message }}</div>
+                    {% endif %}
+                    {% if snapshot.seed_data_summary.latest_seed_job.status in ('pending', 'running') and not snapshot.seed_data_summary.latest_seed_job_is_active %}
+                        <form
+                            style="margin-top:10px;"
+                            hx-post="/control/jobs/clear-stalled"
+                            hx-target="#control-tab-content"
+                            hx-swap="innerHTML"
+                        >
+                            <input type="hidden" name="job_status_id" value="{{ snapshot.seed_data_summary.latest_seed_job.job_status_id }}">
+                            <button
+                                type="submit"
+                                style="border:1px solid #b42318; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:8px 10px; cursor:pointer;"
+                            >
+                                Clear stalled job
+                            </button>
+                        </form>
                     {% endif %}
                 {% else %}
                     <div style="margin-top:8px; font-size:18px;">No seed job yet</div>
@@ -300,6 +327,18 @@
                 >
                     Start Generation Run
                 </button>
+                {% if snapshot.generation_run_summary and snapshot.generation_run_summary.display_status == 'stalled' and snapshot.generation_run_summary.job_status_id %}
+                    <button
+                        type="button"
+                        hx-post="/control/jobs/clear-stalled"
+                        hx-vals='{"job_status_id": "{{ snapshot.generation_run_summary.job_status_id }}"}'
+                        hx-target="#control-tab-content"
+                        hx-swap="innerHTML"
+                        style="border:1px solid #b42318; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                    >
+                        Clear stalled job
+                    </button>
+                {% endif %}
                 <button
                     type="button"
                     disabled

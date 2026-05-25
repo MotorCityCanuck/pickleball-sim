@@ -698,6 +698,64 @@ def test_launch_generation_run_rejects_active_generation_run(session):
         service.launch_generation_run("blocked run", session=session)
 
 
+def test_launch_generation_run_ignores_stale_running_generation_job(session):
+    _seed_valid_config(session, seed=1, historical_months=1)
+    session.add(
+        GenerationRun(
+            id=90,
+            generation_name="stale running",
+            seed_value=1,
+            simulation_version="service-v1",
+            status="running",
+            started_at=datetime(2026, 5, 20, 9, 0, 0),
+        )
+    )
+    session.flush()
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, created_at, updated_at
+            ) VALUES (
+                90, 'generation_run', 'generation-run-stale', 'running',
+                'destructive_reset', 0.00, 'Stale reset.',
+                '2026-05-20 09:00:00', '2026-05-20 09:00:00',
+                '2026-05-20 09:00:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name,
+                stage_sequence, status, progress_current, progress_total,
+                progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, created_at, updated_at
+            ) VALUES (
+                90, 90, 90, NULL, 'destructive_reset', 0, 'running',
+                0, 1, 'stage', 0.00, '2026-05-20 09:01:00',
+                'Stale reset.', '2026-05-20 09:00:00',
+                '2026-05-20 09:00:00', '2026-05-20 09:00:00'
+            )
+            """
+        )
+    )
+    session.commit()
+
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=FakePipeline(),
+    )
+
+    result = service.launch_generation_run("fresh run", session=session)
+
+    assert result.generation_run.id != 90
+    assert result.generation_run.status == "succeeded"
+
+
 def test_background_generation_run_persists_failed_status(session, monkeypatch):
     _seed_valid_config(session, historical_months=2)
     local_session_factory = sessionmaker(

@@ -8,7 +8,7 @@ import logging
 from typing import Callable
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigurationLifecycleService
@@ -18,6 +18,9 @@ from app.seed_data_ingest import load_raw_seed_dataset
 from app.seed_data_ingest.base import RawSeedLoadResult
 from app.seed_data_normalize import normalize_seed_dataset
 from app.seed_data_normalize.base import SeedNormalizeResult
+
+from .destructive_reset import delete_generated_data
+from .job_lifecycle import job_is_actively_processing, overall_percent_complete
 
 
 RAW_DATASET_ORDER = (
@@ -85,12 +88,14 @@ class SeedRefreshService:
         configuration_lifecycle: ConfigurationLifecycleService | None = None,
         load_dataset_fn: Callable[..., RawSeedLoadResult] | None = None,
         normalize_dataset_fn: Callable[..., SeedNormalizeResult] | None = None,
+        reset_generated_data_fn: Callable[..., None] | None = None,
     ) -> None:
         self.configuration_lifecycle = (
             configuration_lifecycle or ConfigurationLifecycleService()
         )
         self.load_dataset_fn = load_dataset_fn or load_raw_seed_dataset
         self.normalize_dataset_fn = normalize_dataset_fn or normalize_seed_dataset
+        self.reset_generated_data_fn = reset_generated_data_fn or delete_generated_data
 
     def register_seed_refresh(
         self,
@@ -375,8 +380,13 @@ class SeedRefreshService:
                     job_status,
                     status="running",
                     phase="seed_normalization",
-                    message="Normalizing staged seed datasets into reference tables.",
+                    message="Clearing generated data that depends on reference tables.",
                     started=mode == "normalize",
+                )
+                self._checkpoint(session, checkpoint)
+                self.reset_generated_data_fn(
+                    session=session,
+                    preserve_job_status_id=job_status.id,
                 )
                 self._checkpoint(session, checkpoint)
                 normalize_results = self._run_normalization_stage(
@@ -611,14 +621,23 @@ class SeedRefreshService:
         return valid_versions[0]
 
     def _ensure_no_active_seed_job(self, session: Session) -> None:
-        active_job = session.scalar(
-            select(JobStatus)
-            .where(
-                JobStatus.job_type.in_(tuple(SEED_JOB_TYPES)),
-                JobStatus.status.in_(("pending", "running")),
+        candidate_jobs = list(
+            session.scalars(
+                select(JobStatus)
+                .where(
+                    JobStatus.job_type.in_(tuple(SEED_JOB_TYPES)),
+                    JobStatus.status.in_(("pending", "running")),
+                )
+                .order_by(JobStatus.id.desc())
             )
-            .order_by(JobStatus.id.desc())
-            .limit(1)
+        )
+        active_job = next(
+            (
+                job
+                for job in candidate_jobs
+                if job_is_actively_processing(session, job)
+            ),
+            None,
         )
         if active_job is not None:
             raise ValueError(
@@ -742,20 +761,7 @@ class SeedRefreshService:
             row.error_message = "Stage failed."
 
     def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:
-        total_rows = session.scalar(
-            select(func.count()).select_from(JobStageProgress).where(
-                JobStageProgress.job_status_id == job_status_id
-            )
-        ) or 0
-        if total_rows == 0:
-            return Decimal("0.00")
-        completed_rows = session.scalar(
-            select(func.count()).select_from(JobStageProgress).where(
-                JobStageProgress.job_status_id == job_status_id,
-                JobStageProgress.status == "succeeded",
-            )
-        ) or 0
-        return (Decimal(completed_rows) * Decimal("100.00")) / Decimal(total_rows)
+        return overall_percent_complete(session, job_status_id)
 
     def _set_job_status(
         self,

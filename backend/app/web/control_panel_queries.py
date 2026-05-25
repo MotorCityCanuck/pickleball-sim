@@ -143,6 +143,7 @@ class GenerationRunSummary:
     """UI-ready generation run summary."""
 
     generation_run_id: int
+    job_status_id: int | None
     generation_name: str
     status: str
     display_status: str
@@ -247,10 +248,8 @@ class ControlPanelQueries:
             )
             active_job_is_active = self._job_is_actively_processing(
                 active_job,
-                stage_progress=active_job_stage_progress,
-            ) or any(
-                batch.processing_status in {"pending", "running"}
-                for batch in batch_summaries
+                stage_progress=active_job_stage_progress
+                + _batch_stage_progress(batch_summaries),
             )
             run_summary = self._build_generation_run_summary(
                 generation_run,
@@ -294,10 +293,8 @@ class ControlPanelQueries:
                 )
                 active_job_is_active = self._job_is_actively_processing(
                     active_job,
-                    stage_progress=active_job_stage_progress,
-                ) or any(
-                    batch.processing_status in {"pending", "running"}
-                    for batch in batch_summaries
+                    stage_progress=active_job_stage_progress
+                    + _batch_stage_progress(batch_summaries),
                 )
                 run_summary = self._build_generation_run_summary(
                     generation_run,
@@ -686,6 +683,7 @@ class ControlPanelQueries:
         )
         return GenerationRunSummary(
             generation_run_id=generation_run.id,
+            job_status_id=active_job.job_status_id if active_job is not None else None,
             generation_name=generation_run.generation_name,
             status=generation_run.status,
             display_status=display_status,
@@ -851,10 +849,13 @@ class ControlPanelQueries:
             stage_progress=active_job_stage_progress,
         ):
             return True
-        return any(
-            batch.processing_status in {"pending", "running"}
-            for batch in batch_summaries
-        )
+        if active_job is not None and active_job.status in {"pending", "running"}:
+            return any(
+                stage.status == "running" and not stage.is_stale
+                for batch in batch_summaries
+                for stage in batch.stage_progress
+            )
+        return False
 
     def _display_generation_run_status(
         self,
@@ -882,6 +883,8 @@ class ControlPanelQueries:
             for batch in batch_summaries
         ):
             return "completed", "Stored run status is still running, but all tracked batches have completed."
+        if any(batch.processing_status in {"pending", "running"} for batch in batch_summaries):
+            return "stalled", "Stored run status is still running, but no active job heartbeat remains."
         return "stalled", "Stored run status is still running, but no active job or batch remains."
 
     def _job_is_actively_processing(
@@ -895,7 +898,7 @@ class ControlPanelQueries:
         if job.status in {"succeeded", "failed"}:
             return False
         if any(
-            stage.status in {"pending", "running"} and not stage.is_stale
+            stage.status == "running" and not stage.is_stale
             for stage in stage_progress
         ):
             return True
@@ -931,6 +934,16 @@ def _job_summary(job: JobStatus | None) -> JobSummary | None:
         completed_at=job.completed_at,
         error_message=job.error_message,
         created_at=job.created_at,
+    )
+
+
+def _batch_stage_progress(
+    batch_summaries: tuple[BatchSummary, ...],
+) -> tuple[StageProgressSummary, ...]:
+    return tuple(
+        stage
+        for batch in batch_summaries
+        for stage in batch.stage_progress
     )
 
 

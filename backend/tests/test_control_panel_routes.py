@@ -419,6 +419,115 @@ def _seed_idle_config_state(session_factory):
         session.close()
 
 
+def _seed_stale_seed_job_state(session_factory):
+    _seed_idle_config_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, created_at, updated_at
+                ) VALUES (
+                    31, 'seed_refresh', 'seed-refresh-stale', 'running',
+                    'seed_normalization', 50.00, 'Stale seed job.',
+                    '2026-05-20 09:00:00', '2026-05-20 09:00:00',
+                    '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name,
+                    stage_sequence, status, progress_current, progress_total,
+                    progress_unit, progress_percent, last_heartbeat_at,
+                    progress_message, started_at, created_at, updated_at
+                ) VALUES (
+                    31, 31, NULL, NULL, 'seed_normalization', 2, 'pending',
+                    0, 4, 'dataset', 0.00, NULL,
+                    'Pending execution.', NULL,
+                    '2026-05-20 09:00:00', '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _seed_stale_generation_job_state(session_factory):
+    _seed_idle_config_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO generation_runs (
+                    id, generation_name, seed_value, simulation_version, status,
+                    started_at, created_at, updated_at
+                ) VALUES (
+                    41, 'Stale generation run', 11, 'v1', 'running',
+                    '2026-05-20 09:00:00', '2026-05-20 09:00:00',
+                    '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO monthly_batches (
+                    id, generation_run_id, batch_month, batch_sequence,
+                    batch_type, processing_status, created_at, updated_at
+                ) VALUES (
+                    41, 41, '2026-01-01', 1, 'historical_initial',
+                    'running', '2026-05-20 09:00:00', '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, created_at, updated_at
+                ) VALUES (
+                    41, 'generation_run', 'generation-run-stale', 'running',
+                    'matches', 20.00, 'Stale generation job.',
+                    '2026-05-20 09:00:00', '2026-05-20 09:00:00',
+                    '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name,
+                    stage_sequence, status, progress_current, progress_total,
+                    progress_unit, progress_percent, last_heartbeat_at,
+                    progress_message, started_at, created_at, updated_at
+                ) VALUES (
+                    41, 41, 41, 41, 'matches', 4, 'running',
+                    0, 1, 'stage', 0.00, '2026-05-20 09:01:00',
+                    'Stale generation job.', '2026-05-20 09:00:00',
+                    '2026-05-20 09:00:00', '2026-05-20 09:00:00'
+                )
+                """
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
 def _seed_ready_reference_data(session):
     session.execute(
         text(
@@ -686,6 +795,133 @@ def test_completed_generation_run_marks_student_dataset_as_coming_soon(session_f
     assert "Prereqs met" in body
     assert "Generation export is not wired into the control panel yet." in body
     assert "Generate Student Dataset (coming soon)" in body
+
+
+def test_clear_stalled_seed_job_route_marks_job_failed(session_factory):
+    _seed_stale_seed_job_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        before = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        response = routes["/control/jobs/clear-stalled"](
+            request=_request("/control/jobs/clear-stalled", method="POST"),
+            job_status_id=31,
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        job_status = session.execute(
+            text("SELECT status, current_phase FROM job_status WHERE id = 31")
+        ).one()
+        stage_status = session.execute(
+            text("SELECT status FROM job_stage_progress WHERE id = 31")
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert before.status_code == 200
+    assert "Clear stalled job" in before.body.decode()
+    assert response.status_code == 200
+    assert "Cleared stalled seed_refresh job seed-refresh-stale." in response.body.decode()
+    assert job_status == ("failed", "failed")
+    assert stage_status == "failed"
+
+
+def test_clear_stalled_generation_job_route_marks_run_and_batch_failed(session_factory):
+    _seed_stale_generation_job_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        before = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        response = routes["/control/jobs/clear-stalled"](
+            request=_request("/control/jobs/clear-stalled", method="POST"),
+            job_status_id=41,
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        run_status = session.execute(
+            text("SELECT status FROM generation_runs WHERE id = 41")
+        ).scalar_one()
+        batch_status = session.execute(
+            text("SELECT processing_status FROM monthly_batches WHERE id = 41")
+        ).scalar_one()
+        job_status = session.execute(
+            text("SELECT status FROM job_status WHERE id = 41")
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert before.status_code == 200
+    assert "Clear stalled job" in before.body.decode()
+    assert response.status_code == 200
+    assert "Cleared stalled generation_run job generation-run-stale." in response.body.decode()
+    assert run_status == "failed"
+    assert batch_status == "failed"
+    assert job_status == "failed"
+
+
+def test_clear_stalled_job_route_refuses_active_job(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, created_at, updated_at
+                ) VALUES (
+                    51, 'seed_refresh', 'seed-refresh-active', 'running',
+                    'raw_seed_ingest', 0.00, 'Fresh seed job.',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name,
+                    stage_sequence, status, progress_current, progress_total,
+                    progress_unit, progress_percent, last_heartbeat_at,
+                    progress_message, started_at, created_at, updated_at
+                ) VALUES (
+                    51, 51, NULL, NULL, 'raw_seed_ingest', 1, 'running',
+                    0, 4, 'dataset', 0.00, CURRENT_TIMESTAMP,
+                    'Fresh seed job.', CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/jobs/clear-stalled"](
+            request=_request("/control/jobs/clear-stalled", method="POST"),
+            job_status_id=51,
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        job_status = session.execute(
+            text("SELECT status FROM job_status WHERE id = 51")
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert response.status_code == 200
+    assert "still has a fresh activity signal" in response.body.decode()
+    assert job_status == "running"
 
 
 def test_control_panel_config_validate_renders_validation_success(session_factory):

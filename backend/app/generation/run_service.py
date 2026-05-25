@@ -8,67 +8,32 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigurationLifecycleService, SimulationSettings, load_settings
 from app.db.session import SessionLocal, session_scope
 from app.models import (
-    BatchRun,
-    ClubMembership,
     ConfigurationProfileVersion,
-    ExportRun,
     GenerationRun,
     JobStageProgress,
     JobStatus,
-    Match,
-    MatchGame,
-    MatchTeam,
-    MatchTeamPlayer,
     MonthlyBatch,
-    Player,
-    PlayerAssessmentHistory,
-    PlayerRatingHistory,
-    PlayerRegistration,
-    RatingsUpdateLog,
-    StudentDatasetRelease,
-    StudentDatasetReleaseFile,
-    Team,
-    TeamMembership,
-    Tournament,
-    ValidationResult,
 )
 
 from .control_plane import GenerationControlPlane
+from .destructive_reset import delete_generated_data
+from .job_lifecycle import (
+    DEFAULT_JOB_STALE_AFTER,
+    job_is_actively_processing,
+    overall_percent_complete,
+    utc_now,
+)
 from .monthly_pipeline import (
     MonthlyGenerationPipeline,
     MultiMonthPipelineResult,
     PIPELINE_STEPS,
     PipelineProgressEvent,
-)
-
-
-DELETE_MODELS_IN_ORDER = (
-    JobStageProgress,
-    StudentDatasetReleaseFile,
-    StudentDatasetRelease,
-    ValidationResult,
-    ExportRun,
-    BatchRun,
-    RatingsUpdateLog,
-    PlayerRatingHistory,
-    PlayerAssessmentHistory,
-    MatchTeamPlayer,
-    MatchGame,
-    MatchTeam,
-    Match,
-    TeamMembership,
-    Team,
-    ClubMembership,
-    PlayerRegistration,
-    Player,
-    Tournament,
-    MonthlyBatch,
 )
 
 
@@ -431,22 +396,23 @@ class GenerationRunService:
         return valid_versions[0]
 
     def _ensure_no_active_generation_job(self, session: Session) -> None:
-        active_run = session.scalar(
-            select(GenerationRun).where(GenerationRun.status.in_(("not_started", "running")))
+        candidate_jobs = list(
+            session.scalars(
+                select(JobStatus)
+                .where(
+                    JobStatus.job_type == "generation_run",
+                    JobStatus.status.in_(("pending", "running")),
+                )
+                .order_by(JobStatus.id.desc())
+            )
         )
-        if active_run is not None:
-            raise ValueError(
-                f"Generation run {active_run.id} is already {active_run.status}; "
-                "concurrent runs are blocked."
-            )
-        active_job = session.scalar(
-            select(JobStatus)
-            .where(
-                JobStatus.job_type == "generation_run",
-                JobStatus.status.in_(("pending", "running")),
-            )
-            .order_by(JobStatus.id.desc())
-            .limit(1)
+        active_job = next(
+            (
+                job
+                for job in candidate_jobs
+                if job_is_actively_processing(session, job)
+            ),
+            None,
         )
         if active_job is not None:
             raise ValueError(
@@ -454,20 +420,59 @@ class GenerationRunService:
                 "concurrent runs are blocked."
             )
 
+        candidate_runs = list(
+            session.scalars(
+                select(GenerationRun).where(
+                    GenerationRun.status.in_(("not_started", "running"))
+                )
+            )
+        )
+        for active_run in candidate_runs:
+            run_job = self._get_job_for_generation_run(
+                session,
+                generation_run_id=active_run.id,
+            )
+            if job_is_actively_processing(session, run_job):
+                raise ValueError(
+                    f"Generation run {active_run.id} is already {active_run.status}; "
+                    "concurrent runs are blocked."
+                )
+            if run_job is None and _record_is_recent(
+                active_run.started_at or active_run.created_at
+            ):
+                raise ValueError(
+                    f"Generation run {active_run.id} is already {active_run.status}; "
+                    "concurrent runs are blocked."
+                )
+
+    def _get_job_for_generation_run(
+        self,
+        session: Session,
+        *,
+        generation_run_id: int,
+    ) -> JobStatus | None:
+        job_ids_for_run = (
+            select(JobStageProgress.job_status_id)
+            .where(JobStageProgress.generation_run_id == generation_run_id)
+            .distinct()
+        )
+        return session.scalar(
+            select(JobStatus)
+            .where(JobStatus.id.in_(job_ids_for_run))
+            .order_by(JobStatus.id.desc())
+            .limit(1)
+        )
+
     def _perform_destructive_reset(
         self,
         session: Session,
         *,
         preserve_job_status_id: int,
     ) -> None:
-        for model in DELETE_MODELS_IN_ORDER:
-            statement = delete(model)
-            if model is JobStageProgress:
-                statement = statement.where(
-                    JobStageProgress.job_status_id != preserve_job_status_id
-                )
-            session.execute(statement)
-        session.flush()
+        delete_generated_data(
+            session=session,
+            preserve_job_status_id=preserve_job_status_id,
+        )
 
     def _create_monthly_batches(
         self,
@@ -621,6 +626,7 @@ class GenerationRunService:
                 status="running",
                 phase=event.step,
                 message=f"{event.batch_month}: {stage_row.progress_message}",
+                percent_complete=self._overall_percent_complete(session, job_status.id),
             )
         elif event.status == "succeeded":
             stage_row.started_at = stage_row.started_at or _utc_now()
@@ -698,20 +704,7 @@ class GenerationRunService:
         session.flush()
 
     def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:
-        total_rows = session.scalar(
-            select(func.count()).select_from(JobStageProgress).where(
-                JobStageProgress.job_status_id == job_status_id
-            )
-        ) or 0
-        if total_rows == 0:
-            return Decimal("0.00")
-        completed_rows = session.scalar(
-            select(func.count()).select_from(JobStageProgress).where(
-                JobStageProgress.job_status_id == job_status_id,
-                JobStageProgress.status == "succeeded",
-            )
-        ) or 0
-        return (Decimal(completed_rows) * Decimal("100.00")) / Decimal(total_rows)
+        return overall_percent_complete(session, job_status_id)
 
     def _set_job_status(
         self,
@@ -769,6 +762,12 @@ def _format_progress_message(event: PipelineProgressEvent) -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _record_is_recent(value: datetime | None) -> bool:
+    if value is None:
+        return True
+    return (utc_now() - value) <= DEFAULT_JOB_STALE_AFTER
 
 
 def _add_months(value: date, months: int) -> date:

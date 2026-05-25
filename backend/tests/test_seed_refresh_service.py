@@ -163,6 +163,7 @@ def _seed_valid_config(session):
 
 def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session):
     _seed_valid_config(session)
+    events: list[str] = []
     load_calls: list[str] = []
     normalize_calls: list[str] = []
 
@@ -182,6 +183,7 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
     def fake_normalize(dataset, *, replace_production=False, config_payload=None, session=None):
         del config_payload, session
         assert replace_production is True
+        events.append(f"normalize:{dataset}")
         normalize_calls.append(dataset)
         return SeedNormalizeResult(
             dataset=dataset,
@@ -191,9 +193,14 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
             rows_loaded=7,
         )
 
+    def fake_reset(*, session=None, preserve_job_status_id=None):
+        del session
+        events.append(f"reset:{preserve_job_status_id}")
+
     service = SeedRefreshService(
         load_dataset_fn=fake_load,
         normalize_dataset_fn=fake_normalize,
+        reset_generated_data_fn=fake_reset,
     )
 
     result = service.refresh_seed_data(session=session)
@@ -212,6 +219,13 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
         "first_names",
         "last_names",
         "pickleball_clubs",
+    ]
+    assert events[0].startswith("reset:")
+    assert events[1:] == [
+        "normalize:metro_areas",
+        "normalize:first_names",
+        "normalize:last_names",
+        "normalize:pickleball_clubs",
     ]
     assert result.job_status.job_type == "seed_refresh"
     assert result.job_status.status == "succeeded"
@@ -261,6 +275,53 @@ def test_refresh_seed_data_blocks_concurrent_seed_jobs(session):
         service.refresh_seed_data(session=session)
 
 
+def test_refresh_seed_data_ignores_stale_running_seed_job(session):
+    _seed_valid_config(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, created_at, updated_at
+            ) VALUES (
+                10, 'seed_refresh', 'seed-refresh-stale', 'running',
+                'seed_normalization', 50.00, 'Stale normalization.',
+                '2026-05-20 09:00:00', '2026-05-20 09:00:00',
+                '2026-05-20 09:00:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name,
+                stage_sequence, status, progress_current, progress_total,
+                progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, started_at, created_at, updated_at
+            ) VALUES (
+                20, 10, NULL, NULL, 'seed_normalization', 2, 'running',
+                2, 4, 'dataset', 50.00, '2026-05-20 09:01:00',
+                'Stale normalization.', '2026-05-20 09:00:00',
+                '2026-05-20 09:00:00', '2026-05-20 09:00:00'
+            )
+            """
+        )
+    )
+    session.commit()
+
+    service = SeedRefreshService(
+        load_dataset_fn=lambda dataset, *, session=None: RawSeedLoadResult(1, dataset, 1, 1, 1, 0, "completed"),
+        normalize_dataset_fn=lambda dataset, *, replace_production=False, config_payload=None, session=None: SeedNormalizeResult(dataset, "completed", 1, 0, 1),
+    )
+
+    registration = service.register_raw_seed_ingest(session=session)
+
+    assert registration.job_status.id != 10
+    assert registration.job_status.status == "pending"
+
+
 def test_background_seed_job_persists_failed_status(session, monkeypatch):
     _seed_valid_config(session)
 
@@ -299,3 +360,41 @@ def test_background_seed_job_persists_failed_status(session, monkeypatch):
     stage_rows = session.query(JobStageProgress).filter_by(job_status_id=job.id).all()
     assert len(stage_rows) == 1
     assert stage_rows[0].status == "failed"
+
+
+def test_normalize_seed_data_resets_generated_data_before_normalization(session):
+    _seed_valid_config(session)
+    events: list[str] = []
+
+    def fake_reset(*, session=None, preserve_job_status_id=None):
+        del session
+        events.append(f"reset:{preserve_job_status_id}")
+
+    def fake_normalize(dataset, *, replace_production=False, config_payload=None, session=None):
+        del config_payload, session
+        assert replace_production is True
+        events.append(f"normalize:{dataset}")
+        return SeedNormalizeResult(
+            dataset=dataset,
+            status="completed",
+            rows_read=1,
+            rows_deleted=0,
+            rows_loaded=1,
+        )
+
+    service = SeedRefreshService(
+        normalize_dataset_fn=fake_normalize,
+        reset_generated_data_fn=fake_reset,
+    )
+
+    result = service.normalize_seed_data(session=session)
+    session.commit()
+
+    assert result.job_status.job_type == "seed_normalization"
+    assert events[0].startswith("reset:")
+    assert events[1:] == [
+        "normalize:metro_areas",
+        "normalize:first_names",
+        "normalize:last_names",
+        "normalize:pickleball_clubs",
+    ]
