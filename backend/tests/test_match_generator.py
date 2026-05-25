@@ -16,6 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
+from app.generators.games import expected_scores, game_score  # noqa: E402
 from app.models import (  # noqa: E402
     GenerationRun,
     Match,
@@ -462,6 +463,52 @@ def test_generate_for_batch_uses_win_by_two_extension_rate(session):
         max(game.team_one_score, game.team_two_score) > game.target_score
         for game in session.query(MatchGame)
     )
+
+
+class StubRandom:
+    def __init__(self, random_values, randint_value):
+        self._random_values = iter(random_values)
+        self._randint_value = randint_value
+
+    def random(self):
+        return next(self._random_values)
+
+    def randint(self, low, high):
+        assert low <= self._randint_value <= high
+        return self._randint_value
+
+
+def test_game_score_allows_dominant_non_extended_results():
+    payload = test_payload()
+    payload["games_and_scores"]["win_by_two_extension_rate"] = 0.0
+    config = MatchGenerationConfig.from_payload(payload)
+
+    team_one_score, team_two_score = game_score(
+        StubRandom([0.99], -2),
+        team_one_wins=True,
+        adjusted_probability=Decimal("0.95"),
+        config=config,
+    )
+
+    assert (team_one_score, team_two_score) == (11, 0)
+
+
+def test_expected_scores_widen_for_mismatched_games():
+    config = MatchGenerationConfig.from_payload(test_payload())
+
+    close_team_one_score, close_team_two_score = expected_scores(
+        Decimal("0.55"),
+        config,
+    )
+    lopsided_team_one_score, lopsided_team_two_score = expected_scores(
+        Decimal("0.85"),
+        config,
+    )
+
+    assert close_team_one_score == Decimal("11.000")
+    assert lopsided_team_one_score == Decimal("11.000")
+    assert close_team_two_score > Decimal("7.000")
+    assert lopsided_team_two_score < Decimal("4.000")
 
 
 def _match_snapshot(session):

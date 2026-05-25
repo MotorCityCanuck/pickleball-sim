@@ -20,6 +20,7 @@ ConfigEditorControlType = Literal[
     "multi_select",
     "weight_table",
     "range_table",
+    "weighted_range_table",
     "json",
 ]
 ConfigEditorComplexity = Literal["basic", "advanced"]
@@ -50,6 +51,9 @@ class ConfigEditorFieldDefinition:
     max_value: float | int | None = None
     step: float | int | None = None
     options: tuple[ConfigEditorOption, ...] = ()
+    linked_path: str | None = None
+    linked_default_value: Any = None
+    validation_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,8 @@ class ConfigEditorFieldState:
     value: Any
     is_default_value: bool
     is_present_in_payload: bool
+    linked_value: Any = None
+    linked_is_present_in_payload: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,11 +120,17 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ),
     ConfigEditorFieldDefinition(
         path="club_generation.capacity_ranges",
-        label="Club capacity ranges",
-        control_type="range_table",
+        label="Club size distribution and capacity ranges",
+        control_type="weighted_range_table",
         scope="seed",
-        description="Min/max member capacity ranges by club size bucket.",
+        description="Club size proportions plus min/max member capacity ranges by club size bucket.",
         default_value=_path_default("club_generation.capacity_ranges"),
+        linked_path="club_generation.club_size_distribution",
+        linked_default_value=_path_default("club_generation.club_size_distribution"),
+        validation_paths=(
+            "club_generation.capacity_ranges",
+            "club_generation.club_size_distribution",
+        ),
     ),
     ConfigEditorFieldDefinition(
         path="club_generation.court_ranges",
@@ -1092,9 +1104,22 @@ def _build_field_state(
 ) -> ConfigEditorFieldState:
     definition = CONFIG_EDITOR_FIELDS_BY_PATH[path]
     value = get_payload_value(payload, path)
+    linked_value = (
+        get_payload_value(payload, definition.linked_path)
+        if definition.linked_path
+        else None
+    )
     return ConfigEditorFieldState(
         definition=definition,
         value=value,
-        is_default_value=value == definition.default_value,
+        is_default_value=(
+            value == definition.default_value
+            and (
+                definition.linked_path is None
+                or linked_value == definition.linked_default_value
+            )
+        ),
         is_present_in_payload=value is not None,
+        linked_value=linked_value,
+        linked_is_present_in_payload=linked_value is not None,
     )

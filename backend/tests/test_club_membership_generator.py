@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 
 
@@ -327,6 +327,148 @@ def test_generate_for_batch_registrations_assigns_only_new_players(session):
     assert new_membership_player_ids == {player.id for player in new_players}
 
 
+def test_generate_for_run_treats_club_capacity_as_hard_limit(session):
+    payload = test_payload(4)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 0
+    generation_run = GenerationRun(
+        generation_name="hard cap",
+        seed_value=123,
+        simulation_version="test",
+        parameter_snapshot=payload,
+        status="pending",
+    )
+    session.add(generation_run)
+    session.flush()
+    session.add_all(
+        [
+            Club(
+                club_name="Region 1 Club A",
+                region_id=1,
+                club_type="public_park",
+                competitiveness_level="recreational",
+                member_capacity=1,
+                founding_date=date(2010, 1, 1),
+            ),
+            Club(
+                club_name="Region 1 Club B",
+                region_id=1,
+                club_type="public_park",
+                competitiveness_level="recreational",
+                member_capacity=1,
+                founding_date=date(2010, 1, 1),
+            ),
+        ]
+    )
+    session.flush()
+    session.add_all(
+        [
+            Player(
+                first_name=f"Player{index}",
+                last_name="Test",
+                birth_date=date(1980, 1, 1),
+                home_region_id=1,
+                registration_date=date(2024, 1, 1),
+                player_status="ACTIVE",
+                generation_run_id=generation_run.id,
+            )
+            for index in range(4)
+        ]
+    )
+    session.commit()
+
+    result = ClubMembershipGenerator().generate_for_run(
+        generation_run_id=generation_run.id,
+        session=session,
+    )
+
+    assert result.players_evaluated == 4
+    assert result.affiliated_player_count == 2
+    assert result.unaffiliated_player_count == 2
+    assert result.rows_loaded == 2
+    club_ids = [club.id for club in session.query(Club).order_by(Club.id)]
+    assert _club_membership_counts(session) == {club_id: 1 for club_id in club_ids}
+
+
+def test_generate_for_batch_registrations_leaves_players_unaffiliated_when_region_is_full(session):
+    payload = test_payload(2)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 0
+    generation_run = GenerationRun(
+        generation_name="batch hard cap",
+        seed_value=123,
+        simulation_version="test",
+        parameter_snapshot=payload,
+        status="pending",
+    )
+    session.add(generation_run)
+    session.flush()
+    club = Club(
+        club_name="Region 1 Club A",
+        region_id=1,
+        club_type="public_park",
+        competitiveness_level="recreational",
+        member_capacity=1,
+        founding_date=date(2010, 1, 1),
+    )
+    session.add(club)
+    session.flush()
+
+    existing_player = Player(
+        first_name="Existing",
+        last_name="Test",
+        birth_date=date(1980, 1, 1),
+        home_region_id=1,
+        registration_date=date(2024, 1, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(existing_player)
+    session.flush()
+    session.add(
+        ClubMembership(
+            player_id=existing_player.id,
+            club_id=club.id,
+            membership_type="member",
+            start_date=existing_player.registration_date,
+            is_primary=True,
+            generation_run_id=generation_run.id,
+        )
+    )
+
+    new_player = Player(
+        first_name="New",
+        last_name="Test",
+        birth_date=date(1985, 1, 1),
+        home_region_id=1,
+        registration_date=date(2024, 2, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(new_player)
+    session.flush()
+    session.add(
+        PlayerRegistration(
+            player_id=new_player.id,
+            batch_id=2,
+            registration_month=date(2024, 2, 1),
+        )
+    )
+    session.commit()
+
+    result = ClubMembershipGenerator().generate_for_batch_registrations(
+        generation_run_id=generation_run.id,
+        batch_id=2,
+        session=session,
+    )
+
+    assert result.players_evaluated == 1
+    assert result.affiliated_player_count == 0
+    assert result.unaffiliated_player_count == 1
+    assert result.rows_loaded == 0
+    assert _club_membership_counts(session) == {club.id: 1}
+
+
 def test_generate_for_run_requires_players(session):
     generation_run = GenerationRun(
         generation_name="empty",
@@ -403,3 +545,13 @@ def _secondary_player_count(session):
         .distinct()
         .count()
     )
+
+
+def _club_membership_counts(session):
+    return {
+        club_id: membership_count
+        for club_id, membership_count in session.query(
+            ClubMembership.club_id,
+            func.count(ClubMembership.id),
+        ).group_by(ClubMembership.club_id)
+    }

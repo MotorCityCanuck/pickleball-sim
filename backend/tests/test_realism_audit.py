@@ -47,7 +47,9 @@ def session():
                 batch_month date not null,
                 batch_sequence integer not null,
                 batch_type varchar(30) not null default 'historical_initial',
-                processing_status varchar(30) not null default 'succeeded'
+                processing_status varchar(30) not null default 'succeeded',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
             )
             """
         )
@@ -297,9 +299,9 @@ def seed_audit_dataset(session) -> None:
         text(
             """
             INSERT INTO monthly_batches (
-                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
             ) VALUES
-                (10, 1, '2026-01-01', 1, 'historical_initial', 'succeeded')
+                (10, 1, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-01-15 12:00:00', '2026-01-15 12:00:00')
             """
         )
     )
@@ -706,15 +708,70 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
     )
 
 
+def test_player_age_distribution_uses_batch_created_at_instead_of_registration_date(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            UPDATE players
+            SET registration_date = '2017-01-01'
+            WHERE id = 1
+            """
+        )
+    )
+    session.commit()
+    runner = RealismAuditRunner(session)
+
+    results = runner.run(query_names=["player_age_distribution"])
+
+    assert results[0].rows == (
+        {
+            "age_bucket": "18_29",
+            "player_count": 2,
+            "player_pct": 25.0,
+            "configured_pct": 25.0,
+            "pct_point_drift": 0.0,
+        },
+        {
+            "age_bucket": "30_44",
+            "player_count": 1,
+            "player_pct": 12.5,
+            "configured_pct": 12.5,
+            "pct_point_drift": 0.0,
+        },
+        {
+            "age_bucket": "45_59",
+            "player_count": 2,
+            "player_pct": 25.0,
+            "configured_pct": 25.0,
+            "pct_point_drift": 0.0,
+        },
+        {
+            "age_bucket": "60_74",
+            "player_count": 3,
+            "player_pct": 37.5,
+            "configured_pct": 37.5,
+            "pct_point_drift": 0.0,
+        },
+        {
+            "age_bucket": "75_plus",
+            "player_count": 0,
+            "player_pct": 0.0,
+            "configured_pct": 0.0,
+            "pct_point_drift": 0.0,
+        },
+    )
+
+
 def test_realism_audit_runner_uses_latest_batch_when_scope_is_omitted(session):
     seed_audit_dataset(session)
     session.execute(
         text(
             """
             INSERT INTO monthly_batches (
-                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
             ) VALUES
-                (11, 1, '2026-02-01', 2, 'future_increment', 'pending')
+                (11, 1, '2026-02-01', 2, 'future_increment', 'pending', '2026-02-15 12:00:00', '2026-02-15 12:00:00')
             """
         )
     )
@@ -793,10 +850,10 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
         text(
             """
             INSERT INTO monthly_batches (
-                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
             ) VALUES
-                (20, 2, '2026-03-01', 1, 'historical_initial', 'succeeded'),
-                (21, 2, '2026-04-01', 2, 'future_increment', 'running')
+                (20, 2, '2026-03-01', 1, 'historical_initial', 'succeeded', '2026-03-15 12:00:00', '2026-03-15 12:00:00'),
+                (21, 2, '2026-04-01', 2, 'future_increment', 'running', '2026-04-15 12:00:00', '2026-04-15 12:00:00')
             """
         )
     )
@@ -810,6 +867,41 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
     assert float(params["weekend_concentration_max"]) == pytest.approx(0.68)
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(180.0)
     assert params["max_daily_matches_per_team"] == 3
+
+
+def test_realism_audit_parameter_resolution_skips_newer_runs_without_batches(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, parameter_snapshot, status, created_at, updated_at
+            ) VALUES (
+                2,
+                'New Empty Run',
+                99,
+                'v2',
+                '{
+                    "validation": {
+                        "weekend_concentration_min": 0.52,
+                        "weekend_concentration_max": 0.68
+                    }
+                }',
+                'running',
+                '2026-03-01 00:00:00',
+                '2026-03-01 00:00:00'
+            )
+            """
+        )
+    )
+    session.commit()
+
+    params = resolve_realism_audit_parameters(session)
+
+    assert params["generation_run_id"] == 1
+    assert params["batch_id"] == 10
+    assert float(params["weekend_concentration_min"]) == pytest.approx(0.45)
+    assert float(params["weekend_concentration_max"]) == pytest.approx(0.55)
 
 
 def test_realism_audit_service_returns_scope_metadata(session):

@@ -880,6 +880,8 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
     assert 'value="Editable config"' in body
     assert "Supported raw seed datasets" in body
     assert "Club Facilities and Membership Policy" in body
+    assert "Club size distribution and capacity ranges" in body
+    assert "Distribution" in body
     assert "Club court ranges" in body
     assert "Multi-club membership rate" in body
     assert "Name Assignment" not in body

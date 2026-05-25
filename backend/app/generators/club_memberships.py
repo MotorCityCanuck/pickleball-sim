@@ -95,9 +95,9 @@ class ClubCandidate:
 
 
 class ClubIndex:
-    """Cached weighted club samplers by region."""
+    """Cached club candidates with mutable in-run capacity tracking."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, generation_run_id: int) -> None:
         clubs = [
             ClubCandidate(
                 id=club_id,
@@ -112,8 +112,17 @@ class ClubIndex:
         for club in clubs:
             self.clubs_by_region.setdefault(club.region_id, []).append(club)
         self.all_clubs = clubs
-        self.region_samplers: dict[int, WeightedSampler[ClubCandidate]] = {}
-        self.all_sampler = self._sampler(clubs)
+        self._clubs_by_id = {club.id: club for club in clubs}
+        self._membership_counts = {
+            club.id: 0
+            for club in clubs
+        }
+        for club_id, membership_count in session.execute(
+            select(ClubMembership.club_id, func.count())
+            .where(ClubMembership.generation_run_id == generation_run_id)
+            .group_by(ClubMembership.club_id)
+        ):
+            self._membership_counts[int(club_id)] = int(membership_count)
 
     def choose_primary(self, rng: random.Random, region_id: int) -> ClubCandidate | None:
         return self.choose_in_region(rng, region_id, excluded_ids=set())
@@ -128,7 +137,11 @@ class ClubIndex:
     ) -> ClubCandidate | None:
         if same_region:
             return self.choose_in_region(rng, region_id, excluded_ids=excluded_ids)
-        candidates = [club for club in self.all_clubs if club.id not in excluded_ids]
+        candidates = [
+            club
+            for club in self.all_clubs
+            if club.id not in excluded_ids and self._has_capacity(club)
+        ]
         sampler = self._sampler(candidates)
         if sampler is None:
             return None
@@ -144,12 +157,22 @@ class ClubIndex:
         candidates = [
             club
             for club in self.clubs_by_region.get(region_id, [])
-            if club.id not in excluded_ids
+            if club.id not in excluded_ids and self._has_capacity(club)
         ]
         sampler = self._sampler(candidates)
         if sampler is None:
             return None
         return sampler.choose(rng)
+
+    def register_membership(self, club_id: int) -> None:
+        if club_id not in self._membership_counts:
+            raise ValueError(f"Unknown club id {club_id}")
+        self._membership_counts[club_id] += 1
+
+    def _has_capacity(self, club: ClubCandidate) -> bool:
+        if club.member_capacity is None or club.member_capacity <= 0:
+            return True
+        return self._membership_counts.get(club.id, 0) < club.member_capacity
 
     @staticmethod
     def _sampler(
@@ -334,7 +357,7 @@ class ClubMembershipGenerator:
         if generation_run_id is None:
             raise ValueError("Generation run must be persisted before club assignment")
 
-        club_index = ClubIndex(session)
+        club_index = ClubIndex(session, generation_run_id=generation_run_id)
         if not club_index.all_clubs:
             raise ValueError("No clubs are available for club assignment")
 
@@ -367,6 +390,7 @@ class ClubMembershipGenerator:
                     is_primary=True,
                 )
             )
+            club_index.register_membership(primary_club.id)
 
             target_membership_count = _target_membership_count(rng, config)
             if target_membership_count > 1:
@@ -394,6 +418,7 @@ class ClubMembershipGenerator:
                             is_primary=False,
                         )
                     )
+                    club_index.register_membership(secondary_club.id)
                     added_secondary = True
                 if added_secondary:
                     multi_club_count += 1

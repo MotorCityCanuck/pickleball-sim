@@ -181,6 +181,7 @@ def _field_path_for_module_error(label: str, message: str) -> str | None:
 
 MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     "club_generation": (
+        ("club_size_distribution", "club_generation.capacity_ranges"),
         ("ratio", "club_generation.indoor_court_ratios"),
         ("capacity", "club_generation.capacity_ranges"),
         ("court", "club_generation.court_ranges"),

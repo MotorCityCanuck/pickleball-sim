@@ -8,6 +8,7 @@
         data-config-control
         data-config-type="{{ definition.control_type }}"
         data-config-path="{{ definition.path }}"
+        {% if definition.linked_path %}data-config-linked-path="{{ definition.linked_path }}"{% endif %}
         {% if field_invalid %}data-config-invalid="true"{% endif %}
         style="border:1px solid {% if field_invalid %}#e07a75{% else %}#d8dde6{% endif %}; border-radius:10px; padding:14px; display:grid; gap:10px; background:{% if field_invalid %}#fff6f5{% else %}#fcfcfd{% endif %};"
     >
@@ -157,6 +158,50 @@
                 {% for range_key, range_value in current_value.items() %}
                     <div style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 120px) minmax(0, 120px); gap:12px; align-items:center;">
                         <span style="color:#1d2433;">{{ range_key.replace('_', ' ')|title }}</span>
+                        <input
+                            data-config-subkey="{{ range_key }}"
+                            data-config-bound="min"
+                            type="number"
+                            inputmode="decimal"
+                            step="1"
+                            value="{{ range_value[0] if range_value|length > 0 else '' }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
+                        >
+                        <input
+                            data-config-subkey="{{ range_key }}"
+                            data-config-bound="max"
+                            type="number"
+                            inputmode="decimal"
+                            step="1"
+                            value="{{ range_value[1] if range_value|length > 1 else '' }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
+                        >
+                    </div>
+                {% endfor %}
+            </div>
+        {% elif definition.control_type == "weighted_range_table" %}
+            {% set linked_value = field.linked_value if field.linked_is_present_in_payload else definition.linked_default_value %}
+            <div style="display:grid; gap:8px;">
+                <div style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 120px) minmax(0, 120px) minmax(0, 120px); gap:12px; font-size:12px; color:#5a6477; text-transform:uppercase;">
+                    <span>Bucket</span>
+                    <span>Distribution</span>
+                    <span>Min</span>
+                    <span>Max</span>
+                </div>
+                {% for range_key, range_value in current_value.items() %}
+                    <div style="display:grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 120px) minmax(0, 120px) minmax(0, 120px); gap:12px; align-items:center;">
+                        <span style="color:#1d2433;">{{ range_key.replace('_', ' ')|title }}</span>
+                        <input
+                            data-config-weight-key="{{ range_key }}"
+                            type="number"
+                            inputmode="decimal"
+                            step="0.001"
+                            value="{{ linked_value.get(range_key, 0) if linked_value else 0 }}"
+                            title="{{ tooltip }}"
+                            style="width:100%; border:1px solid {% if field_invalid %}#e07a75{% else %}#d6d9df{% endif %}; border-radius:8px; padding:10px 12px;"
+                        >
                         <input
                             data-config-subkey="{{ range_key }}"
                             data-config-bound="min"
@@ -583,6 +628,27 @@
                 });
                 return [path, ranges];
             }
+            if (controlType === "weighted_range_table") {
+                const linkedPath = control.dataset.configLinkedPath;
+                const ranges = {};
+                const weights = {};
+                control.querySelectorAll("[data-config-subkey]").forEach((input) => {
+                    const key = input.dataset.configSubkey;
+                    const bound = input.dataset.configBound;
+                    if (!ranges[key]) {
+                        ranges[key] = [null, null];
+                    }
+                    const numericValue = input.value === "" ? null : Number.parseFloat(input.value);
+                    ranges[key][bound === "min" ? 0 : 1] = numericValue;
+                });
+                control.querySelectorAll("[data-config-weight-key]").forEach((input) => {
+                    weights[input.dataset.configWeightKey] = Number.parseFloat(input.value || "0");
+                });
+                return [
+                    [path, ranges],
+                    [linkedPath, weights],
+                ];
+            }
             if (controlType === "integer" || controlType === "decimal" || controlType === "slider") {
                 const input = control.querySelector("[data-config-input]");
                 return [path, parseNumeric(input?.value || "", controlType)];
@@ -682,8 +748,11 @@
 
             try {
                 form.querySelectorAll("[data-config-control]").forEach((control) => {
-                    const [path, value] = serializeControl(control);
-                    setPath(payload, path, value);
+                    const entries = serializeControl(control);
+                    const normalizedEntries = Array.isArray(entries[0]) ? entries : [entries];
+                    normalizedEntries.forEach(([path, value]) => {
+                        setPath(payload, path, value);
+                    });
                 });
             } catch (error) {
                 if (showAlertOnError) {

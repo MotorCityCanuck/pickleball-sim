@@ -1,4 +1,5 @@
 """Tests for pickleball club seed normalization."""
+from decimal import Decimal
 from pathlib import Path
 import sys
 
@@ -219,11 +220,13 @@ def insert_region(
     state_province_code: str,
     region_name: str,
     selection_probability: str,
+    population: int = 1_000_000,
 ) -> Region:
     region = Region(
         country_code=country_code,
         state_province_code=state_province_code,
         region_name=region_name,
+        population=population,
         selection_probability=selection_probability,
     )
     session.add(region)
@@ -438,6 +441,7 @@ def test_club_generation_config_reads_json_payload_values():
     config = ClubGenerationConfig.from_payload(
         {
             "club_generation": {
+                "club_size_distribution": {"tiny": 0.5, "small": 0.2, "medium": 0.15, "large": 0.1, "mega": 0.05},
                 "capacity_ranges": {"small": [100, 100]},
                 "court_ranges": {"small": [10, 10]},
                 "indoor_court_ratios": {"public_park": 0.5},
@@ -445,5 +449,106 @@ def test_club_generation_config_reads_json_payload_values():
         }
     )
 
+    assert config.club_size_distribution["tiny"] == Decimal("0.5")
     assert capacity_for("Small", 101, config) == 100
     assert court_counts_for("public_park", "Small", 101, config) == (5, 5)
+
+
+def test_club_generation_config_rejects_invalid_club_size_distribution_total():
+    with pytest.raises(ValueError, match="club_size_distribution weights must sum to 1.0"):
+        ClubGenerationConfig.from_payload(
+            {
+                "club_generation": {
+                    "club_size_distribution": {
+                        "tiny": 0.5,
+                        "small": 0.2,
+                        "medium": 0.2,
+                        "large": 0.1,
+                        "mega": 0.1,
+                    }
+                }
+            }
+        )
+
+
+def test_mega_club_is_downgraded_outside_top_ten_regions_by_country(session):
+    for index in range(10):
+        insert_region(
+            session,
+            country_code="US",
+            state_province_code="TX",
+            region_name=f"Top {index + 1}",
+            population=2_000_000 - index,
+            selection_probability="0.0",
+        )
+    selected_region = insert_region(
+        session,
+        country_code="US",
+        state_province_code="TX",
+        region_name="Small District",
+        population=10_000,
+        selection_probability="1.0",
+    )
+    insert_distribution(
+        session,
+        country_code="US",
+        state_province_code="TX",
+        target_club_count=1,
+    )
+    insert_club_name(
+        session,
+        club_seed=303,
+        country_code="US",
+        state_province_code="TX",
+        club_name="Mega But Not Eligible",
+        club_type="Tournament Club",
+        size_tier="Mega",
+    )
+
+    PickleballClubNormalizer(config_payload={"club_generation": {"capacity_ranges": {"large": [200, 200], "mega": [900, 900]}}}).normalize(
+        replace_production=True,
+        session=session,
+    )
+
+    club = session.query(Club).one()
+    assert club.region_id == selected_region.id
+    assert club.member_capacity == 200
+    assert club.competitiveness_level == "elite"
+
+
+def test_mega_club_is_allowed_in_top_ten_regions_by_country(session):
+    selected_region = insert_region(
+        session,
+        country_code="CA",
+        state_province_code="ON",
+        region_name="Toronto",
+        population=6_000_000,
+        selection_probability="1.0",
+    )
+    insert_distribution(
+        session,
+        country_code="CA",
+        state_province_code="ON",
+        target_club_count=1,
+    )
+    insert_club_name(
+        session,
+        club_seed=404,
+        country_code="CA",
+        state_province_code="ON",
+        club_name="Eligible Mega Club",
+        club_type="Tournament Club",
+        size_tier="Mega",
+    )
+
+    PickleballClubNormalizer(
+        config_payload={"club_generation": {"capacity_ranges": {"mega": [900, 900]}}}
+    ).normalize(
+        replace_production=True,
+        session=session,
+    )
+
+    club = session.query(Club).one()
+    assert club.region_id == selected_region.id
+    assert club.member_capacity == 900
+    assert club.competitiveness_level == "elite"

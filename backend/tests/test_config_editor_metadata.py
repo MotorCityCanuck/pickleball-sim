@@ -51,6 +51,8 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["team_formation"]["rating_gap_max"] = 1750.0
     payload["club_generation"]["cross_region_assignment_enabled"] = True
     payload["club_generation"]["multi_club_membership_rate"] = 0.12
+    payload["club_generation"]["club_size_distribution"]["tiny"] = 0.5
+    payload["club_generation"]["capacity_ranges"]["tiny"] = [12, 24]
     payload["match_scheduling"]["matches_per_team_per_month"] = 5.5
     payload["player_generation"]["monthly_player_inactivation_rate"] = 0.07
     payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
@@ -100,6 +102,8 @@ def test_build_config_editor_sections_attaches_current_values():
         is True
     )
     assert field_states["club_generation.cross_region_assignment_enabled"].is_present_in_payload is True
+    assert field_states["club_generation.capacity_ranges"].value["tiny"] == [12, 24]
+    assert field_states["club_generation.capacity_ranges"].linked_value["tiny"] == 0.5
 
 
 def test_get_payload_value_returns_none_for_missing_path():

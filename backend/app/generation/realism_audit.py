@@ -149,18 +149,24 @@ def _post_process_match_type_distribution(
 
 PLAYER_AGE_DISTRIBUTION_SQL = {
     "sqlite": """
-        WITH player_ages AS (
+        WITH batch_context AS (
+            SELECT
+                COALESCE(date(b.created_at), b.batch_month) AS age_reference_date
+            FROM monthly_batches b
+            WHERE b.id = :batch_id
+        ),
+        player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
+                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
                         THEN 'under_18'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
+                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
                         THEN '18_29'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
+                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
                         THEN '30_44'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
+                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
                         THEN '45_59'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
+                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
                         THEN '60_74'
                     ELSE '75_plus'
                 END AS age_bucket
@@ -187,18 +193,24 @@ PLAYER_AGE_DISTRIBUTION_SQL = {
             END
     """,
     "postgresql": """
-        WITH player_ages AS (
+        WITH batch_context AS (
+            SELECT
+                COALESCE(CAST(b.created_at AS DATE), b.batch_month) AS age_reference_date
+            FROM monthly_batches b
+            WHERE b.id = :batch_id
+        ),
+        player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 18
+                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 18
                         THEN 'under_18'
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 30
+                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 30
                         THEN '18_29'
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 45
+                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 45
                         THEN '30_44'
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 60
+                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 60
                         THEN '45_59'
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 75
+                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 75
                         THEN '60_74'
                     ELSE '75_plus'
                 END AS age_bucket
@@ -373,7 +385,7 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         category="players",
         description="Observed player age-bucket distribution versus configured weights.",
         sql=PLAYER_AGE_DISTRIBUTION_SQL,
-        required_params=("generation_run_id",),
+        required_params=("generation_run_id", "batch_id"),
         tags=("players", "distribution", "age"),
         related_config_keys=("player_generation.age_distribution",),
         post_process=_post_process_player_age_distribution,
@@ -1729,6 +1741,19 @@ def _sql_value(value: Any) -> Any:
 
 
 def _latest_generation_run_id(session: Session) -> int | None:
+    latest_auditable_run_id = session.scalar(
+        select(GenerationRun.id)
+        .where(
+            select(MonthlyBatch.id)
+            .where(MonthlyBatch.generation_run_id == GenerationRun.id)
+            .exists()
+        )
+        .order_by(GenerationRun.created_at.desc(), GenerationRun.id.desc())
+        .limit(1)
+    )
+    if latest_auditable_run_id is not None:
+        return latest_auditable_run_id
+
     return session.scalar(
         select(GenerationRun.id)
         .order_by(GenerationRun.created_at.desc(), GenerationRun.id.desc())

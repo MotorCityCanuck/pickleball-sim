@@ -134,11 +134,13 @@ def game_score(
         winner_score = loser_score + 2
     else:
         max_loser_score = max(0, target - 2)
-        min_loser_score = max(0, target - 8)
-        center = min_loser_score + int(
-            float(closeness) * (max_loser_score - min_loser_score)
+        center = int(
+            _non_extended_loser_score_center(
+                closeness,
+                target=target,
+            ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
         )
-        spread = max(1, int(float(config.score_noise_std_dev)))
+        spread = _score_spread(config.score_noise_std_dev)
         loser_score = max(
             0,
             min(max_loser_score, center + rng.randint(-spread, spread)),
@@ -193,10 +195,29 @@ def _expected_loser_score(
         Decimal("1")
         - abs(expected_team_one_win_probability - Decimal("0.5")) * 2
     )
-    min_loser_score = max(Decimal("0"), target - Decimal("8"))
-    max_loser_score = max(Decimal("0"), target - Decimal("2"))
-    value = min_loser_score + closeness * (max_loser_score - min_loser_score)
-    return value.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    return _non_extended_loser_score_center(
+        closeness,
+        target=int(target),
+    ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
+def _non_extended_loser_score_center(closeness: Decimal, *, target: int) -> Decimal:
+    """Bias expected loser scores downward faster for mismatched games."""
+    target_score = Decimal(target)
+    max_loser_score = max(Decimal("0"), target_score - Decimal("2"))
+    min_loser_score = min(
+        max_loser_score,
+        target_score * Decimal("0.15"),
+    )
+    return min_loser_score + (max_loser_score - min_loser_score) * (closeness ** 2)
+
+
+def _score_spread(score_noise_std_dev: Decimal) -> int:
+    """Round configured noise to a practical integer score spread."""
+    return max(
+        1,
+        int(score_noise_std_dev.quantize(Decimal("1"), rounding=ROUND_HALF_UP)),
+    )
 
 
 def _extension_extra_pairs(rng: random.Random, closeness: Decimal) -> int:

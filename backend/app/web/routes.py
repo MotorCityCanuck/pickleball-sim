@@ -794,6 +794,7 @@ def _control_type_guidance(control_type: object) -> str | None:
         "multi_select": "Valid input: select one or more listed options.",
         "weight_table": "Valid input: numeric weights for each row.",
         "range_table": "Valid input: numeric min/max pair for each row.",
+        "weighted_range_table": "Valid input: numeric distribution weights plus min/max pairs for each row.",
         "json": "Valid input: valid JSON object.",
     }
     return guidance_by_type.get(control_type if isinstance(control_type, str) else "")
@@ -804,19 +805,21 @@ def _validation_messages_by_path(
     issues: tuple[object, ...],
 ) -> dict[str, tuple[str, ...]]:
     messages: dict[str, list[str]] = {}
-    field_paths = {
-        field.definition.path
-        for section in sections
-        for field in section.fields
-    }
     for issue in issues:
         issue_path = getattr(issue, "path", None)
         issue_message = getattr(issue, "message", None)
         if not isinstance(issue_path, str) or not issue_message:
             continue
-        for field_path in field_paths:
-            if _issue_matches_field(issue_path, field_path):
-                messages.setdefault(field_path, []).append(str(issue_message))
+        for section in sections:
+            for field in section.fields:
+                field_key = getattr(field.definition, "path", None)
+                if not isinstance(field_key, str) or not field_key:
+                    continue
+                if any(
+                    _issue_matches_field(issue_path, field_path)
+                    for field_path in _field_validation_paths(field)
+                ):
+                    messages.setdefault(field_key, []).append(str(issue_message))
     return {
         path: tuple(dict.fromkeys(path_messages))
         for path, path_messages in messages.items()
@@ -829,7 +832,11 @@ def _section_issue_counts(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for section in sections:
-        field_paths = [field.definition.path for field in section.fields]
+        field_paths = [
+            field_path
+            for field in section.fields
+            for field_path in _field_validation_paths(field)
+        ]
         count = sum(
             1
             for issue in issues
@@ -846,3 +853,19 @@ def _issue_matches_field(issue_path: str, field_path: str) -> bool:
         or issue_path.startswith(f"{field_path}.")
         or field_path.startswith(f"{issue_path}.")
     )
+
+
+def _field_validation_paths(field: object) -> tuple[str, ...]:
+    definition = getattr(field, "definition", None)
+    primary_path = getattr(definition, "path", None)
+    validation_paths = getattr(definition, "validation_paths", ()) or ()
+    resolved_paths = tuple(
+        path
+        for path in validation_paths
+        if isinstance(path, str) and path
+    )
+    if resolved_paths:
+        return resolved_paths
+    if isinstance(primary_path, str) and primary_path:
+        return (primary_path,)
+    return ()

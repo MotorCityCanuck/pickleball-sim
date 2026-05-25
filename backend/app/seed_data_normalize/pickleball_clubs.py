@@ -52,11 +52,20 @@ DEFAULT_INDOOR_COURT_RATIOS = {
     "default": Decimal("0.30"),
 }
 
+DEFAULT_CLUB_SIZE_DISTRIBUTION = {
+    "tiny": Decimal("0.35"),
+    "small": Decimal("0.40"),
+    "medium": Decimal("0.20"),
+    "large": Decimal("0.04"),
+    "mega": Decimal("0.01"),
+}
+
 
 @dataclass(frozen=True)
 class ClubGenerationConfig:
     """Configuration values used by club normalization."""
 
+    club_size_distribution: dict[str, Decimal]
     capacity_ranges: dict[str, tuple[int, int]]
     court_ranges: dict[str, tuple[int, int]]
     indoor_court_ratios: dict[str, Decimal]
@@ -67,6 +76,11 @@ class ClubGenerationConfig:
         source = payload or DEFAULT_CONFIG_PAYLOAD
         club_config = source.get("club_generation", {})
         return cls(
+            club_size_distribution=_weight_map(
+                club_config.get("club_size_distribution"),
+                DEFAULT_CLUB_SIZE_DISTRIBUTION,
+                label="club_size_distribution",
+            ),
             capacity_ranges=_range_map(
                 club_config.get("capacity_ranges"),
                 CAPACITY_RANGES,
@@ -119,6 +133,7 @@ class PickleballClubNormalizer:
             )
             names_by_scope = load_names_by_scope(active_session)
             regions_by_scope = load_regions_by_scope(active_session)
+            mega_eligible_region_ids = load_mega_eligible_region_ids(regions_by_scope)
             validate_distributions(distributions, regions_by_scope)
 
             delete_result = active_session.execute(delete(Club))
@@ -146,15 +161,20 @@ class PickleballClubNormalizer:
                         seed=f"{candidate.club_seed}|{distribution.country_code}|"
                         f"{distribution.state_province_code}|{index}",
                     )
+                    size_tier = constrain_size_tier(
+                        candidate.size_tier,
+                        region=region,
+                        mega_eligible_region_ids=mega_eligible_region_ids,
+                    )
                     club_type = map_club_type(candidate.club_type)
                     member_capacity = capacity_for(
-                        candidate.size_tier,
+                        size_tier,
                         candidate.club_seed,
                         self.config,
                     )
                     indoor_courts, outdoor_courts = court_counts_for(
                         club_type,
-                        candidate.size_tier,
+                        size_tier,
                         candidate.club_seed,
                         self.config,
                     )
@@ -165,12 +185,12 @@ class PickleballClubNormalizer:
                             club_type=club_type,
                             competitiveness_level=competitiveness_level_for(
                                 candidate.club_type,
-                                candidate.size_tier,
+                                size_tier,
                             ),
                             member_capacity=member_capacity,
                             founding_date=founding_date_for(
                                 club_type,
-                                candidate.size_tier,
+                                size_tier,
                                 candidate.club_seed,
                             ),
                             indoor_court_count=indoor_courts,
@@ -247,6 +267,33 @@ def load_regions_by_scope(session: Session) -> dict[tuple[str, str], list[Region
     return regions_by_scope
 
 
+def load_mega_eligible_region_ids(
+    regions_by_scope: dict[tuple[str, str], list[Region]],
+) -> set[int]:
+    """Return region ids eligible to host Mega clubs."""
+    regions_by_country: dict[str, list[Region]] = {}
+    for regions in regions_by_scope.values():
+        for region in regions:
+            if region.id is None:
+                continue
+            regions_by_country.setdefault(region.country_code, []).append(region)
+
+    eligible_ids: set[int] = set()
+    for regions in regions_by_country.values():
+        ranked_regions = sorted(
+            regions,
+            key=lambda region: (
+                -(region.population or 0),
+                region.region_name,
+                region.id or 0,
+            ),
+        )
+        for region in ranked_regions[:10]:
+            if region.id is not None and (region.population or 0) > 0:
+                eligible_ids.add(int(region.id))
+    return eligible_ids
+
+
 def validate_distributions(
     distributions: list[RawPickleballClubDistribution],
     regions_by_scope: dict[tuple[str, str], list[Region]],
@@ -300,6 +347,20 @@ def choose_region(regions: list[Region], *, seed: str) -> Region:
         if target < cumulative:
             return region
     return regions[-1]
+
+
+def constrain_size_tier(
+    size_tier: str | None,
+    *,
+    region: Region,
+    mega_eligible_region_ids: set[int],
+) -> str | None:
+    """Constrain size tiers against region-level eligibility rules."""
+    if size_tier != "Mega":
+        return size_tier
+    if region.id is not None and int(region.id) in mega_eligible_region_ids:
+        return size_tier
+    return "Large"
 
 
 def map_club_type(raw_club_type: str | None) -> str:
@@ -426,3 +487,25 @@ def _decimal_map(
             raise ValueError(f"{key} ratio must be between 0 and 1")
         ratios[key] = parsed
     return ratios
+
+
+def _weight_map(
+    value: dict[str, int | float | str] | None,
+    fallback: dict[str, Decimal],
+    *,
+    label: str,
+) -> dict[str, Decimal]:
+    if value is None:
+        return dict(fallback)
+
+    weights = dict(fallback)
+    for key, raw_weight in value.items():
+        parsed = Decimal(str(raw_weight))
+        if parsed < 0 or parsed > 1:
+            raise ValueError(f"{label}.{key} must be between 0 and 1")
+        weights[key.lower()] = parsed
+
+    total = sum(weights.values())
+    if abs(total - Decimal("1")) > Decimal("0.01"):
+        raise ValueError(f"{label} weights must sum to 1.0")
+    return weights
