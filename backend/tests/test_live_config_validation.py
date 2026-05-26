@@ -27,3 +27,14 @@ def test_validate_live_config_payload_rejects_invalid_club_size_distribution_tot
     assert len(issues) == 1
     assert issues[0].path == "club_generation.capacity_ranges"
     assert issues[0].message == "club_size_distribution weights must sum to 1.0"
+
+
+def test_validate_live_config_payload_maps_match_volume_noise_factor_errors():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["match_scheduling"]["match_volume_noise_factor"] = -0.1
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "match_scheduling.match_volume_noise_factor"
+    assert issues[0].message == "match_volume_noise_factor must be between 0 and 1"

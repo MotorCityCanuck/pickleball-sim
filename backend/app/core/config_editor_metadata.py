@@ -583,6 +583,43 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         basic_or_advanced="advanced",
     ),
     ConfigEditorFieldDefinition(
+        path="match_scheduling.monthly_matches_per_active_player_mean",
+        label="Monthly matches per active player mean",
+        control_type="decimal",
+        scope="synthetic",
+        description="Average monthly match load across active players before team-level scheduling is assembled.",
+        default_value=_path_default(
+            "match_scheduling.monthly_matches_per_active_player_mean"
+        ),
+        min_value=0.1,
+        step=0.1,
+    ),
+    ConfigEditorFieldDefinition(
+        path="match_scheduling.monthly_matches_per_active_player_std_dev",
+        label="Monthly matches per active player std dev",
+        control_type="decimal",
+        scope="synthetic",
+        description="Standard deviation for monthly player match volume, used to vary team match targets month to month.",
+        default_value=_path_default(
+            "match_scheduling.monthly_matches_per_active_player_std_dev"
+        ),
+        basic_or_advanced="advanced",
+        min_value=0.0,
+        step=0.1,
+    ),
+    ConfigEditorFieldDefinition(
+        path="match_scheduling.match_volume_noise_factor",
+        label="Match volume noise factor",
+        control_type="slider",
+        scope="synthetic",
+        description="Additional random jitter applied to monthly team match targets after the baseline volume calculation.",
+        default_value=_path_default("match_scheduling.match_volume_noise_factor"),
+        basic_or_advanced="advanced",
+        min_value=0.0,
+        max_value=0.5,
+        step=0.01,
+    ),
+    ConfigEditorFieldDefinition(
         path="match_scheduling.matches_per_team_per_month",
         label="Matches per team per month",
         control_type="decimal",
@@ -1003,6 +1040,9 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         title="Match Scheduling",
         description="Monthly match volume and day-of-week scheduling preferences used by match generation.",
         field_paths=(
+            "match_scheduling.monthly_matches_per_active_player_mean",
+            "match_scheduling.monthly_matches_per_active_player_std_dev",
+            "match_scheduling.match_volume_noise_factor",
             "match_scheduling.matches_per_team_per_month",
             "match_scheduling.saturday_weight",
             "match_scheduling.sunday_weight",

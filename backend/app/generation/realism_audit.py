@@ -1058,6 +1058,87 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("matches", "cadence", "teams"),
     ),
     RealismAuditQuery(
+        name="matches_per_player_distribution",
+        scope="batch",
+        category="matches",
+        description="Distribution of monthly match volume across active players in the batch.",
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                WHERE p.player_status = 'ACTIVE'
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id
+            ),
+            bucketed AS (
+                SELECT
+                    CASE
+                        WHEN match_count = 0 THEN '0'
+                        WHEN match_count BETWEEN 1 AND 2 THEN '1_2'
+                        WHEN match_count BETWEEN 3 AND 4 THEN '3_4'
+                        WHEN match_count BETWEEN 5 AND 8 THEN '5_8'
+                        ELSE '9_plus'
+                    END AS match_count_bucket
+                FROM player_match_counts
+            )
+            SELECT
+                match_count_bucket,
+                COUNT(*) AS player_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                    2
+                ) AS player_pct,
+                :monthly_matches_per_active_player_mean AS configured_match_mean,
+                :monthly_matches_per_active_player_std_dev AS configured_match_std_dev,
+                :match_volume_noise_factor AS configured_match_volume_noise_factor
+            FROM bucketed
+            GROUP BY match_count_bucket
+            ORDER BY
+                CASE match_count_bucket
+                    WHEN '0' THEN 0
+                    WHEN '1_2' THEN 1
+                    WHEN '3_4' THEN 2
+                    WHEN '5_8' THEN 3
+                    ELSE 4
+                END
+        """,
+        required_params=(
+            "batch_id",
+            "monthly_matches_per_active_player_mean",
+            "monthly_matches_per_active_player_std_dev",
+            "match_volume_noise_factor",
+        ),
+        tags=("matches", "cadence", "players"),
+        related_config_keys=(
+            "match_scheduling.monthly_matches_per_active_player_mean",
+            "match_scheduling.monthly_matches_per_active_player_std_dev",
+            "match_scheduling.match_volume_noise_factor",
+        ),
+    ),
+    RealismAuditQuery(
         name="daily_team_match_cap_violations",
         scope="batch",
         category="matches",
@@ -1611,6 +1692,21 @@ def resolve_realism_audit_parameters(
             payload,
             ("match_scheduling", "max_daily_matches_per_team"),
             2,
+        ),
+        "monthly_matches_per_active_player_mean": _payload_number(
+            payload,
+            ("match_scheduling", "monthly_matches_per_active_player_mean"),
+            Decimal("8.0"),
+        ),
+        "monthly_matches_per_active_player_std_dev": _payload_number(
+            payload,
+            ("match_scheduling", "monthly_matches_per_active_player_std_dev"),
+            Decimal("4.0"),
+        ),
+        "match_volume_noise_factor": _payload_number(
+            payload,
+            ("match_scheduling", "match_volume_noise_factor"),
+            Decimal("0.15"),
         ),
         "player_status_target_pcts": _payload_pct_map(
             payload,

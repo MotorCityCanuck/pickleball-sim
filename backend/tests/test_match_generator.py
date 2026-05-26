@@ -33,6 +33,9 @@ from app.models import (  # noqa: E402
 
 def test_payload():
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["match_scheduling"]["monthly_matches_per_active_player_mean"] = 2
+    payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = 0
+    payload["match_scheduling"]["match_volume_noise_factor"] = 0
     payload["match_scheduling"]["matches_per_team_per_month"] = 1
     payload["match_scheduling"]["max_daily_matches_per_team"] = 1
     payload["match_types"]["weights"] = {
@@ -410,6 +413,63 @@ def test_generate_for_batch_rejects_existing_matches(session):
         MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
 
 
+def test_generate_for_batch_varies_monthly_match_count_with_player_std_dev(session):
+    payload = test_payload()
+    payload["match_scheduling"]["matches_per_team_per_month"] = 4
+    payload["match_scheduling"]["monthly_matches_per_active_player_mean"] = 8
+    payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = 4
+    generation_run, first_batch = seed_match_data(session, payload=payload, team_count=8)
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="historical_initial",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.commit()
+
+    first_result = MatchGenerator().generate_for_batch(
+        batch_id=first_batch.id,
+        session=session,
+    )
+    second_result = MatchGenerator().generate_for_batch(
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    assert first_result.match_count != second_result.match_count
+
+
+def test_generate_for_batch_varies_monthly_match_count_with_noise_factor(session):
+    payload = test_payload()
+    payload["match_scheduling"]["matches_per_team_per_month"] = 4
+    payload["match_scheduling"]["monthly_matches_per_active_player_mean"] = 8
+    payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = 0
+    payload["match_scheduling"]["match_volume_noise_factor"] = 0.25
+    generation_run, first_batch = seed_match_data(session, payload=payload, team_count=8)
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="historical_initial",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.commit()
+
+    first_result = MatchGenerator().generate_for_batch(
+        batch_id=first_batch.id,
+        session=session,
+    )
+    second_result = MatchGenerator().generate_for_batch(
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    assert first_result.match_count != second_result.match_count
+
+
 def test_generate_for_batch_requires_active_teams(session):
     _, batch = seed_match_data(session, team_count=1)
     session.query(TeamMembership).delete()
@@ -426,6 +486,34 @@ def test_config_validates_match_type_weights():
 
     with pytest.raises(ValueError, match="sum to 1.0"):
         MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_monthly_matches_per_active_player_std_dev():
+    payload = test_payload()
+    payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = -1
+
+    with pytest.raises(ValueError, match="monthly_matches_per_active_player_std_dev"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_match_volume_noise_factor():
+    payload = test_payload()
+    payload["match_scheduling"]["match_volume_noise_factor"] = 1.1
+
+    with pytest.raises(ValueError, match="match_volume_noise_factor"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_derives_team_match_mean_from_player_mean():
+    payload = test_payload()
+    del payload["match_scheduling"]["matches_per_team_per_month"]
+    payload["match_scheduling"]["monthly_matches_per_active_player_mean"] = 7
+
+    config = MatchGenerationConfig.from_payload(payload)
+
+    assert config.monthly_matches_per_active_player_mean == Decimal("7")
+    assert config.matches_per_team_per_month == Decimal("3.5")
+    assert config.match_volume_noise_factor == Decimal("0")
 
 
 def test_config_validates_game_target_score():

@@ -249,6 +249,7 @@ Suggested groups:
   "match_scheduling": {
     "monthly_matches_per_active_player_mean": 8.0,
     "monthly_matches_per_active_player_std_dev": 4.0,
+    "match_volume_noise_factor": 0.15,
     "matches_per_team_per_month": 4.0,
     "weekend_concentration_bias": 1.75,
     "saturday_weight": 2.25,

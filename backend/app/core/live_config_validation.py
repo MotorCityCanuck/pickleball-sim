@@ -254,6 +254,18 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ),
     ),
     "matches": (
+        (
+            "monthly_matches_per_active_player_mean",
+            "match_scheduling.monthly_matches_per_active_player_mean",
+        ),
+        (
+            "monthly_matches_per_active_player_std_dev",
+            "match_scheduling.monthly_matches_per_active_player_std_dev",
+        ),
+        (
+            "match_volume_noise_factor",
+            "match_scheduling.match_volume_noise_factor",
+        ),
         ("max_daily_matches_per_team", "match_scheduling.max_daily_matches_per_team"),
         ("match_types.weights", "match_types.weights"),
         ("rating_band_width.", "matchmaking.rating_band_width"),

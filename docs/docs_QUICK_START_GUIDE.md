@@ -298,6 +298,8 @@ win_by_two_extension_rate: 0.10          # Chance of extended games
 
 # Scheduling
 monthly_matches_per_active_player_mean: 8.0   # Match frequency
+monthly_matches_per_active_player_std_dev: 4.0
+match_volume_noise_factor: 0.15
 weekend_concentration_bias: 1.75              # Weekend multiplier
 saturday_weight: 2.25                         # Saturday concentration
 

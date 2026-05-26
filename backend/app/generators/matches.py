@@ -32,6 +32,9 @@ from .players import WeightedSampler, _decimal
 class MatchGenerationConfig:
     """Match generation settings resolved from a configuration payload."""
 
+    monthly_matches_per_active_player_mean: Decimal
+    monthly_matches_per_active_player_std_dev: Decimal
+    match_volume_noise_factor: Decimal
     matches_per_team_per_month: Decimal
     saturday_weight: Decimal
     sunday_weight: Decimal
@@ -57,6 +60,41 @@ class MatchGenerationConfig:
         matchmaking = source.get("matchmaking", {})
         games = source.get("games_and_scores", {})
 
+        matches_per_team_per_month = scheduling.get("matches_per_team_per_month")
+        monthly_matches_per_active_player_mean = scheduling.get(
+            "monthly_matches_per_active_player_mean"
+        )
+        if matches_per_team_per_month is None:
+            if monthly_matches_per_active_player_mean is None:
+                resolved_team_matches = Decimal("4.0")
+            else:
+                resolved_team_matches = _positive_decimal(
+                    _decimal(monthly_matches_per_active_player_mean) / Decimal("2"),
+                    "monthly_matches_per_active_player_mean",
+                )
+        else:
+            resolved_team_matches = _positive_decimal(
+                matches_per_team_per_month,
+                "matches_per_team_per_month",
+            )
+
+        if monthly_matches_per_active_player_mean is None:
+            resolved_player_mean = resolved_team_matches * Decimal("2")
+        else:
+            resolved_player_mean = _positive_decimal(
+                monthly_matches_per_active_player_mean,
+                "monthly_matches_per_active_player_mean",
+            )
+
+        resolved_player_std_dev = _nonnegative_decimal(
+            scheduling.get("monthly_matches_per_active_player_std_dev", 4.0),
+            "monthly_matches_per_active_player_std_dev",
+        )
+        match_volume_noise_factor = _probability(
+            scheduling.get("match_volume_noise_factor", 0.15),
+            "match_volume_noise_factor",
+        )
+
         max_daily = int(scheduling.get("max_daily_matches_per_team", 2))
         if max_daily < 1:
             raise ValueError("max_daily_matches_per_team must be at least 1")
@@ -66,10 +104,10 @@ class MatchGenerationConfig:
             raise ValueError("game_target_score must be 11, 15, or 21")
 
         return cls(
-            matches_per_team_per_month=_positive_decimal(
-                scheduling.get("matches_per_team_per_month", 4.0),
-                "matches_per_team_per_month",
-            ),
+            monthly_matches_per_active_player_mean=resolved_player_mean,
+            monthly_matches_per_active_player_std_dev=resolved_player_std_dev,
+            match_volume_noise_factor=match_volume_noise_factor,
+            matches_per_team_per_month=resolved_team_matches,
             saturday_weight=_positive_decimal(
                 scheduling.get("saturday_weight", 2.25),
                 "saturday_weight",
@@ -187,13 +225,14 @@ class MatchTeamPool:
         self,
         rng: random.Random,
         *,
+        source_ids: list[int] | None = None,
         team_day_counts: dict[tuple[int, date], int],
         match_date: date,
         config: MatchGenerationConfig,
     ) -> TeamCandidate | None:
         team_id = self._random_available_id(
             rng,
-            self.all_ids,
+            self.all_ids if source_ids is None else source_ids,
             team_day_counts=team_day_counts,
             match_date=match_date,
             config=config,
@@ -204,6 +243,7 @@ class MatchTeamPool:
         self,
         rng: random.Random,
         *,
+        allowed_team_ids: set[int] | None = None,
         first_team: TeamCandidate,
         match_date: date,
         match_type: str,
@@ -214,7 +254,10 @@ class MatchTeamPool:
         sampled = self._sample_opponents(
             rng,
             first_team=first_team,
-            source_ids=self._preferred_source_ids(first_team),
+            source_ids=self._preferred_source_ids(
+                first_team,
+                allowed_team_ids=allowed_team_ids,
+            ),
             match_date=match_date,
             band=band,
             require_rating_band=True,
@@ -225,7 +268,7 @@ class MatchTeamPool:
             sampled = self._sample_opponents(
                 rng,
                 first_team=first_team,
-                source_ids=self.all_ids,
+                source_ids=self._filtered_source_ids(allowed_team_ids),
                 match_date=match_date,
                 band=band,
                 require_rating_band=True,
@@ -236,7 +279,7 @@ class MatchTeamPool:
             sampled = self._sample_opponents(
                 rng,
                 first_team=first_team,
-                source_ids=self.all_ids,
+                source_ids=self._filtered_source_ids(allowed_team_ids),
                 match_date=match_date,
                 band=band,
                 require_rating_band=False,
@@ -254,12 +297,35 @@ class MatchTeamPool:
             config=config,
         )
 
-    def _preferred_source_ids(self, first_team: TeamCandidate) -> list[int]:
+    def _preferred_source_ids(
+        self,
+        first_team: TeamCandidate,
+        *,
+        allowed_team_ids: set[int] | None = None,
+    ) -> list[int]:
         if first_team.region_id is not None:
             region_ids = self.ids_by_region.get(first_team.region_id, [])
             if region_ids:
-                return region_ids
-        return self.ids_by_type.get(first_team.team_type, self.all_ids)
+                filtered = self._filter_ids(region_ids, allowed_team_ids)
+                if filtered:
+                    return filtered
+        type_ids = self.ids_by_type.get(first_team.team_type, self.all_ids)
+        filtered = self._filter_ids(type_ids, allowed_team_ids)
+        if filtered:
+            return filtered
+        return self._filtered_source_ids(allowed_team_ids)
+
+    def _filtered_source_ids(self, allowed_team_ids: set[int] | None) -> list[int]:
+        return self._filter_ids(self.all_ids, allowed_team_ids)
+
+    @staticmethod
+    def _filter_ids(
+        source_ids: list[int],
+        allowed_team_ids: set[int] | None,
+    ) -> list[int]:
+        if allowed_team_ids is None:
+            return source_ids
+        return [team_id for team_id in source_ids if team_id in allowed_team_ids]
 
     def _sample_opponents(
         self,
@@ -406,16 +472,15 @@ class MatchGenerator:
         if len(teams) < 2:
             raise ValueError("At least two active teams are required")
 
-        target_match_count = int(
-            (Decimal(len(teams)) * config.matches_per_team_per_month / Decimal("2"))
-            .to_integral_value(rounding=ROUND_HALF_UP)
-        )
         rng = random.Random(
             int(batch.generation_run_id) * 1_000_003 + int(batch_id) * 10_007 + 41
         )
+        team_target_matches = _team_target_match_counts(teams, rng, config)
+        target_match_count = sum(team_target_matches.values()) // 2
         date_sampler = _date_sampler(batch.batch_month, config)
         match_type_sampler = WeightedSampler(config.match_type_weights)
         team_day_counts: dict[tuple[int, date], int] = {}
+        team_month_counts: dict[int, int] = {}
         team_pool = MatchTeamPool(teams)
         matches: list[Match] = []
         pairings: list[tuple[Match, TeamCandidate, TeamCandidate, Decimal]] = []
@@ -424,10 +489,18 @@ class MatchGenerator:
 
         while len(matches) < target_match_count and attempts < max_attempts:
             attempts += 1
+            under_target_ids = [
+                team.id
+                for team in teams
+                if team_month_counts.get(team.id, 0) < team_target_matches[team.id]
+            ]
+            if len(under_target_ids) < 2:
+                break
             match_date = date_sampler.choose(rng)
             match_type = str(match_type_sampler.choose(rng))
             first_team = team_pool.choose_team(
                 rng,
+                source_ids=under_target_ids,
                 team_day_counts=team_day_counts,
                 match_date=match_date,
                 config=config,
@@ -436,6 +509,7 @@ class MatchGenerator:
                 continue
             second_team = team_pool.choose_opponent(
                 rng,
+                allowed_team_ids=set(under_target_ids),
                 first_team=first_team,
                 match_date=match_date,
                 match_type=match_type,
@@ -473,6 +547,10 @@ class MatchGenerator:
             )
             team_day_counts[(second_team.id, match_date)] = (
                 team_day_counts.get((second_team.id, match_date), 0) + 1
+            )
+            team_month_counts[first_team.id] = team_month_counts.get(first_team.id, 0) + 1
+            team_month_counts[second_team.id] = (
+                team_month_counts.get(second_team.id, 0) + 1
             )
 
         session.add_all(matches)
@@ -659,6 +737,51 @@ def _date_sampler(
     return WeightedSampler(weighted_dates)
 
 
+def _team_target_match_counts(
+    teams: list[TeamCandidate],
+    rng: random.Random,
+    config: MatchGenerationConfig,
+) -> dict[int, int]:
+    mean = config.matches_per_team_per_month
+    std_dev = (
+        config.monthly_matches_per_active_player_std_dev / Decimal("2")
+    ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    targets = {
+        team.id: _sample_team_match_target(
+            rng,
+            mean=mean,
+            std_dev=std_dev,
+            noise_factor=config.match_volume_noise_factor,
+        )
+        for team in teams
+    }
+    total = sum(targets.values())
+    if total % 2:
+        selectable_ids = [team.id for team in teams if targets[team.id] > 0] or [
+            team.id for team in teams
+        ]
+        targets[selectable_ids[rng.randrange(len(selectable_ids))]] += 1
+    return targets
+
+
+def _sample_team_match_target(
+    rng: random.Random,
+    *,
+    mean: Decimal,
+    std_dev: Decimal,
+    noise_factor: Decimal,
+) -> int:
+    sampled = mean
+    if std_dev > 0:
+        sampled = Decimal(str(rng.gauss(float(mean), float(std_dev))))
+    if noise_factor > 0:
+        noise_span = float(mean * noise_factor)
+        sampled += Decimal(str(rng.uniform(-noise_span, noise_span)))
+    if sampled < 0:
+        sampled = Decimal("0")
+    return int(sampled.to_integral_value(rounding=ROUND_HALF_UP))
+
+
 def _opponent_weight(
     first_team: TeamCandidate,
     candidate: TeamCandidate,
@@ -788,4 +911,11 @@ def _probability(value: Any, name: str) -> Decimal:
     parsed = _decimal(value)
     if parsed < 0 or parsed > 1:
         raise ValueError(f"{name} must be between 0 and 1")
+    return parsed
+
+
+def _nonnegative_decimal(value: Any, name: str) -> Decimal:
+    parsed = _decimal(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
     return parsed

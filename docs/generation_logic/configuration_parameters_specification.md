@@ -205,8 +205,9 @@ path to the full configuration surface as the metadata-driven editor expands.
 | Parameter Name | Type | Recommended Edit Control | Default | Range/Options | Units | Description |
 |----------------|------|--------------------------|---------|---------------|-------|-------------|
 | `monthly_matches_per_active_player_mean` | DECIMAL | Numeric input | 8.0 | 1.0-30.0 | matches | Average matches per player per month. Allowed range is 1.0 to 30.0 matches. |
-| `monthly_matches_per_active_player_std_dev` | DECIMAL | Numeric input | 4.0 | 1.0-15.0 | matches | Standard deviation of match frequency. Allowed range is 1.0 to 15.0 matches. |
-| `matches_per_team_per_month` | DECIMAL | Numeric input | 4.0 | 0.1-30.0 | matches | Main match volume driver currently used by the match generator. Allowed range is 0.1 to 30.0 matches per team per month. |
+| `monthly_matches_per_active_player_std_dev` | DECIMAL | Numeric input | 4.0 | 0.0-15.0 | matches | Standard deviation of match frequency. The live match generator uses this to vary month-to-month team match targets. Allowed range is 0.0 to 15.0 matches. |
+| `match_volume_noise_factor` | DECIMAL | Slider | 0.15 | 0.0-0.5 | probability_shift | Additional random jitter applied to monthly match-target determination after the baseline mean/std-dev calculation. Allowed range is 0.0 to 0.5. |
+| `matches_per_team_per_month` | DECIMAL | Numeric input | 4.0 | 0.1-30.0 | matches | Baseline team-level monthly match target used by the match generator before variability is applied. Allowed range is 0.1 to 30.0 matches per team per month. |
 | `weekend_concentration_bias` | DECIMAL | Numeric input | 1.75 | 1.0-3.0 | multiplier | Weekend date probability multiplier. Allowed range is 1.0 to 3.0. |
 | `saturday_weight` | DECIMAL | Numeric input | 2.25 | 1.0-4.0 | weight | Saturday match concentration. Allowed range is 1.0 to 4.0. |
 | `sunday_weight` | DECIMAL | Numeric input | 1.85 | 1.0-4.0 | weight | Sunday match concentration. Allowed range is 1.0 to 4.0. |
@@ -367,6 +368,8 @@ club_generation:
 match_scheduling:
   matches_per_team_per_month: 4.0
   monthly_matches_per_active_player_mean: 8.0
+  monthly_matches_per_active_player_std_dev: 4.0
+  match_volume_noise_factor: 0.15
   weekend_concentration_bias: 1.75
   saturday_weight: 2.25
   max_daily_matches_per_team: 2

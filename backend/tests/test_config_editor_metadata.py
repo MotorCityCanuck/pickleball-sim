@@ -53,6 +53,8 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["club_generation"]["multi_club_membership_rate"] = 0.12
     payload["club_generation"]["club_size_distribution"]["tiny"] = 0.5
     payload["club_generation"]["capacity_ranges"]["tiny"] = [12, 24]
+    payload["match_scheduling"]["match_volume_noise_factor"] = 0.33
+    payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = 6.5
     payload["match_scheduling"]["matches_per_team_per_month"] = 5.5
     payload["player_generation"]["monthly_player_inactivation_rate"] = 0.07
     payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
@@ -70,6 +72,21 @@ def test_build_config_editor_sections_attaches_current_values():
     assert field_states["simulation.master_seed"].is_default_value is False
     assert field_states["team_formation.rating_gap_max"].value == 1750.0
     assert field_states["team_formation.rating_gap_max"].is_default_value is False
+    assert field_states["match_scheduling.match_volume_noise_factor"].value == 0.33
+    assert (
+        field_states["match_scheduling.match_volume_noise_factor"].is_default_value
+        is False
+    )
+    assert (
+        field_states["match_scheduling.monthly_matches_per_active_player_std_dev"].value
+        == 6.5
+    )
+    assert (
+        field_states[
+            "match_scheduling.monthly_matches_per_active_player_std_dev"
+        ].is_default_value
+        is False
+    )
     assert field_states["match_scheduling.matches_per_team_per_month"].value == 5.5
     assert (
         field_states["match_scheduling.matches_per_team_per_month"].is_default_value

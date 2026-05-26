@@ -279,6 +279,9 @@ def seed_audit_dataset(session) -> None:
                         "max_club_fill_ratio": 1.0
                     },
                     "match_scheduling": {
+                        "monthly_matches_per_active_player_mean": 8.0,
+                        "monthly_matches_per_active_player_std_dev": 2.0,
+                        "match_volume_noise_factor": 0.25,
                         "max_daily_matches_per_team": 1
                     },
                     "match_types": {
@@ -508,6 +511,7 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
             "club_membership_geography",
             "match_type_distribution",
             "matches_per_team_distribution",
+            "matches_per_player_distribution",
             "daily_team_match_cap_violations",
             "upset_rate_summary",
             "rating_delta_summary",
@@ -652,6 +656,24 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
             "match_count_bucket": "2",
             "team_count": 2,
             "team_pct": 66.67,
+        },
+    )
+    assert result_map["matches_per_player_distribution"] == (
+        {
+            "match_count_bucket": "0",
+            "player_count": 2,
+            "player_pct": 33.33,
+            "configured_match_mean": 8.0,
+            "configured_match_std_dev": 2.0,
+            "configured_match_volume_noise_factor": 0.25,
+        },
+        {
+            "match_count_bucket": "1_2",
+            "player_count": 4,
+            "player_pct": 66.67,
+            "configured_match_mean": 8.0,
+            "configured_match_std_dev": 2.0,
+            "configured_match_volume_noise_factor": 0.25,
         },
     )
     assert result_map["daily_team_match_cap_violations"] == (
@@ -807,6 +829,9 @@ def test_realism_audit_parameter_resolution_uses_generation_run_snapshot(session
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(250.0)
     assert float(params["initial_rating_elite_min"]) == pytest.approx(2000.0)
     assert params["max_daily_matches_per_team"] == 1
+    assert float(params["monthly_matches_per_active_player_mean"]) == pytest.approx(8.0)
+    assert float(params["monthly_matches_per_active_player_std_dev"]) == pytest.approx(2.0)
+    assert float(params["match_volume_noise_factor"]) == pytest.approx(0.25)
     assert params["player_status_target_pcts"] == {
         "ACTIVE": 75.0,
         "INJURED": 12.5,
@@ -836,6 +861,9 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
                         "rating_movement_warning_threshold": 180
                     },
                     "match_scheduling": {
+                        "monthly_matches_per_active_player_mean": 11.0,
+                        "monthly_matches_per_active_player_std_dev": 3.5,
+                        "match_volume_noise_factor": 0.05,
                         "max_daily_matches_per_team": 3
                     }
                 }',
@@ -867,6 +895,9 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
     assert float(params["weekend_concentration_max"]) == pytest.approx(0.68)
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(180.0)
     assert params["max_daily_matches_per_team"] == 3
+    assert float(params["monthly_matches_per_active_player_mean"]) == pytest.approx(11.0)
+    assert float(params["monthly_matches_per_active_player_std_dev"]) == pytest.approx(3.5)
+    assert float(params["match_volume_noise_factor"]) == pytest.approx(0.05)
 
 
 def test_realism_audit_parameter_resolution_skips_newer_runs_without_batches(session):
