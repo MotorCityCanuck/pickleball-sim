@@ -49,6 +49,7 @@ def test_build_config_editor_sections_attaches_current_values():
     payload = default_config_payload()
     payload["simulation"]["master_seed"] = 123
     payload["team_formation"]["rating_gap_max"] = 1750.0
+    payload["team_formation"]["team_persistence_probability_competitive"] = 0.91
     payload["club_generation"]["cross_region_assignment_enabled"] = True
     payload["club_generation"]["multi_club_membership_rate"] = 0.12
     payload["club_generation"]["club_size_distribution"]["tiny"] = 0.5
@@ -73,6 +74,14 @@ def test_build_config_editor_sections_attaches_current_values():
     assert field_states["simulation.master_seed"].is_default_value is False
     assert field_states["team_formation.rating_gap_max"].value == 1750.0
     assert field_states["team_formation.rating_gap_max"].is_default_value is False
+    assert (
+        field_states["team_formation.team_persistence_probability_competitive"].value
+        == 0.91
+    )
+    assert (
+        field_states["team_formation.team_persistence_probability_competitive"].is_default_value
+        is False
+    )
     assert field_states["match_scheduling.match_volume_noise_factor"].value == 0.33
     assert (
         field_states["match_scheduling.match_volume_noise_factor"].is_default_value

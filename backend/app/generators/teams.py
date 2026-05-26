@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.db.session import session_scope
 from app.models import (
+    Club,
     ClubMembership,
     GenerationRun,
     MonthlyBatch,
@@ -173,6 +174,7 @@ class PlayerCandidate:
     home_region_id: int | None
     rating_value: Decimal
     club_ids: frozenset[int]
+    primary_club_competitiveness: str | None
 
 
 class TeamCandidatePool:
@@ -487,7 +489,11 @@ class TeamGenerator:
                 team_status="active",
                 formation_date=batch.batch_month,
                 chemistry_score=_initial_chemistry(rng, config),
-                persistence_probability=config.team_persistence_probability_recreational,
+                persistence_probability=_team_persistence_probability(
+                    first_player,
+                    partner,
+                    config=config,
+                ),
                 generation_run_id=generation_run_id,
             )
             teams.append(team)
@@ -560,14 +566,24 @@ def _eligible_players(
     )
 
     club_ids_by_player: dict[int, set[int]] = {}
-    for player_id, club_id in session.execute(
-        select(ClubMembership.player_id, ClubMembership.club_id).where(
+    primary_competitiveness_by_player: dict[int, str | None] = {}
+    for player_id, club_id, is_primary, competitiveness_level in session.execute(
+        select(
+            ClubMembership.player_id,
+            ClubMembership.club_id,
+            ClubMembership.is_primary,
+            Club.competitiveness_level,
+        )
+        .join(Club, Club.id == ClubMembership.club_id)
+        .where(
             ClubMembership.generation_run_id == generation_run_id,
             ClubMembership.start_date <= batch_month,
             or_(ClubMembership.end_date.is_(None), ClubMembership.end_date > batch_month),
         )
     ):
         club_ids_by_player.setdefault(player_id, set()).add(club_id)
+        if is_primary:
+            primary_competitiveness_by_player[player_id] = competitiveness_level
 
     player_rows = session.execute(
         select(
@@ -587,6 +603,7 @@ def _eligible_players(
             home_region_id=home_region_id,
             rating_value=_decimal(rating_value),
             club_ids=frozenset(club_ids_by_player.get(player_id, set())),
+            primary_club_competitiveness=primary_competitiveness_by_player.get(player_id),
         )
         for player_id, gender, home_region_id, rating_value in player_rows
     ]
@@ -699,6 +716,23 @@ def _initial_chemistry(
 ) -> Decimal:
     value = Decimal("0.20") + Decimal(str(rng.random())) * config.team_chemistry_weight
     return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def _team_persistence_probability(
+    first_player: PlayerCandidate,
+    second_player: PlayerCandidate,
+    *,
+    config: TeamFormationConfig,
+) -> Decimal:
+    if _is_competitive_player_context(first_player) and _is_competitive_player_context(
+        second_player
+    ):
+        return config.team_persistence_probability_competitive
+    return config.team_persistence_probability_recreational
+
+
+def _is_competitive_player_context(player: PlayerCandidate) -> bool:
+    return (player.primary_club_competitiveness or "").strip().lower() == "competitive"
 
 
 def _team_type_weights(value: dict[str, Any]) -> tuple[tuple[str, Decimal], ...]:

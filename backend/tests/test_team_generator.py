@@ -205,7 +205,13 @@ def session(session_factory):
         db_session.close()
 
 
-def seed_team_data(session, *, payload=None, player_count=20):
+def seed_team_data(
+    session,
+    *,
+    payload=None,
+    player_count=20,
+    club_competitiveness_levels=("competitive", "recreational"),
+):
     generation_run = GenerationRun(
         generation_name="team gen",
         seed_value=123,
@@ -229,9 +235,10 @@ def seed_team_data(session, *, payload=None, player_count=20):
             club_name=f"Club {region_id}",
             region_id=region_id,
             club_type="public_park",
+            competitiveness_level=club_competitiveness_levels[index],
             member_capacity=100,
         )
-        for region_id in [1, 2]
+        for index, region_id in enumerate([1, 2])
     ]
     session.add_all(clubs)
     session.flush()
@@ -323,6 +330,42 @@ def test_generate_for_batch_enforces_team_type_gender_constraints(session):
         }
         assert team.team_type == "mixed_doubles"
         assert genders == {"M", "F"}
+
+
+def test_generate_for_batch_assigns_persistence_by_primary_club_competitiveness(session):
+    payload = test_payload(20)
+    payload["team_formation"]["same_club_team_rate"] = 1.0
+    payload["team_formation"]["same_region_team_rate"] = 1.0
+    payload["team_formation"]["team_persistence_probability_recreational"] = 0.61
+    payload["team_formation"]["team_persistence_probability_competitive"] = 0.93
+    generation_run, batch = seed_team_data(
+        session,
+        payload=payload,
+        player_count=20,
+        club_competitiveness_levels=("competitive", "recreational"),
+    )
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    player_club_competitiveness = {
+        membership.player_id: session.get(Club, membership.club_id).competitiveness_level
+        for membership in session.query(ClubMembership).filter_by(is_primary=True)
+    }
+    for team in session.query(Team):
+        player_ids = [membership.player_id for membership in team.memberships]
+        expected = (
+            Decimal("0.93")
+            if all(
+                player_club_competitiveness.get(player_id) == "competitive"
+                for player_id in player_ids
+            )
+            else Decimal("0.61")
+        )
+        assert Decimal(str(team.persistence_probability)) == expected
 
 
 def test_generate_for_batch_is_deterministic(session_factory):
