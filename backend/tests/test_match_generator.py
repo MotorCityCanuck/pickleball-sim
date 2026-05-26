@@ -332,6 +332,68 @@ def seed_match_data(session, *, payload=None, team_count=8):
     return generation_run, batch
 
 
+def add_historical_match(
+    session,
+    *,
+    generation_run_id,
+    batch_month,
+    match_date,
+    first_team_player_ids,
+    second_team_player_ids,
+):
+    prior_batch = MonthlyBatch(
+        generation_run_id=generation_run_id,
+        batch_month=batch_month,
+        batch_sequence=0,
+        batch_type="historical_initial",
+        processing_status="succeeded",
+    )
+    session.add(prior_batch)
+    session.flush()
+
+    match = Match(
+        match_date=match_date,
+        region_id=1,
+        match_type="recreational",
+        court_type="standard",
+        match_format="single_game",
+        predicted_winning_team_number=1,
+        predicted_win_probability=Decimal("0.6000"),
+        batch_id=prior_batch.id,
+    )
+    session.add(match)
+    session.flush()
+
+    team_one = MatchTeam(
+        match_id=match.id,
+        team_number=1,
+        team_score=1,
+        expected_win_probability=Decimal("0.6000"),
+        average_team_rating=Decimal("1500"),
+    )
+    team_two = MatchTeam(
+        match_id=match.id,
+        team_number=2,
+        team_score=0,
+        expected_win_probability=Decimal("0.4000"),
+        average_team_rating=Decimal("1500"),
+    )
+    session.add_all([team_one, team_two])
+    session.flush()
+
+    session.add_all(
+        [
+            MatchTeamPlayer(match_team_id=team_one.id, player_id=player_id)
+            for player_id in first_team_player_ids
+        ]
+        + [
+            MatchTeamPlayer(match_team_id=team_two.id, player_id=player_id)
+            for player_id in second_team_player_ids
+        ]
+    )
+    session.commit()
+
+
 def test_generate_for_batch_creates_matches_teams_players_and_games(session):
     _, batch = seed_match_data(session, team_count=8)
 
@@ -470,6 +532,36 @@ def test_generate_for_batch_varies_monthly_match_count_with_noise_factor(session
     assert first_result.match_count != second_result.match_count
 
 
+def test_generate_for_batch_avoids_recent_rematches_when_alternatives_exist(session):
+    payload = test_payload()
+    payload["match_scheduling"]["matches_per_team_per_month"] = 2
+    payload["matchmaking"]["rematch_penalty_window_days"] = 30
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=4)
+    batch.batch_month = date(2024, 2, 1)
+    session.commit()
+
+    add_historical_match(
+        session,
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 1, 1),
+        match_date=date(2024, 1, 31),
+        first_team_player_ids=(1, 2),
+        second_team_player_ids=(3, 4),
+    )
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    current_batch_pairs = {
+        frozenset(
+            frozenset(player.player_id for player in match_team.players)
+            for match_team in match.match_teams
+        )
+        for match in session.query(Match).where(Match.batch_id == batch.id)
+    }
+
+    assert frozenset((frozenset((1, 2)), frozenset((3, 4)))) not in current_batch_pairs
+
+
 def test_generate_for_batch_requires_active_teams(session):
     _, batch = seed_match_data(session, team_count=1)
     session.query(TeamMembership).delete()
@@ -501,6 +593,14 @@ def test_config_validates_match_volume_noise_factor():
     payload["match_scheduling"]["match_volume_noise_factor"] = 1.1
 
     with pytest.raises(ValueError, match="match_volume_noise_factor"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_rematch_penalty_window_days():
+    payload = test_payload()
+    payload["matchmaking"]["rematch_penalty_window_days"] = -1
+
+    with pytest.raises(ValueError, match="rematch_penalty_window_days"):
         MatchGenerationConfig.from_payload(payload)
 
 

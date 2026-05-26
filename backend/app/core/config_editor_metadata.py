@@ -708,6 +708,17 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         step=0.01,
     ),
     ConfigEditorFieldDefinition(
+        path="matchmaking.rematch_penalty_window_days",
+        label="Rematch penalty window days",
+        control_type="integer",
+        scope="synthetic",
+        description="Recent-opponent lookback window used to discourage repeat matchups when alternatives exist.",
+        default_value=_path_default("matchmaking.rematch_penalty_window_days"),
+        basic_or_advanced="advanced",
+        min_value=0,
+        step=1,
+    ),
+    ConfigEditorFieldDefinition(
         path="matchmaking.locality_weight",
         label="Matchmaking locality weight",
         control_type="slider",
@@ -1068,6 +1079,7 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         field_paths=(
             "matchmaking.rating_band_width",
             "matchmaking.matchmaking_noise_factor",
+            "matchmaking.rematch_penalty_window_days",
             "matchmaking.locality_weight",
         ),
     ),

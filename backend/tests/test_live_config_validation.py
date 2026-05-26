@@ -38,3 +38,14 @@ def test_validate_live_config_payload_maps_match_volume_noise_factor_errors():
     assert len(issues) == 1
     assert issues[0].path == "match_scheduling.match_volume_noise_factor"
     assert issues[0].message == "match_volume_noise_factor must be between 0 and 1"
+
+
+def test_validate_live_config_payload_maps_rematch_penalty_window_errors():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["matchmaking"]["rematch_penalty_window_days"] = -1
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "matchmaking.rematch_penalty_window_days"
+    assert issues[0].message == "rematch_penalty_window_days must be a non-negative integer"

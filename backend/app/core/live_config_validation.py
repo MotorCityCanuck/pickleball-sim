@@ -270,6 +270,10 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("match_types.weights", "match_types.weights"),
         ("rating_band_width.", "matchmaking.rating_band_width"),
         ("matchmaking_noise_factor", "matchmaking.matchmaking_noise_factor"),
+        (
+            "rematch_penalty_window_days",
+            "matchmaking.rematch_penalty_window_days",
+        ),
         ("locality_weight", "matchmaking.locality_weight"),
         ("games_per_match.", "games_and_scores.games_per_match"),
         ("game_target_score", "games_and_scores.game_target_score"),

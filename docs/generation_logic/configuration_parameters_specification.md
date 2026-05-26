@@ -242,7 +242,7 @@ path to the full configuration surface as the metadata-driven editor expands.
 | `rating_band_width_competitive` | DECIMAL | Numeric input | 150.0 | 50-400 | rating_points | Rating tolerance for competitive. Allowed range is 50 to 400 rating points. |
 | `rating_band_width_tournament` | DECIMAL | Numeric input | 100.0 | 25-250 | rating_points | Rating tolerance for tournaments. Allowed range is 25 to 250 rating points. |
 | `matchmaking_noise_factor` | DECIMAL | Slider | 0.20 | 0.0-0.5 | probability_shift | Randomness in opponent selection. Allowed range is 0.0 to 0.5 probability shift. |
-| `rematch_penalty_window_days` | INTEGER | Numeric input | 30 | 7-90 | days | Repeat opponent penalty window. Allowed range is 7 to 90 days. |
+| `rematch_penalty_window_days` | INTEGER | Numeric input | 30 | 0-90 | days | Repeat opponent penalty window. The live match generator uses this to discourage recent rematches when alternate opponents exist. Allowed range is 0 to 90 days. |
 | `locality_weight` | DECIMAL | Weight table row | 0.30 | 0.0-1.0 | weight | Geographic proximity weight. Enter a weight between 0.0 and 1.0 within the grouped matchmaking weights. |
 | `ideal_matchup_probability` | DECIMAL | Weight table row | 0.65 | 0.3-0.9 | probability | Well-balanced match target rate. Allowed range is 0.3 to 0.9; matchup-quality probabilities must sum to 1.0. |
 | `slight_mismatch_probability` | DECIMAL | Weight table row | 0.25 | 0.1-0.5 | probability | Moderate mismatch rate. Allowed range is 0.1 to 0.5; matchup-quality probabilities must sum to 1.0. |

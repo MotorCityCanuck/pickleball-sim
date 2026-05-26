@@ -44,6 +44,7 @@ class MatchGenerationConfig:
     match_type_weights: tuple[tuple[str, Decimal], ...]
     rating_band_width: dict[str, Decimal]
     matchmaking_noise_factor: Decimal
+    rematch_penalty_window_days: int
     locality_weight: Decimal
     games_per_match: dict[str, int]
     game_target_score: int
@@ -154,6 +155,10 @@ class MatchGenerationConfig:
                 matchmaking.get("matchmaking_noise_factor", 0.2),
                 "matchmaking_noise_factor",
             ),
+            rematch_penalty_window_days=_nonnegative_int(
+                matchmaking.get("rematch_penalty_window_days", 30),
+                "rematch_penalty_window_days",
+            ),
             locality_weight=_probability(
                 matchmaking.get("locality_weight", 0.3),
                 "locality_weight",
@@ -247,6 +252,7 @@ class MatchTeamPool:
         first_team: TeamCandidate,
         match_date: date,
         match_type: str,
+        recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
         config: MatchGenerationConfig,
     ) -> TeamCandidate | None:
@@ -261,6 +267,8 @@ class MatchTeamPool:
             match_date=match_date,
             band=band,
             require_rating_band=True,
+            require_rematch_penalty=True,
+            recent_pair_dates=recent_pair_dates,
             team_day_counts=team_day_counts,
             config=config,
         )
@@ -272,6 +280,8 @@ class MatchTeamPool:
                 match_date=match_date,
                 band=band,
                 require_rating_band=True,
+                require_rematch_penalty=True,
+                recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
                 config=config,
             )
@@ -283,6 +293,21 @@ class MatchTeamPool:
                 match_date=match_date,
                 band=band,
                 require_rating_band=False,
+                require_rematch_penalty=True,
+                recent_pair_dates=recent_pair_dates,
+                team_day_counts=team_day_counts,
+                config=config,
+            )
+        if not sampled:
+            sampled = self._sample_opponents(
+                rng,
+                first_team=first_team,
+                source_ids=self._filtered_source_ids(allowed_team_ids),
+                match_date=match_date,
+                band=band,
+                require_rating_band=False,
+                require_rematch_penalty=False,
+                recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
                 config=config,
             )
@@ -336,6 +361,8 @@ class MatchTeamPool:
         match_date: date,
         band: Decimal,
         require_rating_band: bool,
+        require_rematch_penalty: bool,
+        recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
         config: MatchGenerationConfig,
     ) -> list[TeamCandidate]:
@@ -357,6 +384,8 @@ class MatchTeamPool:
                 match_date=match_date,
                 band=band,
                 require_rating_band=require_rating_band,
+                require_rematch_penalty=require_rematch_penalty,
+                recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
                 config=config,
             ):
@@ -374,6 +403,8 @@ class MatchTeamPool:
                 match_date=match_date,
                 band=band,
                 require_rating_band=require_rating_band,
+                require_rematch_penalty=require_rematch_penalty,
+                recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
                 config=config,
             ):
@@ -417,6 +448,8 @@ class MatchTeamPool:
         match_date: date,
         band: Decimal,
         require_rating_band: bool,
+        require_rematch_penalty: bool,
+        recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
         config: MatchGenerationConfig,
     ) -> bool:
@@ -424,6 +457,16 @@ class MatchTeamPool:
             candidate.id != first_team.id
             and team_day_counts.get((candidate.id, match_date), 0)
             < config.max_daily_matches_per_team
+            and (
+                not require_rematch_penalty
+                or not _pairing_within_rematch_window(
+                    first_team.id,
+                    candidate.id,
+                    match_date=match_date,
+                    recent_pair_dates=recent_pair_dates,
+                    config=config,
+                )
+            )
             and (
                 not require_rating_band
                 or abs(candidate.average_rating - first_team.average_rating) <= band
@@ -479,6 +522,12 @@ class MatchGenerator:
         target_match_count = sum(team_target_matches.values()) // 2
         date_sampler = _date_sampler(batch.batch_month, config)
         match_type_sampler = WeightedSampler(config.match_type_weights)
+        recent_pair_dates = _recent_pair_dates(
+            session,
+            generation_run_id=batch.generation_run_id,
+            batch_month=batch.batch_month,
+            active_teams=teams,
+        )
         team_day_counts: dict[tuple[int, date], int] = {}
         team_month_counts: dict[int, int] = {}
         team_pool = MatchTeamPool(teams)
@@ -513,6 +562,7 @@ class MatchGenerator:
                 first_team=first_team,
                 match_date=match_date,
                 match_type=match_type,
+                recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
                 config=config,
             )
@@ -552,6 +602,10 @@ class MatchGenerator:
             team_month_counts[second_team.id] = (
                 team_month_counts.get(second_team.id, 0) + 1
             )
+            recent_pair_dates.setdefault(
+                frozenset((first_team.id, second_team.id)),
+                [],
+            ).append(match_date)
 
         session.add_all(matches)
         session.flush()
@@ -737,6 +791,81 @@ def _date_sampler(
     return WeightedSampler(weighted_dates)
 
 
+def _recent_pair_dates(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+    active_teams: list[TeamCandidate],
+) -> dict[frozenset[int], list[date]]:
+    roster_to_team_id = {
+        _roster_key(player_id for player_id, _, _ in team.players): team.id
+        for team in active_teams
+    }
+    match_team_rows = session.execute(
+        select(
+            Match.id,
+            Match.match_date,
+            MatchTeam.id,
+            MatchTeamPlayer.player_id,
+        )
+        .join(MonthlyBatch, MonthlyBatch.id == Match.batch_id)
+        .join(MatchTeam, MatchTeam.match_id == Match.id)
+        .join(MatchTeamPlayer, MatchTeamPlayer.match_team_id == MatchTeam.id)
+        .where(
+            MonthlyBatch.generation_run_id == generation_run_id,
+            Match.match_date < batch_month,
+        )
+        .order_by(Match.id, MatchTeam.id, MatchTeamPlayer.player_id)
+    )
+
+    grouped_match_teams: dict[tuple[int, date, int], list[int]] = {}
+    for match_id, match_date, match_team_id, player_id in match_team_rows:
+        grouped_match_teams.setdefault((match_id, match_date, match_team_id), []).append(
+            player_id
+        )
+
+    match_team_ids_by_match: dict[tuple[int, date], list[int]] = {}
+    for (match_id, match_date, _match_team_id), player_ids in grouped_match_teams.items():
+        roster_key = _roster_key(player_ids)
+        team_id = roster_to_team_id.get(roster_key)
+        if team_id is None:
+            continue
+        match_team_ids_by_match.setdefault((match_id, match_date), []).append(team_id)
+
+    pair_dates: dict[frozenset[int], list[date]] = {}
+    for (_match_id, match_date), team_ids in match_team_ids_by_match.items():
+        if len(team_ids) != 2 or team_ids[0] == team_ids[1]:
+            continue
+        pair_dates.setdefault(frozenset(team_ids), []).append(match_date)
+    return pair_dates
+
+
+def _roster_key(player_ids: Any) -> str:
+    ordered_ids = sorted(int(player_id) for player_id in player_ids)
+    if len(ordered_ids) != 2:
+        return ""
+    return f"{ordered_ids[0]}:{ordered_ids[1]}"
+
+
+def _pairing_within_rematch_window(
+    first_team_id: int,
+    second_team_id: int,
+    *,
+    match_date: date,
+    recent_pair_dates: dict[frozenset[int], list[date]],
+    config: MatchGenerationConfig,
+) -> bool:
+    if config.rematch_penalty_window_days <= 0:
+        return False
+    pair_key = frozenset((first_team_id, second_team_id))
+    prior_dates = recent_pair_dates.get(pair_key, [])
+    return any(
+        abs((match_date - prior_match_date).days) <= config.rematch_penalty_window_days
+        for prior_match_date in prior_dates
+    )
+
+
 def _team_target_match_counts(
     teams: list[TeamCandidate],
     rng: random.Random,
@@ -904,6 +1033,15 @@ def _positive_int(value: Any, name: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def _nonnegative_int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative integer")
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
     return parsed
 
 

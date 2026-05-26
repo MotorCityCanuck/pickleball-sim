@@ -56,6 +56,7 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["match_scheduling"]["match_volume_noise_factor"] = 0.33
     payload["match_scheduling"]["monthly_matches_per_active_player_std_dev"] = 6.5
     payload["match_scheduling"]["matches_per_team_per_month"] = 5.5
+    payload["matchmaking"]["rematch_penalty_window_days"] = 14
     payload["player_generation"]["monthly_player_inactivation_rate"] = 0.07
     payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
     payload["ratings"]["k_factor_new_player"] = 52.0
@@ -85,6 +86,11 @@ def test_build_config_editor_sections_attaches_current_values():
         field_states[
             "match_scheduling.monthly_matches_per_active_player_std_dev"
         ].is_default_value
+        is False
+    )
+    assert field_states["matchmaking.rematch_penalty_window_days"].value == 14
+    assert (
+        field_states["matchmaking.rematch_penalty_window_days"].is_default_value
         is False
     )
     assert field_states["match_scheduling.matches_per_team_per_month"].value == 5.5
