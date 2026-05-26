@@ -25,7 +25,9 @@ from .control_plane import GenerationControlPlane
 from .destructive_reset import (
     DELETE_MODELS_IN_ORDER,
     ResetProgressEvent,
-    delete_generated_data,
+    reset_progress_message,
+    reset_progress_metadata,
+    reset_generated_data,
 )
 from .job_lifecycle import (
     DEFAULT_JOB_STALE_AFTER,
@@ -281,7 +283,7 @@ class GenerationRunService:
                 job_status,
                 status="running",
                 phase="destructive_reset",
-                message="Deleting generated data from previous runs.",
+                message="Resetting generated data from previous runs.",
                 started=True,
             )
             self._mark_setup_stage_running(
@@ -487,20 +489,9 @@ class GenerationRunService:
         def progress_listener(event: ResetProgressEvent) -> None:
             if event.status == "running":
                 progress_current = max(event.step_index - 1, 0)
-                progress_message = (
-                    f"Deleting {event.model_name} ({event.step_index}/{event.total_steps})"
-                )
             else:
                 progress_current = event.step_index
-                if event.rows_affected is None:
-                    progress_message = (
-                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps})"
-                    )
-                else:
-                    progress_message = (
-                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps}); "
-                        f"{event.rows_affected} rows affected."
-                    )
+            progress_message = reset_progress_message(event)
             stage_row.status = "running"
             stage_row.started_at = stage_row.started_at or _utc_now()
             stage_row.last_heartbeat_at = _utc_now()
@@ -508,12 +499,10 @@ class GenerationRunService:
             stage_row.progress_total = event.total_steps
             stage_row.progress_percent = _percent(progress_current, event.total_steps)
             stage_row.progress_message = progress_message
-            stage_row.metadata_json = {
-                "current_model": event.model_name,
-                "completed_models": progress_current,
-                "total_models": event.total_steps,
-                "rows_affected": event.rows_affected,
-            }
+            stage_row.metadata_json = reset_progress_metadata(
+                event,
+                progress_current=progress_current,
+            )
             self._set_job_status(
                 job_status,
                 status="running",
@@ -523,7 +512,7 @@ class GenerationRunService:
             )
             self._checkpoint(session, checkpoint)
 
-        delete_generated_data(
+        reset_generated_data(
             session=session,
             preserve_job_status_id=preserve_job_status_id,
             progress_listener=progress_listener,
@@ -586,7 +575,7 @@ class GenerationRunService:
                 progress_total=len(DELETE_MODELS_IN_ORDER),
                 progress_unit="table",
                 progress_percent=Decimal("0.00"),
-                progress_message="Pending destructive reset.",
+                progress_message="Pending generated-data reset.",
             )
         )
         session.flush()
@@ -602,7 +591,7 @@ class GenerationRunService:
         stage_row.status = "running"
         stage_row.started_at = stage_row.started_at or now
         stage_row.last_heartbeat_at = now
-        stage_row.progress_message = "Deleting generated data from previous runs."
+        stage_row.progress_message = "Resetting generated data from previous runs."
         stage_row.progress_current = 0
         stage_row.progress_total = len(DELETE_MODELS_IN_ORDER)
         stage_row.progress_percent = Decimal("0.00")

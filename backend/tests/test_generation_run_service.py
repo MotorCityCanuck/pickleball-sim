@@ -644,12 +644,13 @@ def test_launch_generation_run_resets_generated_data_and_tracks_progress(session
 
     assert session.query(GenerationRun).count() == 2
     assert session.query(JobStatus).count() == 2
-    assert session.query(MonthlyBatch).count() == 2
-    assert session.query(JobStageProgress).count() == (len(PIPELINE_STEPS) * 2) + 1
+    assert session.query(MonthlyBatch).count() == 3
+    assert session.query(JobStageProgress).count() == (len(PIPELINE_STEPS) * 2) + 2
     assert session.execute(text("SELECT COUNT(*) FROM players")).scalar_one() == 0
     assert session.execute(text("SELECT COUNT(*) FROM matches")).scalar_one() == 0
-    assert session.execute(text("SELECT COUNT(*) FROM validation_results")).scalar_one() == 0
-    assert session.execute(text("SELECT COUNT(*) FROM student_dataset_releases")).scalar_one() == 0
+    assert session.execute(text("SELECT COUNT(*) FROM validation_results")).scalar_one() == 1
+    assert session.execute(text("SELECT COUNT(*) FROM export_runs")).scalar_one() == 1
+    assert session.execute(text("SELECT COUNT(*) FROM student_dataset_releases")).scalar_one() == 1
 
 
 def test_launch_generation_run_rejects_multiple_valid_configs(session):

@@ -1816,9 +1816,13 @@ configuration profiles, configuration profile versions, and durable job/run
 history.
 
 The reset should execute inside a transaction before monthly batches for the new
-run are created. Use ordered `DELETE` statements rather than broad truncation so
-the implementation can preserve audit/control records and avoid deleting
-reference data.
+run are created. Runtime reset is a data-domain operation, not a schema rebuild.
+PostgreSQL should use an explicit generated-domain
+`TRUNCATE TABLE ... RESTART IDENTITY` statement for large rebuildable tables.
+Non-PostgreSQL/test dialects may use ordered `DELETE` fallback behavior.
+
+Do not use broad `TRUNCATE ... CASCADE`; preserved audit/control records must
+remain outside the reset group.
 
 ### Tables Preserved During Generation Reset
 
@@ -1829,6 +1833,13 @@ configuration_profiles
 configuration_profile_versions
 generation_runs
 job_status
+job_stage_progress
+monthly_batches
+batch_runs
+validation_results
+export_runs
+student_dataset_releases
+student_dataset_release_files
 uploaded_files
 regions
 first_names
@@ -1836,42 +1847,38 @@ last_names
 clubs
 ```
 
-`generation_runs` and `job_status` are preserved as operational audit/control
-records. The web control panel should treat the latest generation run as the
-current run and should not offer older runs as export sources after their
-generated data has been reset.
+`generation_runs`, `job_status`, stage progress, monthly batches, and
+export/release metadata are preserved as operational audit/control records. The
+web control panel should treat the latest generation run as the current run and
+should not offer older runs as export sources after their generated data has
+been reset.
 
-### Ordered Delete List
+### Generated Operational Reset Group
 
-Delete generated/run-specific tables in this order:
+The generated-domain reset operates only on these rebuildable operational
+tables:
 
 ```text
-1. job_stage_progress
-2. student_dataset_release_files
-3. student_dataset_releases
-4. validation_results
-5. export_runs
-6. batch_runs
-7. ratings_update_log
-8. player_rating_history
-9. player_assessment_history
-10. match_team_players
-11. match_games
-12. match_teams
-13. matches
-14. team_memberships
-15. teams
-16. club_memberships
-17. player_registrations
-18. players
-19. tournaments
-20. monthly_batches
+ratings_update_log
+player_rating_history
+player_assessment_history
+match_team_players
+match_games
+match_teams
+matches
+team_memberships
+teams
+club_memberships
+player_registrations
+players
+tournaments
 ```
 
-This order deletes child tables before parent tables and leaves seed/reference
-tables intact. If future generated tables are added, they must be inserted into
-this ordered list based on their foreign-key dependencies before the table is
-used by the web control panel.
+On PostgreSQL these tables are reset together in one explicit multi-table
+truncate group so foreign-key-connected generated tables are handled as a unit
+without cascading into preserved history tables. If future generated tables are
+added, they must be classified in the shared reset plan before the table is used
+by the web control panel.
 
 \-\--
 

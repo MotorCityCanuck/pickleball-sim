@@ -701,38 +701,34 @@ Generation start rules:
 - The workflow orchestration UI must not allow one-off overrides for generation
   settings. If a different value is needed, the operator must save a new valid
   configuration version first.
-- A run must delete and rebuild generated domain data.
+- A run must reset and rebuild generated domain data.
 - A run must not delete seed/reference data or saved configuration versions.
 - A run must freeze the current valid configuration into `generation_runs.parameter_snapshot`.
 - A failed generation run cannot resume from a midpoint. A retry must create a new full destructive run from the beginning.
 
-Generated data reset should delete generated-domain and run-specific data in a
-defined dependency order. It should not reset raw seed data, normalized
-seed/reference tables, saved configuration versions, or system configuration.
+Generated data reset should operate on the explicit generated operational reset
+group. It should not reset raw seed data, normalized seed/reference tables,
+saved configuration versions, control-plane history, or system configuration.
+On PostgreSQL, reset should use explicit multi-table
+`TRUNCATE TABLE ... RESTART IDENTITY` for the generated operational group. On
+non-PostgreSQL/test dialects, reset may use an ordered `DELETE` fallback.
 
-Required destructive delete order:
+Generated operational reset group:
 
 ```text
-1. job_stage_progress
-2. student_dataset_release_files
-3. student_dataset_releases
-4. validation_results
-5. export_runs
-6. batch_runs
-7. ratings_update_log
-8. player_rating_history
-9. player_assessment_history
-10. match_team_players
-11. match_games
-12. match_teams
-13. matches
-14. team_memberships
-15. teams
-16. club_memberships
-17. player_registrations
-18. players
-19. tournaments
-20. monthly_batches
+ratings_update_log
+player_rating_history
+player_assessment_history
+match_team_players
+match_games
+match_teams
+matches
+team_memberships
+teams
+club_memberships
+player_registrations
+players
+tournaments
 ```
 
 Preserved tables:
@@ -742,6 +738,13 @@ configuration_profiles
 configuration_profile_versions
 generation_runs
 job_status
+job_stage_progress
+monthly_batches
+batch_runs
+validation_results
+export_runs
+student_dataset_releases
+student_dataset_release_files
 uploaded_files
 regions
 first_names
@@ -749,10 +752,11 @@ last_names
 clubs
 ```
 
-`generation_runs` and `job_status` should be preserved as operational
-audit/control records. The current generation run is the latest run created by
-the generation service, not any older succeeded run whose generated data has
-already been reset.
+`generation_runs`, `job_status`, stage progress, monthly batches, and
+export/release metadata should be preserved as operational audit/control
+records. The current generation run is the latest run created by the generation
+service, not any older succeeded run whose generated data has already been
+reset.
 
 ### Generation Progress Display
 
@@ -1780,7 +1784,7 @@ Recommended guardrails:
 - Prevent launching two write-heavy jobs concurrently unless the job types are proven safe to run in parallel.
 - Freeze configuration payloads into generation runs.
 - Preserve immutable configuration versions.
-- Make clear that generation deletes/rebuilds generated data but does not delete seed/reference data.
+- Make clear that generation resets/rebuilds generated data but does not delete seed/reference data.
 - Require additional confirmation for production writes.
 - Display a summary of expected affected rows when available.
 
@@ -1804,7 +1808,7 @@ If concurrency rules are violated, the UI should disable the action and explain 
 The Version 1 rerun strategy should be intentionally simple.
 
 - Generation runs always start from the beginning.
-- Starting a generation run is destructive to generated data.
+- Starting a generation run resets generated data.
 - Generation runs do not delete seed/reference data or saved configuration versions.
 - No mid-run start, selected-batch start, or partial resume is allowed.
 - Failed generation runs cannot resume from the failed stage or month.

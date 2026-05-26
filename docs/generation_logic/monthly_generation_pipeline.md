@@ -111,9 +111,13 @@ For a full generation run:
 6. It marks the generation run `succeeded` only after all required monthly
    batches succeed.
 
-The destructive reset must use the ordered delete list defined in the database
-design and web control panel specification. It must preserve seed/reference
-tables, configuration versions, `generation_runs`, and `job_status`.
+The destructive reset must use the generated-domain reset plan defined in the
+data reset specification and shared backend reset-plan module. PostgreSQL uses
+an explicit multi-table `TRUNCATE TABLE ... RESTART IDENTITY` for the
+rebuildable generated operational domain; non-PostgreSQL/test dialects may use
+ordered `DELETE` fallback behavior. The reset must preserve seed/reference
+tables, configuration versions, `generation_runs`, `monthly_batches`,
+`job_status`, `job_stage_progress`, and export/release history.
 
 The web orchestration workflow must not expose:
 

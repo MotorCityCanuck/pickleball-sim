@@ -1,8 +1,9 @@
 # Data Reset Specification
 
-**Status:** Draft for review  
+**Status:** Implemented for generated-domain reset; retained as the authoritative reset policy  
 **Scope:** Seed refresh and full synthetic generation reset behavior  
-**Primary code paths:** `backend/app/generation/destructive_reset.py`, `backend/app/generation/seed_refresh_service.py`, `backend/app/generation/run_service.py`
+**Primary code paths:** `backend/app/generation/destructive_reset.py`, `backend/app/generation/seed_refresh_service.py`, `backend/app/generation/run_service.py`  
+**Domain policy source:** `backend/app/generation/reset_plan.py`
 
 ## Purpose
 
@@ -25,7 +26,7 @@ runtime data reset policy.
 
 ## Problem Statement
 
-The current reset strategy performs broad `DELETE` operations across generated
+The previous reset strategy performed broad `DELETE` operations across generated
 tables in one long transaction. This is simple, but it will not scale well as
 the simulation grows toward:
 
@@ -70,7 +71,7 @@ Instead:
 
 ## Data Domains
 
-### Domain A: Control and Configuration
+### Domain A: Control, Configuration, and History
 
 These tables should be preserved across normal seed refresh and generation reset
 operations.
@@ -83,8 +84,12 @@ Examples:
 - `job_stage_progress`
 - `generation_runs`
 - `monthly_batches`
+- `batch_runs`
+- `validation_results`
+- `export_runs`
 - `student_dataset_releases`
 - `student_dataset_release_files`
+- `uploaded_files`
 - export/release metadata the operator wants to retain
 
 Rationale:
@@ -93,12 +98,13 @@ Rationale:
 - preserves operator history
 - preserves failure analysis
 - preserves control-panel context
+- preserves release/export lineage
 
 ### Domain B: Reference and Seed-Derived Production Data
 
 These tables are rebuilt during full seed refresh workflows.
 
-Examples:
+Rebuildable production reference examples:
 
 - `regions`
 - `clubs`
@@ -118,8 +124,6 @@ These tables represent raw ingest inputs and ingest errors.
 
 Examples:
 
-- `raw_seed_load_runs`
-- `raw_seed_load_errors`
 - `raw_metro_areas`
 - `raw_first_names`
 - `raw_last_names`
@@ -130,7 +134,7 @@ Examples:
 Policy:
 
 - raw staging rows are rebuildable
-- raw load run history may be preserved as operator history, depending on retention policy
+- `raw_seed_load_runs` and `raw_seed_load_errors` are preserved as raw-load history
 - staging content can be replaced per dataset during new raw ingest cycles
 
 ### Domain D: Generated Synthetic Operational Data
@@ -154,9 +158,12 @@ Examples:
 - `player_rating_history`
 - `player_assessment_history`
 - `ratings_update_log`
-- `batch_runs`
-- `validation_results`
-- `export_runs`
+
+These tables are reset by the generated operational reset plan in
+`backend/app/generation/reset_plan.py`. Control/history tables that refer to
+generated runs or batches, such as `monthly_batches`, `batch_runs`,
+`validation_results`, `export_runs`, and student dataset release metadata, are
+preserved by default.
 
 ## Reset Modes
 
@@ -234,7 +241,7 @@ Preserve:
 
 ## Runtime Strategy Options
 
-### Option A: Current Broad DELETE Strategy
+### Option A: Legacy Broad DELETE Strategy
 
 Mechanism:
 
@@ -258,28 +265,34 @@ Recommendation:
 
 - keep only as an interim fallback
 
-### Option B: Ordered TRUNCATE for Rebuildable Domains
+### Option B: Explicit Multi-Table TRUNCATE for Rebuildable Domains
 
 Mechanism:
 
-- `TRUNCATE ... RESTART IDENTITY` in dependency-safe order
-- or `TRUNCATE ... CASCADE` if explicitly controlled
+- on PostgreSQL, issue one explicit `TRUNCATE TABLE ... RESTART IDENTITY`
+  statement over the generated operational allowlist
+- include all foreign-key-related generated tables in the same truncate group
+- avoid `CASCADE` so preserved tables cannot be pulled into the reset
+- on non-PostgreSQL dialects, keep the ordered `DELETE` fallback used by tests
 
 Pros:
 
 - much faster than `DELETE`
 - lower per-row overhead
 - better fit for full rebuild workflows
+- avoids MVCC dead-tuple buildup on large generated tables
+- resets generated-domain identities intentionally
 
 Cons:
 
 - requires very careful table classification
 - must not touch preserved history tables
 - identity reset behavior must be intentional
+- takes table-level locks while the truncate executes
 
 Recommendation:
 
-- preferred next step for large generated domains
+- implemented for the generated synthetic operational domain on PostgreSQL
 
 ### Option C: Chunked DELETE
 
@@ -339,7 +352,9 @@ Use domain-aware reset behavior:
 
 Preferred mechanism:
 
-- convert generated synthetic-domain reset from broad `DELETE` to ordered `TRUNCATE`
+- reset the generated synthetic domain from a shared explicit allowlist
+- use explicit multi-table `TRUNCATE ... RESTART IDENTITY` on PostgreSQL
+- keep ordered `DELETE` as a fallback for non-PostgreSQL/test dialects
 - keep durable job/stage reporting around each reset sub-step
 
 ### Preservation Policy
@@ -381,36 +396,48 @@ If chunked deletion is used anywhere, add:
 
 If `TRUNCATE` is used, the status model should still show:
 
-- current table being truncated
+- current generated-domain reset stage
 - completed table count
+- `reset_strategy` metadata set to `truncate`
+- operator-facing wording that says reset/truncate rather than delete
 
 ## Safety Requirements
 
 1. Reset must only operate on explicitly approved rebuildable tables.
 2. Preserved tables must be defined in code and in documentation, not inferred ad hoc.
-3. The operator UI must identify the reset mode clearly.
+3. The operator UI must identify the reset mode and reset strategy clearly.
 4. Production-like environments should require stronger confirmation than local dev.
 5. A failed reset must leave clear status records even if the data reset is partial.
+6. PostgreSQL generated-domain reset must not use broad `CASCADE`.
+7. Any table with a foreign key into the generated reset group must either be
+   explicitly part of that group or be handled before release.
 
 ## Open Questions
 
 1. Should `generation_runs` and `monthly_batches` be preserved indefinitely, or should there be a separate “purge history” operator tool later?
 2. Should `student_dataset_releases` be preserved across full seed refresh, or should some releases be invalidated when reference data changes materially?
 3. Should raw ingest history remain forever, or should only the most recent successful cycle remain prominently attached to the control panel?
-4. Should identity values be reset during generated-domain rebuilds, or preserved for audit continuity?
-5. Should reset be implemented as one transaction per domain or one transaction per table for better recoverability and progress visibility?
+4. Should there be a dedicated operator action for pruning old control/history
+   rows after they are no longer useful?
 
-## Proposed Next Implementation Step
+## Implemented Reset Behavior
 
-1. Define the preserved-table allowlist and rebuildable-table allowlist in one shared module.
-2. Refactor destructive reset into domain-aware strategies.
-3. Implement a `TRUNCATE`-based reset path for the generated synthetic domain.
-4. Keep the current status instrumentation pattern so the control panel stays informative.
-5. Add tests that verify:
-   - preserved tables survive resets
-   - rebuildable tables are emptied
-   - job/run history remains intact
-   - reset progress is still visible
+1. `backend/app/generation/reset_plan.py` defines preserved and rebuildable
+   table domains.
+2. `backend/app/generation/destructive_reset.py` resets only the generated
+   operational domain during generation-only resets and generated-data reset
+   stages in seed normalization/full refresh workflows.
+3. PostgreSQL uses a single explicit multi-table
+   `TRUNCATE TABLE ... RESTART IDENTITY` statement for the generated operational
+   domain.
+4. SQLite and other non-PostgreSQL dialects use ordered `DELETE` fallback
+   behavior for compatibility with tests and local lightweight execution.
+5. Reset progress events include `reset_strategy`, and durable job/stage
+   metadata records whether reset progress came from truncate or delete mode.
+6. Full backend tests passed after implementation. Opt-in live PostgreSQL smoke
+   tests also passed when allowed to connect to the local database.
+7. A live-schema foreign-key check found no preserved/external tables with
+   foreign keys into the generated reset group.
 
 ## Bottom-Line Decision
 
@@ -421,5 +448,8 @@ The preferred design is:
 
 - preserve control/configuration/history tables
 - rebuild seed/reference and synthetic domains explicitly
-- replace large-table `DELETE`-based resets with a faster domain-aware reset
-  strategy, preferably `TRUNCATE` where safe
+- reset the generated operational domain from an explicit allowlist
+- replace large-table PostgreSQL `DELETE`-based resets with explicit
+  multi-table `TRUNCATE ... RESTART IDENTITY`
+- retain ordered `DELETE` only as a compatibility fallback for non-PostgreSQL
+  dialects

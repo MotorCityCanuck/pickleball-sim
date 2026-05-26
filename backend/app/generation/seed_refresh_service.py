@@ -22,7 +22,9 @@ from app.seed_data_normalize.base import SeedNormalizeResult
 from .destructive_reset import (
     DELETE_MODELS_IN_ORDER,
     ResetProgressEvent,
-    delete_generated_data,
+    reset_progress_message,
+    reset_progress_metadata,
+    reset_generated_data,
 )
 from .job_lifecycle import job_is_actively_processing, overall_percent_complete
 
@@ -100,7 +102,7 @@ class SeedRefreshService:
         )
         self.load_dataset_fn = load_dataset_fn or load_raw_seed_dataset
         self.normalize_dataset_fn = normalize_dataset_fn or normalize_seed_dataset
-        self.reset_generated_data_fn = reset_generated_data_fn or delete_generated_data
+        self.reset_generated_data_fn = reset_generated_data_fn or reset_generated_data
 
     def register_seed_refresh(
         self,
@@ -550,32 +552,19 @@ class SeedRefreshService:
         def progress_listener(event: ResetProgressEvent) -> None:
             if event.status == "running":
                 progress_current = max(event.step_index - 1, 0)
-                progress_message = (
-                    f"Deleting {event.model_name} ({event.step_index}/{event.total_steps})"
-                )
             else:
                 progress_current = event.step_index
-                if event.rows_affected is None:
-                    progress_message = (
-                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps})"
-                    )
-                else:
-                    progress_message = (
-                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps}); "
-                        f"{event.rows_affected} rows affected."
-                    )
+            progress_message = reset_progress_message(event)
             self._update_stage_progress(
                 stage_row,
                 status="running",
                 progress_current=progress_current,
                 progress_total=event.total_steps,
                 progress_message=progress_message,
-                metadata={
-                    "current_model": event.model_name,
-                    "completed_models": progress_current,
-                    "total_models": event.total_steps,
-                    "rows_affected": event.rows_affected,
-                },
+                metadata=reset_progress_metadata(
+                    event,
+                    progress_current=progress_current,
+                ),
             )
             self._set_job_status(
                 job_status,
@@ -600,6 +589,7 @@ class SeedRefreshService:
             metadata={
                 "completed_models": len(DELETE_MODELS_IN_ORDER),
                 "total_models": len(DELETE_MODELS_IN_ORDER),
+                "reset_strategy": "completed",
             },
         )
         self._set_job_status(

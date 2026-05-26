@@ -604,7 +604,7 @@ def test_get_control_panel_snapshot_includes_generation_setup_stage_progress(ses
                 started_at, created_at, updated_at
             ) VALUES (
                 300, 'generation_run', 'generation-run-300', 'running', 'destructive_reset', 0.00,
-                'Deleting generated data from previous runs.',
+                'Resetting generated data from previous runs.',
                 '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
@@ -619,7 +619,7 @@ def test_get_control_panel_snapshot_includes_generation_setup_stage_progress(ses
                 progress_message, started_at, created_at, updated_at
             ) VALUES (
                 3000, 300, 3, NULL, 'destructive_reset', 0, 'running', 0, 1, 'stage', 0.00,
-                '2026-05-20 09:01:00', 'Deleting generated data from previous runs.',
+                '2026-05-20 09:01:00', 'Resetting generated data from previous runs.',
                 '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
@@ -658,7 +658,7 @@ def test_stale_running_generation_setup_job_does_not_block_config_editing(sessio
                 started_at, created_at, updated_at
             ) VALUES (
                 500, 'generation_run', 'generation-run-500', 'running', 'destructive_reset', 0.00,
-                'Deleting generated data from previous runs.',
+                'Resetting generated data from previous runs.',
                 '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
@@ -673,7 +673,7 @@ def test_stale_running_generation_setup_job_does_not_block_config_editing(sessio
                 progress_message, started_at, created_at, updated_at
             ) VALUES (
                 5000, 500, 5, NULL, 'destructive_reset', 0, 'running', 0, 1, 'stage', 0.00,
-                '2026-05-20 09:01:00', 'Deleting generated data from previous runs.',
+                '2026-05-20 09:01:00', 'Resetting generated data from previous runs.',
                 '2026-05-20 09:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
