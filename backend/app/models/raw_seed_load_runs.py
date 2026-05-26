@@ -4,6 +4,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -21,6 +22,7 @@ class RawSeedLoadRun(Base, TimestampMixin):
     __tablename__ = "raw_seed_load_runs"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_status_id = Column(BigInteger, ForeignKey("job_status.id"))
     dataset_type = Column(String(80), nullable=False)
     source_path = Column(String(1000), nullable=False)
     source_file_count = Column(Integer, nullable=False, default=0)
@@ -41,6 +43,7 @@ class RawSeedLoadRun(Base, TimestampMixin):
     errors = relationship("RawSeedLoadError", back_populates="load_run")
 
     __table_args__ = (
+        Index("idx_raw_seed_load_runs_job", "job_status_id"),
         Index("idx_raw_seed_load_runs_dataset", "dataset_type"),
         Index("idx_raw_seed_load_runs_status", "status"),
         Index("idx_raw_seed_load_runs_started", "started_at"),

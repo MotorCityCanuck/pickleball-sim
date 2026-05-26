@@ -22,7 +22,11 @@ from app.models import (
 )
 
 from .control_plane import GenerationControlPlane
-from .destructive_reset import delete_generated_data
+from .destructive_reset import (
+    DELETE_MODELS_IN_ORDER,
+    ResetProgressEvent,
+    delete_generated_data,
+)
 from .job_lifecycle import (
     DEFAULT_JOB_STALE_AFTER,
     job_is_actively_processing,
@@ -287,7 +291,9 @@ class GenerationRunService:
             self._checkpoint(session, checkpoint)
             self._perform_destructive_reset(
                 session,
+                job_status=job_status,
                 preserve_job_status_id=job_status.id,
+                checkpoint=checkpoint,
             )
             self._mark_setup_stage_succeeded(
                 session,
@@ -467,11 +473,60 @@ class GenerationRunService:
         self,
         session: Session,
         *,
+        job_status: JobStatus,
         preserve_job_status_id: int,
+        checkpoint: Any | None = None,
     ) -> None:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status.id,
+            batch_id=None,
+            stage_name="destructive_reset",
+        )
+
+        def progress_listener(event: ResetProgressEvent) -> None:
+            if event.status == "running":
+                progress_current = max(event.step_index - 1, 0)
+                progress_message = (
+                    f"Deleting {event.model_name} ({event.step_index}/{event.total_steps})"
+                )
+            else:
+                progress_current = event.step_index
+                if event.rows_affected is None:
+                    progress_message = (
+                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps})"
+                    )
+                else:
+                    progress_message = (
+                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps}); "
+                        f"{event.rows_affected} rows affected."
+                    )
+            stage_row.status = "running"
+            stage_row.started_at = stage_row.started_at or _utc_now()
+            stage_row.last_heartbeat_at = _utc_now()
+            stage_row.progress_current = progress_current
+            stage_row.progress_total = event.total_steps
+            stage_row.progress_percent = _percent(progress_current, event.total_steps)
+            stage_row.progress_message = progress_message
+            stage_row.metadata_json = {
+                "current_model": event.model_name,
+                "completed_models": progress_current,
+                "total_models": event.total_steps,
+                "rows_affected": event.rows_affected,
+            }
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase="destructive_reset",
+                message=progress_message,
+                percent_complete=self._overall_percent_complete(session, job_status.id),
+            )
+            self._checkpoint(session, checkpoint)
+
         delete_generated_data(
             session=session,
             preserve_job_status_id=preserve_job_status_id,
+            progress_listener=progress_listener,
         )
 
     def _create_monthly_batches(
@@ -528,8 +583,8 @@ class GenerationRunService:
                 stage_sequence=0,
                 status="pending",
                 progress_current=0,
-                progress_total=1,
-                progress_unit="stage",
+                progress_total=len(DELETE_MODELS_IN_ORDER),
+                progress_unit="table",
                 progress_percent=Decimal("0.00"),
                 progress_message="Pending destructive reset.",
             )
@@ -549,7 +604,7 @@ class GenerationRunService:
         stage_row.last_heartbeat_at = now
         stage_row.progress_message = "Deleting generated data from previous runs."
         stage_row.progress_current = 0
-        stage_row.progress_total = 1
+        stage_row.progress_total = len(DELETE_MODELS_IN_ORDER)
         stage_row.progress_percent = Decimal("0.00")
         session.flush()
 
@@ -565,8 +620,8 @@ class GenerationRunService:
         stage_row.completed_at = now
         stage_row.last_heartbeat_at = now
         stage_row.progress_message = "Generated data reset completed."
-        stage_row.progress_current = 1
-        stage_row.progress_total = 1
+        stage_row.progress_current = len(DELETE_MODELS_IN_ORDER)
+        stage_row.progress_total = len(DELETE_MODELS_IN_ORDER)
         stage_row.progress_percent = Decimal("100.00")
         session.flush()
 
@@ -758,6 +813,14 @@ def _format_progress_message(event: PipelineProgressEvent) -> str:
         f"{key}={value}" for key, value in sorted(event.details.items())
     )
     return f"{event.step} succeeded ({detail_parts})"
+
+
+def _percent(current: int, total: int) -> Decimal:
+    if total <= 0:
+        return Decimal("0.00")
+    return (Decimal(current) / Decimal(total) * Decimal("100")).quantize(
+        Decimal("0.01")
+    )
 
 
 def _utc_now() -> datetime:

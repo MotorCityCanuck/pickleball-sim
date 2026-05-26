@@ -518,10 +518,14 @@ class ControlPanelQueries:
                 completed_at=load.completed_at,
                 error_message=load.error_message,
             )
-            for load in session.scalars(
-                select(RawSeedLoadRun)
-                .order_by(RawSeedLoadRun.started_at.desc(), RawSeedLoadRun.id.desc())
-                .limit(5)
+            for load in (
+                session.scalars(
+                    select(RawSeedLoadRun)
+                    .where(RawSeedLoadRun.job_status_id == latest_seed_job.job_status_id)
+                    .order_by(RawSeedLoadRun.started_at.asc(), RawSeedLoadRun.id.asc())
+                )
+                if latest_seed_job is not None
+                else ()
             )
         )
 

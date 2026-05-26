@@ -64,6 +64,7 @@ def load_raw_seed_dataset(
     *,
     input_path: Path | str | None = None,
     session: Session | None = None,
+    job_status_id: int | None = None,
 ) -> RawSeedLoadResult:
     """Load a supported pickleball club seed dataset."""
     if dataset_type == CLUB_NAME_CONFIG.dataset_type:
@@ -71,12 +72,14 @@ def load_raw_seed_dataset(
             dataset_type,
             input_path=input_path,
             session=session,
+            job_status_id=job_status_id,
         )
 
     return PickleballClubDistributionIngestor().load_dataset(
         dataset_type,
         input_path=input_path,
         session=session,
+        job_status_id=job_status_id,
     )
 
 
@@ -89,6 +92,7 @@ class PickleballClubDistributionIngestor:
         *,
         input_path: Path | str | None = None,
         session: Session | None = None,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         """Load raw pickleball club distribution rows."""
         if dataset_type != DISTRIBUTION_CONFIG.dataset_type:
@@ -105,7 +109,12 @@ class PickleballClubDistributionIngestor:
         )
 
         return run_in_transaction(
-            lambda active_session: self._load(source_path, source_files, active_session),
+            lambda active_session: self._load(
+                source_path,
+                source_files,
+                active_session,
+                job_status_id=job_status_id,
+            ),
             session=session,
         )
 
@@ -114,9 +123,12 @@ class PickleballClubDistributionIngestor:
         source_path: Path,
         source_files: list[Path],
         session: Session,
+        *,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         load_run = create_load_run(
             session,
+            job_status_id=job_status_id,
             dataset_type=DISTRIBUTION_CONFIG.dataset_type,
             source_path=source_path,
             source_files=source_files,
@@ -214,6 +226,7 @@ class PickleballClubNameIngestor:
         *,
         input_path: Path | str | None = None,
         session: Session | None = None,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         """Load raw candidate club-name rows."""
         if dataset_type != CLUB_NAME_CONFIG.dataset_type:
@@ -230,7 +243,12 @@ class PickleballClubNameIngestor:
         )
 
         return run_in_transaction(
-            lambda active_session: self._load(source_path, source_files, active_session),
+            lambda active_session: self._load(
+                source_path,
+                source_files,
+                active_session,
+                job_status_id=job_status_id,
+            ),
             session=session,
         )
 
@@ -239,9 +257,12 @@ class PickleballClubNameIngestor:
         source_path: Path,
         source_files: list[Path],
         session: Session,
+        *,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         load_run = create_load_run(
             session,
+            job_status_id=job_status_id,
             dataset_type=CLUB_NAME_CONFIG.dataset_type,
             source_path=source_path,
             source_files=source_files,

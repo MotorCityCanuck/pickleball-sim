@@ -56,12 +56,14 @@ def load_raw_seed_dataset(
     *,
     input_path: Path | str | None = None,
     session: Session | None = None,
+    job_status_id: int | None = None,
 ) -> RawSeedLoadResult:
     """Load a supported raw last-name dataset."""
     return LastNameIngestor().load_dataset(
         dataset_type,
         input_path=input_path,
         session=session,
+        job_status_id=job_status_id,
     )
 
 
@@ -74,6 +76,7 @@ class LastNameIngestor:
         *,
         input_path: Path | str | None = None,
         session: Session | None = None,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         """Load a supported raw last-name dataset."""
         config = self._get_config(dataset_type)
@@ -90,6 +93,7 @@ class LastNameIngestor:
                 source_path,
                 source_files,
                 active_session,
+                job_status_id=job_status_id,
             ),
             session=session,
         )
@@ -100,9 +104,12 @@ class LastNameIngestor:
         source_path: Path,
         source_files: list[Path],
         session: Session,
+        *,
+        job_status_id: int | None = None,
     ) -> RawSeedLoadResult:
         load_run = create_load_run(
             session,
+            job_status_id=job_status_id,
             dataset_type=config.dataset_type,
             source_path=source_path,
             source_files=source_files,

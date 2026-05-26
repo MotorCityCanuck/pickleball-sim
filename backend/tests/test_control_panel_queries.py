@@ -25,6 +25,7 @@ def session():
             """
             CREATE TABLE raw_seed_load_runs (
                 id integer primary key autoincrement,
+                job_status_id bigint,
                 dataset_type varchar(80) not null,
                 source_path varchar(1000) not null,
                 source_file_count integer not null default 0,
@@ -731,7 +732,52 @@ def test_seed_readiness_ignores_stale_failed_raw_load_when_reference_data_is_rea
 
     assert snapshot.seed_data_summary.is_ready is True
     assert "The latest raw seed ingest failed." not in snapshot.seed_data_summary.readiness_blockers
-    assert snapshot.seed_data_summary.latest_raw_loads[0].status == "failed"
+    assert snapshot.seed_data_summary.latest_raw_loads == ()
+
+
+def test_seed_raw_loads_are_scoped_to_latest_seed_job_cycle(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                211, 'seed_refresh', 'seed-refresh-211', 'succeeded', 'completed', 100.00,
+                'Seed refresh completed successfully.',
+                '2026-05-21 11:00:00', '2026-05-21 11:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, job_status_id, dataset_type, source_path, source_file_count, status, rows_read, rows_loaded, rows_rejected,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES
+                (11, 211, 'metro_areas_us', 'data/raw/metro/us.csv', 1, 'completed', 10, 10, 0,
+                 '2026-05-21 11:00:00', '2026-05-21 11:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (12, 211, 'first_names_us', 'data/raw/first_names/us.txt', 1, 'completed', 20, 20, 0,
+                 '2026-05-21 11:01:00', '2026-05-21 11:10:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (13, NULL, 'last_names_us', 'data/raw/last_names/us.csv', 1, 'failed', 30, 0, 30,
+                 '2026-05-20 10:00:00', '2026-05-20 10:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 21, 11, 35, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert [load.dataset_type for load in snapshot.seed_data_summary.latest_raw_loads] == [
+        "metro_areas_us",
+        "first_names_us",
+    ]
 
 
 def test_seed_job_prefers_newer_succeeded_job_over_older_failed_job_without_started_at(session):

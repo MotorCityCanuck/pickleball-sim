@@ -24,6 +24,7 @@ def session_factory():
             """
             CREATE TABLE raw_seed_load_runs (
                 id integer primary key autoincrement,
+                job_status_id bigint,
                 dataset_type varchar(80) not null,
                 source_path varchar(1000) not null,
                 source_file_count integer not null,

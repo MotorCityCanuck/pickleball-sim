@@ -34,6 +34,7 @@ def session_factory():
             """
             CREATE TABLE raw_seed_load_runs (
                 id integer primary key autoincrement,
+                job_status_id bigint,
                 dataset_type varchar(80) not null,
                 source_path varchar(1000) not null,
                 source_file_count integer not null default 0,
@@ -922,6 +923,89 @@ def test_clear_stalled_job_route_refuses_active_job(session_factory):
     assert response.status_code == 200
     assert "still has a fresh activity signal" in response.body.decode()
     assert job_status == "running"
+
+
+def test_dismiss_failed_job_route_removes_failed_seed_job_from_snapshot(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, completed_at, error_message, created_at, updated_at
+                ) VALUES (
+                    61, 'seed_refresh', 'seed-refresh-failed', 'failed',
+                    'failed', 0.00, 'Seed refresh failed.',
+                    '2026-05-20 09:00:00', '2026-05-20 09:05:00', 'Seed refresh failed.',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name,
+                    stage_sequence, status, progress_current, progress_total,
+                    progress_unit, progress_percent, last_heartbeat_at,
+                    progress_message, error_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    61, 61, NULL, NULL, 'seed_normalization', 2, 'failed',
+                    0, 4, 'dataset', 0.00, CURRENT_TIMESTAMP,
+                    'Seed refresh failed.', 'Seed refresh failed.',
+                    '2026-05-20 09:00:00', '2026-05-20 09:05:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO raw_seed_load_runs (
+                    id, job_status_id, dataset_type, source_path, source_file_count, status,
+                    rows_read, rows_loaded, rows_rejected, error_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    61, 61, 'first_names_us', 'data/raw/first_names/us.txt', 1, 'failed',
+                    100, 0, 100, 'parse failed',
+                    '2026-05-20 09:00:00', '2026-05-20 09:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+
+        before = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        response = routes["/control/jobs/dismiss-failed"](
+            request=_request("/control/jobs/dismiss-failed", method="POST"),
+            job_status_id=61,
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        remaining_job_count = session.execute(
+            text("SELECT COUNT(*) FROM job_status WHERE id = 61")
+        ).scalar_one()
+        orphaned_load_job_id = session.execute(
+            text("SELECT job_status_id FROM raw_seed_load_runs WHERE id = 61")
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert before.status_code == 200
+    assert "Dismiss failed job" in before.body.decode()
+    assert response.status_code == 200
+    assert "Dismissed failed seed_refresh job seed-refresh-failed." in response.body.decode()
+    assert remaining_job_count == 0
+    assert orphaned_load_job_id is None
 
 
 def test_control_panel_config_validate_renders_validation_success(session_factory):

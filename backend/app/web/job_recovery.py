@@ -8,7 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.generation.job_lifecycle import job_is_actively_processing, utc_now
-from app.models import GenerationRun, JobStageProgress, JobStatus, MonthlyBatch
+from app.models import (
+    GenerationRun,
+    JobStageProgress,
+    JobStatus,
+    MonthlyBatch,
+    RawSeedLoadRun,
+)
 
 
 RECOVERY_MESSAGE = (
@@ -19,6 +25,15 @@ RECOVERY_MESSAGE = (
 @dataclass(frozen=True)
 class ClearedJob:
     """Summary of a successful stalled-job cleanup."""
+
+    job_status_id: int
+    job_id: str
+    job_type: str
+
+
+@dataclass(frozen=True)
+class DismissedJob:
+    """Summary of a failed job dismissed from operator status surfaces."""
 
     job_status_id: int
     job_id: str
@@ -82,6 +97,33 @@ def clear_stalled_job(session: Session, *, job_status_id: int) -> ClearedJob:
     session.flush()
     return ClearedJob(
         job_status_id=job.id,
+        job_id=job.job_id,
+        job_type=job.job_type,
+    )
+
+
+def dismiss_failed_job(session: Session, *, job_status_id: int) -> DismissedJob:
+    """Remove a failed job record from operator status surfaces without deleting domain data."""
+    job = session.get(JobStatus, job_status_id)
+    if job is None:
+        raise ValueError(f"Job status {job_status_id} does not exist.")
+    if job.status != "failed":
+        raise ValueError(f"Job {job.job_id} is not failed.")
+
+    for load_run in session.scalars(
+        select(RawSeedLoadRun).where(RawSeedLoadRun.job_status_id == job_status_id)
+    ):
+        load_run.job_status_id = None
+
+    for row in session.scalars(
+        select(JobStageProgress).where(JobStageProgress.job_status_id == job_status_id)
+    ):
+        session.delete(row)
+
+    session.delete(job)
+    session.flush()
+    return DismissedJob(
+        job_status_id=job_status_id,
         job_id=job.job_id,
         job_type=job.job_type,
     )

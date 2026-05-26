@@ -30,7 +30,7 @@ from .control_panel_queries import (
     merge_payload_sections,
     split_payload_sections,
 )
-from .job_recovery import clear_stalled_job
+from .job_recovery import clear_stalled_job, dismiss_failed_job
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
@@ -346,6 +346,39 @@ def build_control_panel_router() -> APIRouter:
             session.commit()
             status_recovery_message = (
                 f"Cleared stalled {cleared.job_type} job {cleared.job_id}."
+            )
+        except Exception as exc:
+            session.rollback()
+            status_recovery_error = str(exc)
+        snapshot = queries.get_control_panel_snapshot(session)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_orchestration_tab.html",
+            {
+                "snapshot": snapshot,
+                "seed_launch_message": None,
+                "seed_launch_error": None,
+                "launch_message": None,
+                "launch_error": None,
+                "status_recovery_message": status_recovery_message,
+                "status_recovery_error": status_recovery_error,
+            },
+        )
+
+    @router.post("/control/jobs/dismiss-failed", response_class=HTMLResponse)
+    def control_panel_dismiss_failed_job(
+        request: Request,
+        job_status_id: int = Form(...),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        status_recovery_message = None
+        status_recovery_error = None
+        try:
+            dismissed = dismiss_failed_job(session, job_status_id=job_status_id)
+            session.commit()
+            status_recovery_message = (
+                f"Dismissed failed {dismissed.job_type} job {dismissed.job_id}."
             )
         except Exception as exc:
             session.rollback()

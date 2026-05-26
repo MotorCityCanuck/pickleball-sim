@@ -116,6 +116,7 @@ EXPECTED_INDEXES = {
     "idx_raw_metro_areas_probability",
     "idx_raw_seed_load_errors_code",
     "idx_raw_seed_load_errors_load_run",
+    "idx_raw_seed_load_runs_job",
     "idx_raw_seed_load_runs_dataset",
     "idx_raw_seed_load_runs_started",
     "idx_raw_seed_load_runs_status",
@@ -307,6 +308,7 @@ EXPECTED_FOREIGN_KEYS = {
     "raw_first_names": {"load_run_id->raw_seed_load_runs.id"},
     "raw_last_names": {"load_run_id->raw_seed_load_runs.id"},
     "raw_metro_areas": {"load_run_id->raw_seed_load_runs.id"},
+    "raw_seed_load_runs": {"job_status_id->job_status.id"},
     "raw_pickleball_club_distributions": {
         "load_run_id->raw_seed_load_runs.id",
     },

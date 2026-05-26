@@ -19,7 +19,11 @@ from app.seed_data_ingest.base import RawSeedLoadResult
 from app.seed_data_normalize import normalize_seed_dataset
 from app.seed_data_normalize.base import SeedNormalizeResult
 
-from .destructive_reset import delete_generated_data
+from .destructive_reset import (
+    DELETE_MODELS_IN_ORDER,
+    ResetProgressEvent,
+    delete_generated_data,
+)
 from .job_lifecycle import job_is_actively_processing, overall_percent_complete
 
 
@@ -35,6 +39,7 @@ RAW_DATASET_ORDER = (
     "pickleball_club_names",
     "pickleball_club_distributions",
 )
+RESET_STAGE_NAME = "generated_data_reset"
 NORMALIZATION_ORDER = (
     "metro_areas",
     "first_names",
@@ -305,10 +310,20 @@ class SeedRefreshService:
                 stage_sequence=1,
                 progress_total=len(raw_datasets),
             )
+        stage_sequence = 1
         if mode == "refresh":
             stage_sequence = 2
-        else:
-            stage_sequence = 1
+        if mode in {"normalize", "refresh"}:
+            self._create_stage_row(
+                session,
+                job_status=job_status,
+                stage_name=RESET_STAGE_NAME,
+                stage_sequence=stage_sequence,
+                progress_total=len(DELETE_MODELS_IN_ORDER),
+                progress_unit="table",
+                progress_message="Pending generated-data reset.",
+            )
+            stage_sequence += 1
         if mode in {"normalize", "refresh"}:
             self._create_stage_row(
                 session,
@@ -379,16 +394,17 @@ class SeedRefreshService:
                 self._set_job_status(
                     job_status,
                     status="running",
-                    phase="seed_normalization",
+                    phase=RESET_STAGE_NAME,
                     message="Clearing generated data that depends on reference tables.",
                     started=mode == "normalize",
                 )
                 self._checkpoint(session, checkpoint)
-                self.reset_generated_data_fn(
-                    session=session,
-                    preserve_job_status_id=job_status.id,
+                self._run_generated_data_reset_stage(
+                    session,
+                    job_status=job_status,
+                    stage_name=RESET_STAGE_NAME,
+                    checkpoint=checkpoint,
                 )
-                self._checkpoint(session, checkpoint)
                 normalize_results = self._run_normalization_stage(
                     session,
                     job_status=job_status,
@@ -472,7 +488,11 @@ class SeedRefreshService:
                 percent_complete=self._overall_percent_complete(session, job_status.id),
             )
             self._checkpoint(session, checkpoint)
-            result = self.load_dataset_fn(dataset, session=session)
+            result = self.load_dataset_fn(
+                dataset,
+                session=session,
+                job_status_id=job_status.id,
+            )
             results.append(result)
             self._update_stage_progress(
                 stage_row,
@@ -512,6 +532,84 @@ class SeedRefreshService:
         )
         self._checkpoint(session, checkpoint)
         return results
+
+    def _run_generated_data_reset_stage(
+        self,
+        session: Session,
+        *,
+        job_status: JobStatus,
+        stage_name: str,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> None:
+        stage_row = self._get_stage_row(
+            session,
+            job_status_id=job_status.id,
+            stage_name=stage_name,
+        )
+
+        def progress_listener(event: ResetProgressEvent) -> None:
+            if event.status == "running":
+                progress_current = max(event.step_index - 1, 0)
+                progress_message = (
+                    f"Deleting {event.model_name} ({event.step_index}/{event.total_steps})"
+                )
+            else:
+                progress_current = event.step_index
+                if event.rows_affected is None:
+                    progress_message = (
+                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps})"
+                    )
+                else:
+                    progress_message = (
+                        f"Deleted {event.model_name} ({event.step_index}/{event.total_steps}); "
+                        f"{event.rows_affected} rows affected."
+                    )
+            self._update_stage_progress(
+                stage_row,
+                status="running",
+                progress_current=progress_current,
+                progress_total=event.total_steps,
+                progress_message=progress_message,
+                metadata={
+                    "current_model": event.model_name,
+                    "completed_models": progress_current,
+                    "total_models": event.total_steps,
+                    "rows_affected": event.rows_affected,
+                },
+            )
+            self._set_job_status(
+                job_status,
+                status="running",
+                phase=stage_name,
+                message=progress_message,
+                percent_complete=self._overall_percent_complete(session, job_status.id),
+            )
+            self._checkpoint(session, checkpoint)
+
+        self.reset_generated_data_fn(
+            session=session,
+            preserve_job_status_id=job_status.id,
+            progress_listener=progress_listener,
+        )
+        self._update_stage_progress(
+            stage_row,
+            status="succeeded",
+            progress_current=len(DELETE_MODELS_IN_ORDER),
+            progress_total=len(DELETE_MODELS_IN_ORDER),
+            progress_message="Generated-data reset completed.",
+            metadata={
+                "completed_models": len(DELETE_MODELS_IN_ORDER),
+                "total_models": len(DELETE_MODELS_IN_ORDER),
+            },
+        )
+        self._set_job_status(
+            job_status,
+            status="running",
+            phase=stage_name,
+            message="Generated-data reset completed.",
+            percent_complete=self._overall_percent_complete(session, job_status.id),
+        )
+        self._checkpoint(session, checkpoint)
 
     def _run_normalization_stage(
         self,
@@ -672,6 +770,8 @@ class SeedRefreshService:
         stage_name: str,
         stage_sequence: int,
         progress_total: int,
+        progress_unit: str = "dataset",
+        progress_message: str = "Pending execution.",
     ) -> None:
         session.add(
             JobStageProgress(
@@ -683,9 +783,9 @@ class SeedRefreshService:
                 status="pending",
                 progress_current=0,
                 progress_total=progress_total,
-                progress_unit="dataset",
+                progress_unit=progress_unit,
                 progress_percent=Decimal("0.00"),
-                progress_message="Pending execution.",
+                progress_message=progress_message,
             )
         )
         session.flush()

@@ -53,12 +53,14 @@ def run_in_transaction(callback, session: Session | None = None) -> RawSeedLoadR
 def create_load_run(
     session: Session,
     *,
+    job_status_id: int | None = None,
     dataset_type: str,
     source_path: Path,
     source_files: list[Path],
 ) -> RawSeedLoadRun:
     """Create and flush a running raw seed load-run record."""
     load_run = RawSeedLoadRun(
+        job_status_id=job_status_id,
         dataset_type=dataset_type,
         source_path=str(source_path),
         source_file_count=len(source_files),

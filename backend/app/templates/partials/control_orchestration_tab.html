@@ -76,6 +76,22 @@
                     {% if snapshot.seed_data_summary.latest_seed_job.current_message %}
                         <div style="margin-top:6px; color:#5a6477;">{{ snapshot.seed_data_summary.latest_seed_job.current_message }}</div>
                     {% endif %}
+                    {% if snapshot.seed_data_summary.latest_seed_job.status == 'failed' %}
+                        <form
+                            style="margin-top:10px;"
+                            hx-post="/control/jobs/dismiss-failed"
+                            hx-target="#control-tab-content"
+                            hx-swap="innerHTML"
+                        >
+                            <input type="hidden" name="job_status_id" value="{{ snapshot.seed_data_summary.latest_seed_job.job_status_id }}">
+                            <button
+                                type="submit"
+                                style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer;"
+                            >
+                                Dismiss failed job
+                            </button>
+                        </form>
+                    {% endif %}
                     {% if snapshot.seed_data_summary.latest_seed_job.status in ('pending', 'running') and not snapshot.seed_data_summary.latest_seed_job_is_active %}
                         <form
                             style="margin-top:10px;"
@@ -187,7 +203,7 @@
                 <table style="width:100%; border-collapse:collapse; font-size:14px;">
                     <thead>
                         <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
-                            <th style="padding:8px 10px;">Dataset</th>
+                            <th style="padding:8px 10px;">Raw Dataset</th>
                             <th style="padding:8px 10px;">Status</th>
                             <th style="padding:8px 10px;">Rows Loaded</th>
                             <th style="padding:8px 10px;">Rows Rejected</th>
@@ -204,6 +220,10 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+        {% elif snapshot.seed_data_summary.latest_seed_job and snapshot.seed_data_summary.latest_seed_job.job_type in ('raw_seed_ingest', 'seed_refresh') %}
+            <div style="margin-top:16px; color:#5a6477; font-size:14px;">
+                No raw datasets have completed in the current seed cycle yet.
             </div>
         {% endif %}
     </section>

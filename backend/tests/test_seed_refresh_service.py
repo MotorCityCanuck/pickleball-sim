@@ -106,6 +106,7 @@ def session():
             """
             CREATE TABLE raw_seed_load_runs (
                 id integer primary key autoincrement,
+                job_status_id bigint,
                 dataset_type varchar(80) not null,
                 source_path varchar(1000) not null,
                 source_file_count integer not null default 0,
@@ -167,8 +168,8 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
     load_calls: list[str] = []
     normalize_calls: list[str] = []
 
-    def fake_load(dataset, *, session=None):
-        del session
+    def fake_load(dataset, *, session=None, job_status_id=None):
+        del session, job_status_id
         load_calls.append(dataset)
         return RawSeedLoadResult(
             load_run_id=len(load_calls),
@@ -193,9 +194,48 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
             rows_loaded=7,
         )
 
-    def fake_reset(*, session=None, preserve_job_status_id=None):
+    def fake_reset(*, session=None, preserve_job_status_id=None, progress_listener=None):
         del session
         events.append(f"reset:{preserve_job_status_id}")
+        if progress_listener is not None:
+            progress_listener(
+                seed_refresh_module.ResetProgressEvent(
+                    model_name="matches",
+                    model_label="Match",
+                    step_index=1,
+                    total_steps=2,
+                    status="running",
+                )
+            )
+            progress_listener(
+                seed_refresh_module.ResetProgressEvent(
+                    model_name="matches",
+                    model_label="Match",
+                    step_index=1,
+                    total_steps=2,
+                    status="succeeded",
+                    rows_affected=10,
+                )
+            )
+            progress_listener(
+                seed_refresh_module.ResetProgressEvent(
+                    model_name="players",
+                    model_label="Player",
+                    step_index=2,
+                    total_steps=2,
+                    status="running",
+                )
+            )
+            progress_listener(
+                seed_refresh_module.ResetProgressEvent(
+                    model_name="players",
+                    model_label="Player",
+                    step_index=2,
+                    total_steps=2,
+                    status="succeeded",
+                    rows_affected=5,
+                )
+            )
 
     service = SeedRefreshService(
         load_dataset_fn=fake_load,
@@ -240,14 +280,16 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
         .order_by(JobStageProgress.stage_sequence.asc(), JobStageProgress.id.asc())
         .all()
     )
-    assert len(stage_rows) == 2
+    assert len(stage_rows) == 3
     assert [row.stage_name for row in stage_rows] == [
         "raw_seed_ingest",
+        "generated_data_reset",
         "seed_normalization",
     ]
     assert {row.status for row in stage_rows} == {"succeeded"}
     assert stage_rows[0].progress_current == 6
-    assert stage_rows[1].progress_current == 4
+    assert stage_rows[1].progress_current == len(seed_refresh_module.DELETE_MODELS_IN_ORDER)
+    assert stage_rows[2].progress_current == 4
 
 
 def test_refresh_seed_data_blocks_concurrent_seed_jobs(session):
@@ -333,8 +375,8 @@ def test_background_seed_job_persists_failed_status(session, monkeypatch):
     )
     monkeypatch.setattr(seed_refresh_module, "SessionLocal", local_session_factory)
 
-    def failing_load(dataset, *, session=None):
-        del dataset, session
+    def failing_load(dataset, *, session=None, job_status_id=None):
+        del dataset, session, job_status_id
         raise RuntimeError("planned raw load failure")
 
     service = SeedRefreshService(
@@ -366,8 +408,8 @@ def test_normalize_seed_data_resets_generated_data_before_normalization(session)
     _seed_valid_config(session)
     events: list[str] = []
 
-    def fake_reset(*, session=None, preserve_job_status_id=None):
-        del session
+    def fake_reset(*, session=None, preserve_job_status_id=None, progress_listener=None):
+        del session, progress_listener
         events.append(f"reset:{preserve_job_status_id}")
 
     def fake_normalize(dataset, *, replace_production=False, config_payload=None, session=None):

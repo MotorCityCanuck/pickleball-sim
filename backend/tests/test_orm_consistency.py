@@ -150,6 +150,7 @@ EXPECTED_KEY_COLUMNS = {
     },
     "raw_seed_load_runs": {
         "id",
+        "job_status_id",
         "dataset_type",
         "source_path",
         "source_file_count",
