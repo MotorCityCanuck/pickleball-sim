@@ -2,3 +2,9 @@
 data/raw/
 data/realism_audit_snapshots/
 raw_data/
+
+# Python generated artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
