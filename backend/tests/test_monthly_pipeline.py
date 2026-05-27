@@ -16,6 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.generation import MonthlyGenerationPipeline  # noqa: E402
 from app.generators import (  # noqa: E402
     ClubMembershipGenerationResult,
+    MatchGenerationProgress,
     MatchGenerationResult,
     PlayerGenerationResult,
     RatingUpdateResult,
@@ -379,7 +380,19 @@ class FakeTeamGenerator:
 
 
 class FakeMatchGenerator:
-    def generate_for_batch(self, *, batch_id, session):
+    def generate_for_batch(self, *, batch_id, session, progress_listener=None):
+        if progress_listener is not None:
+            progress_listener(
+                MatchGenerationProgress(
+                    progress_current=1,
+                    progress_total=3,
+                    progress_unit="match",
+                    message=f"Planned 1/3 matches for batch {batch_id}.",
+                    heartbeat_quiet_after_seconds=1200,
+                    heartbeat_likely_stalled_after_seconds=3600,
+                    details={"phase": "planning"},
+                )
+            )
         session.add(
             Match(
                 match_date=date(2024, batch_id, 15),
@@ -499,6 +512,29 @@ def test_pipeline_creates_missing_successive_batches(session):
     created_batch = session.get(MonthlyBatch, 3)
     assert created_batch.batch_type == "future_increment"
     assert created_batch.batch_sequence == 3
+
+
+def test_pipeline_forwards_match_chunk_progress(session):
+    seed_run(session)
+    events = []
+
+    fake_pipeline().run_months(
+        generation_run_id=1,
+        months=1,
+        progress_listener=events.append,
+        session=session,
+    )
+
+    match_events = [
+        event for event in events if event.step == "matches" and event.status == "running"
+    ]
+    assert len(match_events) >= 2
+    assert match_events[0].progress_current is None
+    assert match_events[1].progress_current == 1
+    assert match_events[1].progress_total == 3
+    assert match_events[1].progress_unit == "match"
+    assert match_events[1].message == "Planned 1/3 matches for batch 1."
+    assert match_events[1].heartbeat_likely_stalled_after_seconds == 3600
 
 
 def test_pipeline_skips_succeeded_batch_when_skip_existing_is_enabled(session):

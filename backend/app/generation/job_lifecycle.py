@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.models import JobStageProgress, JobStatus
 
+from .progress_liveness import (
+    DEFAULT_STAGE_LIKELY_STALLED_AFTER,
+    liveness_state_for_stage,
+)
+
 
 DEFAULT_JOB_STALE_AFTER = timedelta(minutes=15)
 TERMINAL_JOB_STATUSES = {"succeeded", "failed"}
@@ -31,17 +36,31 @@ def job_is_actively_processing(
         return False
 
     current_time = now or utc_now()
-    running_stage_exists = session.scalar(
-        select(JobStageProgress.id)
-        .where(
-            JobStageProgress.job_status_id == job.id,
-            JobStageProgress.status == "running",
-            JobStageProgress.last_heartbeat_at.is_not(None),
-            JobStageProgress.last_heartbeat_at >= current_time - stale_after,
+    running_stage_rows = list(
+        session.scalars(
+            select(JobStageProgress).where(
+                JobStageProgress.job_status_id == job.id,
+                JobStageProgress.status == "running",
+                JobStageProgress.last_heartbeat_at.is_not(None),
+            )
         )
-        .limit(1)
     )
-    if running_stage_exists is not None:
+    if any(
+        liveness_state_for_stage(
+            stage_name=row.stage_name,
+            status=row.status,
+            metadata=row.metadata_json,
+            last_heartbeat_at=row.last_heartbeat_at,
+            now=current_time,
+            default_quiet_after=stale_after,
+            default_likely_stalled_after=max(
+                stale_after * 2,
+                DEFAULT_STAGE_LIKELY_STALLED_AFTER,
+            ),
+        )
+        in {"active", "quiet"}
+        for row in running_stage_rows
+    ):
         return True
 
     reference_time = job.started_at or job.created_at

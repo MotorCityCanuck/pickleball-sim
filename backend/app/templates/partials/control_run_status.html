@@ -64,6 +64,14 @@
                                         {% if stage.progress_percent is not none %}
                                             | {{ stage.progress_percent }}%
                                         {% endif %}
+                                        {% if stage.progress_total %}
+                                            | {{ stage.progress_current }}/{{ stage.progress_total }} {{ stage.progress_unit or 'units' }}
+                                        {% endif %}
+                                        {% if stage.liveness_state == 'quiet' %}
+                                            | heartbeat quiet
+                                        {% elif stage.liveness_state == 'likely_stalled' %}
+                                            | likely stalled
+                                        {% endif %}
                                     </span>
                                 </div>
                                 <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">

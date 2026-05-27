@@ -6,7 +6,12 @@ from .club_memberships import (
     ClubMembershipGenerator,
 )
 from .games import GeneratedGames, generate_match_games
-from .matches import MatchGenerationConfig, MatchGenerationResult, MatchGenerator
+from .matches import (
+    MatchGenerationConfig,
+    MatchGenerationProgress,
+    MatchGenerationResult,
+    MatchGenerator,
+)
 from .players import PlayerGenerator, PlayerGenerationResult
 from .ratings import RatingUpdateConfig, RatingUpdateGenerator, RatingUpdateResult
 from .teams import TeamFormationConfig, TeamGenerationResult, TeamGenerator
@@ -17,6 +22,7 @@ __all__ = [
     "ClubMembershipGenerator",
     "GeneratedGames",
     "MatchGenerationConfig",
+    "MatchGenerationProgress",
     "MatchGenerationResult",
     "MatchGenerator",
     "PlayerGenerationResult",

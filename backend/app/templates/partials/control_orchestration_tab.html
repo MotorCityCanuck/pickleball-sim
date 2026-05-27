@@ -178,8 +178,13 @@
                                 {% if stage.progress_percent is not none %}
                                     | {{ stage.progress_percent }}%
                                 {% endif %}
-                                {% if stage.is_stale %}
-                                    | stale
+                                {% if stage.progress_total %}
+                                    | {{ stage.progress_current }}/{{ stage.progress_total }} {{ stage.progress_unit or 'units' }}
+                                {% endif %}
+                                {% if stage.liveness_state == 'quiet' %}
+                                    | heartbeat quiet
+                                {% elif stage.liveness_state == 'likely_stalled' %}
+                                    | likely stalled
                                 {% endif %}
                             </span>
                         </div>

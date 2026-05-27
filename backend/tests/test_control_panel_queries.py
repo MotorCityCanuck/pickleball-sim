@@ -331,7 +331,8 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)
     now = datetime(2026, 5, 20, 12, 0, 0)
-    stale_at = now - timedelta(minutes=20)
+    quiet_at = now - timedelta(minutes=25)
+    stalled_at = now - timedelta(minutes=61)
     session.execute(
         text(
             """
@@ -376,7 +377,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
             ) VALUES
                 (1000, 100, 1, 10, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:02:00', 'players succeeded', '{"rows_loaded": 1250}', '2026-05-20 11:01:00', '2026-05-20 11:02:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
                 (1001, 100, 1, 11, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, '2026-05-20 11:16:00', 'players succeeded', '{"rows_loaded": 1400}', '2026-05-20 11:15:00', '2026-05-20 11:16:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (1002, 100, 1, 11, 'matches', 4, 'running', 0, 1, 'stage', 0.00, '2026-05-20 11:58:00', 'matches running', NULL, '2026-05-20 11:20:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (1002, 100, 1, 11, 'matches', 4, 'running', 4800, 12000, 'match', 40.00, '2026-05-20 11:58:00', 'matches running', '{"heartbeat_quiet_after_seconds": 1200, "heartbeat_likely_stalled_after_seconds": 3600}', '2026-05-20 11:20:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
         )
     )
@@ -406,17 +407,29 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.batch_summaries[0].stage_progress[0].completion_message == "Rows created: 1,250"
     assert second_batch.stage_progress[1].stage_name == "matches"
     assert second_batch.stage_progress[1].is_stale is False
+    assert second_batch.stage_progress[1].liveness_state == "active"
     assert snapshot.warnings == ()
 
     session.execute(
-        text("UPDATE job_stage_progress SET last_heartbeat_at = :stale_at WHERE id = 1002"),
-        {"stale_at": stale_at},
+        text("UPDATE job_stage_progress SET last_heartbeat_at = :quiet_at WHERE id = 1002"),
+        {"quiet_at": quiet_at},
     )
     session.commit()
 
-    stale_snapshot = queries.get_control_panel_snapshot(session)
-    assert "Progress heartbeat is stale for one or more running stages." in stale_snapshot.warnings
-    assert stale_snapshot.batch_summaries[1].stage_progress[1].is_stale is True
+    quiet_snapshot = queries.get_control_panel_snapshot(session)
+    assert "One or more long-running stages have gone heartbeat-quiet." in quiet_snapshot.warnings
+    assert quiet_snapshot.batch_summaries[1].stage_progress[1].liveness_state == "quiet"
+    assert quiet_snapshot.batch_summaries[1].stage_progress[1].is_stale is False
+
+    session.execute(
+        text("UPDATE job_stage_progress SET last_heartbeat_at = :stalled_at WHERE id = 1002"),
+        {"stalled_at": stalled_at},
+    )
+    session.commit()
+
+    stalled_snapshot = queries.get_control_panel_snapshot(session)
+    assert "One or more running stages now look likely stalled." in stalled_snapshot.warnings
+    assert stalled_snapshot.batch_summaries[1].stage_progress[1].is_stale is True
 
 
 def test_get_control_panel_snapshot_reports_missing_valid_config(session):

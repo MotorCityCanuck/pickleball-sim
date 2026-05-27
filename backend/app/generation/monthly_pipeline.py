@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.session import session_scope
 from app.generators import (
     ClubMembershipGenerator,
+    MatchGenerationProgress,
     MatchGenerator,
     PlayerGenerator,
     RatingUpdateGenerator,
@@ -77,6 +78,12 @@ class PipelineProgressEvent:
     batch_month: date
     step: str
     status: str
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_unit: str | None = None
+    message: str | None = None
+    heartbeat_quiet_after_seconds: int | None = None
+    heartbeat_likely_stalled_after_seconds: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
 
@@ -253,7 +260,13 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="matches",
-                    runner=lambda: self._run_matches(batch.id, skip_existing, session),
+                    runner=lambda: self._run_matches(
+                        generation_run_id,
+                        batch,
+                        skip_existing,
+                        progress_listener,
+                        session,
+                    ),
                     progress_listener=progress_listener,
                 )
             )
@@ -463,13 +476,15 @@ class MonthlyGenerationPipeline:
 
     def _run_matches(
         self,
-        batch_id: int,
+        generation_run_id: int,
+        batch: MonthlyBatch,
         skip_existing: bool,
+        progress_listener: Callable[[PipelineProgressEvent], None] | None,
         session: Session,
     ) -> PipelineStepResult:
         existing = _count(
             session,
-            select(func.count()).select_from(Match).where(Match.batch_id == batch_id),
+            select(func.count()).select_from(Match).where(Match.batch_id == batch.id),
         )
         if existing:
             if skip_existing:
@@ -478,11 +493,18 @@ class MonthlyGenerationPipeline:
                     "skipped",
                     {"existing_matches": existing},
                 )
-            raise ValueError(f"Monthly batch {batch_id} already has matches")
+            raise ValueError(f"Monthly batch {batch.id} already has matches")
 
         result = self.match_generator.generate_for_batch(
-            batch_id=batch_id,
+            batch_id=batch.id,
             session=session,
+            progress_listener=lambda progress: self._emit_match_progress(
+                generation_run_id=generation_run_id,
+                batch_id=batch.id,
+                batch_month=batch.batch_month,
+                progress=progress,
+                progress_listener=progress_listener,
+            ),
         )
         return PipelineStepResult(
             "matches",
@@ -491,6 +513,34 @@ class MonthlyGenerationPipeline:
                 "match_count": result.match_count,
                 "game_count": result.game_count,
             },
+        )
+
+    def _emit_match_progress(
+        self,
+        *,
+        generation_run_id: int,
+        batch_id: int,
+        batch_month: date,
+        progress: MatchGenerationProgress,
+        progress_listener: Callable[[PipelineProgressEvent], None] | None,
+    ) -> None:
+        if progress_listener is None:
+            return
+        progress_listener(
+            PipelineProgressEvent(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                batch_month=batch_month,
+                step="matches",
+                status="running",
+                progress_current=progress.progress_current,
+                progress_total=progress.progress_total,
+                progress_unit=progress.progress_unit,
+                message=progress.message,
+                heartbeat_quiet_after_seconds=progress.heartbeat_quiet_after_seconds,
+                heartbeat_likely_stalled_after_seconds=progress.heartbeat_likely_stalled_after_seconds,
+                details=progress.details,
+            )
         )
 
     def _run_ratings(

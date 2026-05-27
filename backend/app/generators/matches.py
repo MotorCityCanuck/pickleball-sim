@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import random
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -200,6 +200,19 @@ class MatchGenerationResult:
     match_team_count: int
     match_team_player_count: int
     game_count: int
+
+
+@dataclass(frozen=True)
+class MatchGenerationProgress:
+    """Progress update emitted during long-running match generation."""
+
+    progress_current: int
+    progress_total: int
+    progress_unit: str
+    message: str
+    heartbeat_quiet_after_seconds: int | None = None
+    heartbeat_likely_stalled_after_seconds: int | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -481,19 +494,29 @@ class MatchGenerator:
         self,
         *,
         batch_id: int,
+        progress_listener: Callable[[MatchGenerationProgress], None] | None = None,
         session: Session | None = None,
     ) -> MatchGenerationResult:
         """Generate matches for an existing monthly batch."""
         if session is not None:
-            return self._generate_for_batch(batch_id=batch_id, session=session)
+            return self._generate_for_batch(
+                batch_id=batch_id,
+                progress_listener=progress_listener,
+                session=session,
+            )
 
         with session_scope() as active_session:
-            return self._generate_for_batch(batch_id=batch_id, session=active_session)
+            return self._generate_for_batch(
+                batch_id=batch_id,
+                progress_listener=progress_listener,
+                session=active_session,
+            )
 
     def _generate_for_batch(
         self,
         *,
         batch_id: int,
+        progress_listener: Callable[[MatchGenerationProgress], None] | None,
         session: Session,
     ) -> MatchGenerationResult:
         batch = session.get(MonthlyBatch, batch_id)
@@ -535,6 +558,19 @@ class MatchGenerator:
         pairings: list[tuple[Match, TeamCandidate, TeamCandidate, Decimal]] = []
         attempts = 0
         max_attempts = max(target_match_count * 40, 200)
+        heartbeat_chunk_size = max(min(target_match_count // 20, 5_000), 500)
+        self._emit_progress(
+            progress_listener,
+            progress_current=0,
+            progress_total=max(target_match_count, 1),
+            progress_unit="match",
+            message=f"Planning up to {target_match_count} matches for batch {batch.batch_month}.",
+            details={
+                "phase": "planning",
+                "target_match_count": target_match_count,
+                "active_team_count": len(teams),
+            },
+        )
 
         while len(matches) < target_match_count and attempts < max_attempts:
             attempts += 1
@@ -606,14 +642,45 @@ class MatchGenerator:
                 frozenset((first_team.id, second_team.id)),
                 [],
             ).append(match_date)
+            if len(matches) % heartbeat_chunk_size == 0:
+                self._emit_progress(
+                    progress_listener,
+                    progress_current=len(matches),
+                    progress_total=max(target_match_count, 1),
+                    progress_unit="match",
+                    message=(
+                        f"Planned {len(matches)}/{target_match_count} matches "
+                        f"for {batch.batch_month}."
+                    ),
+                    details={
+                        "phase": "planning",
+                        "attempts": attempts,
+                        "target_match_count": target_match_count,
+                    },
+                )
 
         session.add_all(matches)
         session.flush()
+        self._emit_progress(
+            progress_listener,
+            progress_current=len(matches),
+            progress_total=max(target_match_count, 1),
+            progress_unit="match",
+            message=(
+                f"Persisted {len(matches)}/{target_match_count} planned matches "
+                f"for {batch.batch_month}."
+            ),
+            details={
+                "phase": "matches_persisted",
+                "attempts": attempts,
+                "target_match_count": target_match_count,
+            },
+        )
 
         match_teams: list[MatchTeam] = []
         match_team_players: list[MatchTeamPlayer] = []
         games = []
-        for match, first_team, second_team, expected_prob in pairings:
+        for index, (match, first_team, second_team, expected_prob) in enumerate(pairings, start=1):
             generated_games = generate_match_games(
                 rng,
                 match=match,
@@ -641,9 +708,40 @@ class MatchGenerator:
                 game.team_one_score + game.team_two_score
                 for game in generated_games.games
             )
+            if index % heartbeat_chunk_size == 0:
+                self._emit_progress(
+                    progress_listener,
+                    progress_current=index,
+                    progress_total=max(target_match_count, 1),
+                    progress_unit="match",
+                    message=(
+                        f"Scored {index}/{target_match_count} matches "
+                        f"for {batch.batch_month}."
+                    ),
+                    details={
+                        "phase": "scoring",
+                        "game_count_so_far": len(games),
+                        "target_match_count": target_match_count,
+                    },
+                )
 
         session.add_all(match_teams)
         session.flush()
+        self._emit_progress(
+            progress_listener,
+            progress_current=len(pairings),
+            progress_total=max(target_match_count, 1),
+            progress_unit="match",
+            message=(
+                f"Persisted match teams for {len(pairings)}/{target_match_count} matches "
+                f"in {batch.batch_month}."
+            ),
+            details={
+                "phase": "match_teams_persisted",
+                "match_team_count": len(match_teams),
+                "target_match_count": target_match_count,
+            },
+        )
 
         for pairing_index, (_, first_team, second_team, _) in enumerate(pairings):
             team_one = match_teams[pairing_index * 2]
@@ -668,6 +766,30 @@ class MatchGenerator:
             match_team_count=len(match_teams),
             match_team_player_count=len(match_team_players),
             game_count=len(games),
+        )
+
+    @staticmethod
+    def _emit_progress(
+        progress_listener: Callable[[MatchGenerationProgress], None] | None,
+        *,
+        progress_current: int,
+        progress_total: int,
+        progress_unit: str,
+        message: str,
+        details: dict[str, Any],
+    ) -> None:
+        if progress_listener is None:
+            return
+        progress_listener(
+            MatchGenerationProgress(
+                progress_current=progress_current,
+                progress_total=progress_total,
+                progress_unit=progress_unit,
+                message=message,
+                heartbeat_quiet_after_seconds=20 * 60,
+                heartbeat_likely_stalled_after_seconds=60 * 60,
+                details=details,
+            )
         )
 
 

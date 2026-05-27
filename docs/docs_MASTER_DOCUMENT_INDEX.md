@@ -2,9 +2,9 @@
 
 **Pickleball Simulation Platform - Authoritative Design Documentation**
 
-**Last Updated**: 2026-05-18  
-**Status**: ✅ Reviewed and Consistent  
-**Version**: 1.1
+**Last Updated**: 2026-05-27  
+**Status**: ✅ Reviewed and Refreshed  
+**Version**: 1.2
 
 ---
 
@@ -293,6 +293,22 @@ editing, payload validation, and run snapshot creation.
 
 ---
 
+### 3.2 Realism Audit Module
+**File**: `development/realism_audit_module_specification.md`
+**Purpose**: Standalone SQL-backed realism audit design and query-pack scope
+
+**When to Reference**: Audit query design, realism review workflow, future audit integration
+
+---
+
+### 3.3 Run Forecasting Service
+**File**: `development/run_forecasting_service_specification.md`
+**Purpose**: Pre-run workload forecasting for final-batch players, teams, matches, and games
+
+**When to Reference**: Control-panel estimate previews, pre-launch workload sizing, forecast-service implementation
+
+---
+
 ## 4. Student-Facing Documents (CONTEXT)
 
 ### 4.1 Capstone Assignment
@@ -388,8 +404,14 @@ architecture.md (FOUNDATION)
     │   ├── weekend_concentration_bias
     │   └── rating_noise_std_dev
     │
+    ├── configuration_payload_architecture.md (CONFIG STORAGE)
+    │   ├── config payload grouping
+    │   ├── naming rules
+    │   └── profile version storage
+    │
     └── generation_logic/*.md (ALGORITHMS)
         ├── monthly_batch_logic (orchestration)
+        ├── monthly_generation_pipeline (multi-month execution)
         ├── generation_sequence (step-by-step)
         ├── team_determination (partnerships)
         ├── matchmaking_logic (opponent selection)
@@ -398,6 +420,11 @@ architecture.md (FOUNDATION)
         ├── club_assignment (membership)
         ├── match_game_identification (IDs)
         └── historical_simulation_design (ratings)
+
+development/*.md (SUPPORTING SERVICES)
+    ├── realism_audit_module_specification.md
+    ├── run_forecasting_service_specification.md
+    └── web_control_panel_design.md
 ```
 
 ---
@@ -411,25 +438,29 @@ architecture.md (FOUNDATION)
 
 ### Phase 2: Configuration
 4. `generation_logic/configuration_parameters_specification.md` - All parameters
+5. `architecture/configuration_payload_architecture.md` - Config payload structure and storage rules
 
 ### Phase 3: Generation Logic
-5. `generation_logic/Pickleball_Simulation_Generation_Sequence_Specification.md` - Step-by-step workflow
-6. `generation_logic/NAPA_Historical_Simulation_Design_v4_Player_Growth.md` - Rating system
-7. `generation_logic/pickleball_match_game_monthly_batch_logic_v2_weekend_weighted.md` - Monthly processing
+6. `generation_logic/Pickleball_Simulation_Generation_Sequence_Specification.md` - Step-by-step workflow
+7. `generation_logic/NAPA_Historical_Simulation_Design_v4_Player_Growth.md` - Rating system
+8. `generation_logic/pickleball_match_game_monthly_batch_logic_v2_weekend_weighted.md` - Monthly processing
+9. `generation_logic/monthly_generation_pipeline.md` - Implemented orchestration layer
 
 ### Phase 4: Detailed Generation
-8. `generation_logic/player_region_and_name_assignment_logic.md`
-9. `generation_logic/pickleball_database_generation_club_logic_addendum.md`
-10. `generation_logic/player_to_club_assignment_logic_updated.md`
-11. `generation_logic/pickleball_team_determination_logic_v2.md`
-12. `generation_logic/pickleball_matchmaking_logic.md`
-13. `generation_logic/pickleball_match_game_identification_logic.md`
+10. `generation_logic/player_region_and_name_assignment_logic.md`
+11. `generation_logic/pickleball_database_generation_club_logic_addendum.md`
+12. `generation_logic/player_to_club_assignment_logic_updated.md`
+13. `generation_logic/pickleball_team_determination_logic_v2.md`
+14. `generation_logic/pickleball_matchmaking_logic.md`
+15. `generation_logic/pickleball_match_game_identification_logic.md`
 
 ### Phase 5: Implementation Contracts
-14. `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md`
+16. `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md`
+17. `development/realism_audit_module_specification.md`
+18. `development/run_forecasting_service_specification.md`
 
 ### Phase 6: Context (As Needed)
-15. `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md`
+19. `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md`
 
 ---
 
@@ -451,8 +482,12 @@ architecture.md (FOUNDATION)
 | `architecture/architecture.md` | ✅ 📋 | 🔴 CRITICAL |
 | `database/Pickleball_Simulation_Database_Design_v3.md` | ✅ 📋 | 🔴 CRITICAL |
 | `generation_logic/configuration_parameters_specification.md` | ✅ 📋 | 🔴 CRITICAL |
+| `architecture/configuration_payload_architecture.md` | ✅ 📋 | 🔴 CRITICAL |
+| `docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md` | ✅ 📋 | 🔴 CRITICAL |
+| `docs_MASTER_DOCUMENT_INDEX.md` | ✅ 📋 | 🔴 CRITICAL |
 | `generation_logic/Pickleball_Simulation_Generation_Sequence_Specification.md` | ✅ 📋 | 🟠 HIGH |
 | `generation_logic/pickleball_match_game_monthly_batch_logic_v2_weekend_weighted.md` | ✅ 📋 | 🟠 HIGH |
+| `generation_logic/monthly_generation_pipeline.md` | ✅ 📋 | 🟠 HIGH |
 | `generation_logic/pickleball_team_determination_logic_v2.md` | ✅ 📋 | 🟠 HIGH |
 | `generation_logic/pickleball_matchmaking_logic.md` | ✅ 📋 | 🟠 HIGH |
 | `generation_logic/player_region_and_name_assignment_logic.md` | ✅ 📋 | 🟠 HIGH |
@@ -461,13 +496,14 @@ architecture.md (FOUNDATION)
 | `generation_logic/player_to_club_assignment_logic_updated.md` | ✅ 📋 | 🟡 MEDIUM |
 | `generation_logic/pickleball_match_game_identification_logic.md` | ✅ 📋 | 🟡 MEDIUM |
 | `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md` | ✅ 📋 | 🟡 MEDIUM |
+| `development/realism_audit_module_specification.md` | ✅ 📋 | 🟡 MEDIUM |
+| `development/run_forecasting_service_specification.md` | ✅ 📋 | 🟡 MEDIUM |
+| `development/web_control_panel_design.md` | ✅ | 🟡 MEDIUM |
 | `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md` | ✅ | 🟢 REFERENCE |
 | `student_assignment/NAPA_Olympic_Analytics_RFP_Industry_Style_v2.md` | ✅ | 🟢 REFERENCE |
 | `architecture/Comprehensive_Instructor_AI_Dev_Guide_Windows_Dev_Environment_v3.md` | ✅ | 🟢 REFERENCE |
 | `architecture/Fully_Expanded_Student_AI_Dev_Guide-v5-final.md` | ✅ | 🟢 REFERENCE |
 | `architecture/Claude_vs_Codex_Workflow_and_Recommendations.md` | ✅ | 🟢 REFERENCE |
-| `docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md` | ✅ 📋 | 🔴 CRITICAL |
-| `docs_MASTER_DOCUMENT_INDEX.md` | ✅ 📋 | 🔴 CRITICAL |
 
 ---
 
@@ -528,6 +564,8 @@ If you find conflicting information:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2024-05-10 | Initial post-review index |
+| 1.1 | 2026-05-18 | Major review refresh |
+| 1.2 | 2026-05-27 | Added forecasting spec, realism-audit spec, config payload architecture, and monthly pipeline references |
 
 ---
 

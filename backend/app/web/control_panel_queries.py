@@ -11,6 +11,10 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigValidationIssue
+from app.generation.progress_liveness import (
+    DEFAULT_STAGE_LIKELY_STALLED_AFTER,
+    liveness_state_for_stage,
+)
 from app.models import (
     Club,
     ConfigurationProfileVersion,
@@ -120,6 +124,7 @@ class StageProgressSummary:
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
+    liveness_state: str
     is_stale: bool
 
 
@@ -433,8 +438,17 @@ class ControlPanelQueries:
                 started_at=row.started_at,
                 completed_at=row.completed_at,
                 error_message=row.error_message,
-                is_stale=self._is_stale(
+                liveness_state=self._liveness_state(
+                    stage_name=row.stage_name,
                     status=row.status,
+                    metadata=row.metadata_json,
+                    last_heartbeat_at=row.last_heartbeat_at,
+                    now=now,
+                ),
+                is_stale=self._is_stale(
+                    stage_name=row.stage_name,
+                    status=row.status,
+                    metadata=row.metadata_json,
                     last_heartbeat_at=row.last_heartbeat_at,
                     now=now,
                 ),
@@ -482,8 +496,17 @@ class ControlPanelQueries:
                 started_at=row.started_at,
                 completed_at=row.completed_at,
                 error_message=row.error_message,
-                is_stale=self._is_stale(
+                liveness_state=self._liveness_state(
+                    stage_name=row.stage_name,
                     status=row.status,
+                    metadata=row.metadata_json,
+                    last_heartbeat_at=row.last_heartbeat_at,
+                    now=now,
+                ),
+                is_stale=self._is_stale(
+                    stage_name=row.stage_name,
+                    status=row.status,
+                    metadata=row.metadata_json,
                     last_heartbeat_at=row.last_heartbeat_at,
                     now=now,
                 ),
@@ -604,8 +627,17 @@ class ControlPanelQueries:
                     started_at=row.started_at,
                     completed_at=row.completed_at,
                     error_message=row.error_message,
-                    is_stale=self._is_stale(
+                    liveness_state=self._liveness_state(
+                        stage_name=row.stage_name,
                         status=row.status,
+                        metadata=row.metadata_json,
+                        last_heartbeat_at=row.last_heartbeat_at,
+                        now=now,
+                    ),
+                    is_stale=self._is_stale(
+                        stage_name=row.stage_name,
+                        status=row.status,
+                        metadata=row.metadata_json,
                         last_heartbeat_at=row.last_heartbeat_at,
                         now=now,
                     ),
@@ -825,11 +857,17 @@ class ControlPanelQueries:
         if any(batch.processing_status == "failed" for batch in batch_summaries):
             warnings.append("One or more monthly batches failed.")
         if any(
-            stage.is_stale
+            stage.liveness_state == "likely_stalled"
             for batch in batch_summaries
             for stage in batch.stage_progress
         ):
-            warnings.append("Progress heartbeat is stale for one or more running stages.")
+            warnings.append("One or more running stages now look likely stalled.")
+        elif any(
+            stage.liveness_state == "quiet"
+            for batch in batch_summaries
+            for stage in batch.stage_progress
+        ):
+            warnings.append("One or more long-running stages have gone heartbeat-quiet.")
         if active_job is not None and active_job.status == "failed":
             warnings.append("The most recent generation job failed.")
         return warnings
@@ -902,7 +940,8 @@ class ControlPanelQueries:
         if job.status in {"succeeded", "failed"}:
             return False
         if any(
-            stage.status == "running" and not stage.is_stale
+            stage.status == "running"
+            and stage.liveness_state in {"active", "quiet"}
             for stage in stage_progress
         ):
             return True
@@ -911,16 +950,47 @@ class ControlPanelQueries:
             return False
         return (self.now_fn() - reference_time) <= self.stale_after
 
+    def _liveness_state(
+        self,
+        *,
+        stage_name: str | None,
+        status: str,
+        metadata: dict[str, object] | None,
+        last_heartbeat_at: datetime | None,
+        now: datetime,
+    ) -> str:
+        return liveness_state_for_stage(
+            stage_name=stage_name,
+            status=status,
+            metadata=_coerce_mapping(metadata),
+            last_heartbeat_at=last_heartbeat_at,
+            now=now,
+            default_quiet_after=self.stale_after,
+            default_likely_stalled_after=max(
+                self.stale_after * 2,
+                DEFAULT_STAGE_LIKELY_STALLED_AFTER,
+            ),
+        )
+
     def _is_stale(
         self,
         *,
+        stage_name: str | None,
         status: str,
+        metadata: dict[str, object] | None,
         last_heartbeat_at: datetime | None,
         now: datetime,
     ) -> bool:
-        if status != "running" or last_heartbeat_at is None:
-            return False
-        return (now - last_heartbeat_at) > self.stale_after
+        return (
+            self._liveness_state(
+                stage_name=stage_name,
+                status=status,
+                metadata=metadata,
+                last_heartbeat_at=last_heartbeat_at,
+                now=now,
+            )
+            == "likely_stalled"
+        )
 
 
 def _job_summary(job: JobStatus | None) -> JobSummary | None:

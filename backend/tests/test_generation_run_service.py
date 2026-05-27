@@ -1,5 +1,5 @@
 """Tests for operator-facing generation run orchestration."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -729,11 +729,11 @@ def test_launch_generation_run_ignores_stale_running_generation_job(session):
     )
     session.execute(
         text(
-            """
-            INSERT INTO job_stage_progress (
-                id, job_status_id, generation_run_id, batch_id, stage_name,
-                stage_sequence, status, progress_current, progress_total,
-                progress_unit, progress_percent, last_heartbeat_at,
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name,
+                    stage_sequence, status, progress_current, progress_total,
+                    progress_unit, progress_percent, last_heartbeat_at,
                 progress_message, started_at, created_at, updated_at
             ) VALUES (
                 90, 90, 90, NULL, 'destructive_reset', 0, 'running',
@@ -755,6 +755,70 @@ def test_launch_generation_run_ignores_stale_running_generation_job(session):
 
     assert result.generation_run.id != 90
     assert result.generation_run.status == "succeeded"
+
+
+def test_launch_generation_run_respects_quiet_match_stage_as_active(session):
+    _seed_valid_config(session, seed=1, historical_months=1)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    started_at = now.replace(second=0, microsecond=0) - timedelta(hours=1)
+    quiet_heartbeat_at = now.replace(second=0, microsecond=0) - timedelta(minutes=20)
+    session.add(
+        GenerationRun(
+            id=91,
+            generation_name="quiet running",
+            seed_value=1,
+            simulation_version="service-v1",
+            status="running",
+            started_at=started_at,
+        )
+    )
+    session.flush()
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, created_at, updated_at
+            ) VALUES (
+                91, 'generation_run', 'generation-run-quiet', 'running',
+                'matches', 45.00, 'Quiet match generation.',
+                :started_at, :started_at, :started_at
+            )
+            """
+        ),
+        {"started_at": started_at},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name,
+                stage_sequence, status, progress_current, progress_total,
+                progress_unit, progress_percent, last_heartbeat_at,
+                progress_message, metadata_json, started_at, created_at, updated_at
+                ) VALUES (
+                91, 91, 91, NULL, 'matches', 4, 'running',
+                5000, 12000, 'match', 41.67, :heartbeat_at,
+                'Quiet match generation.',
+                '{"heartbeat_quiet_after_seconds": 1200, "heartbeat_likely_stalled_after_seconds": 3600}',
+                :started_at, :started_at, :heartbeat_at
+            )
+            """
+        ),
+        {
+            "started_at": started_at,
+            "heartbeat_at": quiet_heartbeat_at,
+        },
+    )
+    session.commit()
+
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=FakePipeline(),
+    )
+
+    with pytest.raises(ValueError, match="already running"):
+        service.launch_generation_run("blocked by quiet run", session=session)
 
 
 def test_background_generation_run_persists_failed_status(session, monkeypatch):

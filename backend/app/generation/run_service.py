@@ -35,6 +35,7 @@ from .job_lifecycle import (
     overall_percent_complete,
     utc_now,
 )
+from .progress_liveness import DEFAULT_STAGE_QUIET_AFTER
 from .monthly_pipeline import (
     MonthlyGenerationPipeline,
     MultiMonthPipelineResult,
@@ -658,13 +659,16 @@ class GenerationRunService:
 
         stage_row.status = event.status
         stage_row.progress_message = _format_progress_message(event)
-        stage_row.metadata_json = event.details or None
+        stage_row.metadata_json = _progress_metadata(event)
         stage_row.last_heartbeat_at = _utc_now()
         if event.status == "running":
             stage_row.started_at = stage_row.started_at or _utc_now()
-            stage_row.progress_current = 0
-            stage_row.progress_total = stage_row.progress_total or 1
-            stage_row.progress_percent = Decimal("0.00")
+            progress_current = event.progress_current or 0
+            progress_total = event.progress_total or stage_row.progress_total or 1
+            stage_row.progress_current = progress_current
+            stage_row.progress_total = progress_total
+            stage_row.progress_unit = event.progress_unit or stage_row.progress_unit or "stage"
+            stage_row.progress_percent = _percent(progress_current, progress_total)
             self._set_job_status(
                 job_status,
                 status="running",
@@ -675,8 +679,10 @@ class GenerationRunService:
         elif event.status == "succeeded":
             stage_row.started_at = stage_row.started_at or _utc_now()
             stage_row.completed_at = _utc_now()
-            stage_row.progress_current = stage_row.progress_total or 1
-            stage_row.progress_total = stage_row.progress_total or 1
+            progress_total = event.progress_total or stage_row.progress_total or 1
+            stage_row.progress_current = event.progress_current or progress_total
+            stage_row.progress_total = progress_total
+            stage_row.progress_unit = event.progress_unit or stage_row.progress_unit or "stage"
             stage_row.progress_percent = Decimal("100.00")
             self._set_job_status(
                 job_status,
@@ -792,6 +798,8 @@ def _parse_month_count(payload: dict[str, Any]) -> int:
 
 
 def _format_progress_message(event: PipelineProgressEvent) -> str:
+    if event.message:
+        return event.message
     if event.status == "running":
         return f"{event.step} running"
     if event.status == "failed":
@@ -802,6 +810,27 @@ def _format_progress_message(event: PipelineProgressEvent) -> str:
         f"{key}={value}" for key, value in sorted(event.details.items())
     )
     return f"{event.step} succeeded ({detail_parts})"
+
+
+def _progress_metadata(event: PipelineProgressEvent) -> dict[str, Any] | None:
+    metadata = dict(event.details)
+    quiet_after = (
+        event.heartbeat_quiet_after_seconds
+        if event.heartbeat_quiet_after_seconds is not None
+        else int(DEFAULT_STAGE_QUIET_AFTER.total_seconds())
+    )
+    metadata["heartbeat_quiet_after_seconds"] = quiet_after
+    if event.heartbeat_likely_stalled_after_seconds is not None:
+        metadata["heartbeat_likely_stalled_after_seconds"] = (
+            event.heartbeat_likely_stalled_after_seconds
+        )
+    if event.progress_current is not None:
+        metadata["progress_current"] = event.progress_current
+    if event.progress_total is not None:
+        metadata["progress_total"] = event.progress_total
+    if event.progress_unit is not None:
+        metadata["progress_unit"] = event.progress_unit
+    return metadata or None
 
 
 def _percent(current: int, total: int) -> Decimal:
