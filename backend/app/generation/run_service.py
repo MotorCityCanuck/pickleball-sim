@@ -133,12 +133,6 @@ class GenerationRunService:
         job_status_id: int,
     ) -> None:
         """Run a previously registered generation job with durable background commits."""
-        logger.info(
-            "Starting background generation job config_version_id=%s generation_run_id=%s job_status_id=%s",
-            config_version_id,
-            generation_run_id,
-            job_status_id,
-        )
         session = SessionLocal()
         try:
             self._execute_registered_generation_run(
@@ -150,12 +144,6 @@ class GenerationRunService:
                 re_raise=False,
             )
             session.commit()
-            logger.info(
-                "Completed background generation job config_version_id=%s generation_run_id=%s job_status_id=%s",
-                config_version_id,
-                generation_run_id,
-                job_status_id,
-            )
         except Exception:
             session.rollback()
             raise
@@ -279,6 +267,13 @@ class GenerationRunService:
         month_count = _parse_month_count(validation.normalized_payload)
 
         try:
+            _log_job_message(
+                "Generation job started",
+                job_id=job_status.job_id,
+                generation_run_id=generation_run.id,
+                config_version_id=config_version.id,
+                phase="destructive_reset",
+            )
             self.control_plane.start_generation_run(generation_run.id, session=session)
             self._set_job_status(
                 job_status,
@@ -349,6 +344,13 @@ class GenerationRunService:
                 percent_complete=Decimal("100.00"),
                 completed=True,
             )
+            _log_job_message(
+                "Generation job completed",
+                job_id=job_status.job_id,
+                generation_run_id=generation_run.id,
+                config_version_id=config_version.id,
+                phase="completed",
+            )
             self._checkpoint(session, checkpoint)
             return GenerationRunLaunchResult(
                 configuration_version=config_version,
@@ -366,6 +368,14 @@ class GenerationRunService:
                 phase="failed",
                 message=str(exc),
                 completed=True,
+            )
+            _log_job_message(
+                "Generation job failed",
+                job_id=job_status.job_id,
+                generation_run_id=generation_run.id,
+                config_version_id=config_version.id,
+                phase="failed",
+                error=str(exc),
             )
             self._checkpoint(session, checkpoint)
             if re_raise:
@@ -613,6 +623,13 @@ class GenerationRunService:
         stage_row.progress_current = len(DELETE_MODELS_IN_ORDER)
         stage_row.progress_total = len(DELETE_MODELS_IN_ORDER)
         stage_row.progress_percent = Decimal("100.00")
+        _log_stage_message(
+            "Generation stage completed",
+            job_status_id=stage_row.job_status_id,
+            generation_run_id=stage_row.generation_run_id,
+            stage_name=stage_row.stage_name,
+            batch_id=stage_row.batch_id,
+        )
         session.flush()
 
     def _seed_stage_progress(
@@ -684,6 +701,14 @@ class GenerationRunService:
             stage_row.progress_total = progress_total
             stage_row.progress_unit = event.progress_unit or stage_row.progress_unit or "stage"
             stage_row.progress_percent = Decimal("100.00")
+            _log_stage_message(
+                "Generation stage completed",
+                job_id=job_status.job_id,
+                generation_run_id=event.generation_run_id,
+                stage_name=event.step,
+                batch_id=event.batch_id,
+                batch_month=event.batch_month.isoformat(),
+            )
             self._set_job_status(
                 job_status,
                 status="running",
@@ -856,3 +881,22 @@ def _add_months(value: date, months: int) -> date:
     year = value.year + month_index // 12
     month = month_index % 12 + 1
     return date(year, month, 1)
+
+
+def _log_job_message(message: str, **fields: object) -> None:
+    logger.info("%s %s", _timestamp_label(), _format_log_message(message, **fields))
+
+
+def _log_stage_message(message: str, **fields: object) -> None:
+    logger.info("%s %s", _timestamp_label(), _format_log_message(message, **fields))
+
+
+def _format_log_message(message: str, **fields: object) -> str:
+    field_text = " ".join(
+        f"{key}={value}" for key, value in fields.items() if value is not None
+    )
+    return f"{message} {field_text}".rstrip()
+
+
+def _timestamp_label() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

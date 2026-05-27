@@ -1,5 +1,6 @@
 """Tests for operator-facing seed refresh orchestration."""
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -440,3 +441,59 @@ def test_normalize_seed_data_resets_generated_data_before_normalization(session)
         "normalize:last_names",
         "normalize:pickleball_clubs",
     ]
+
+
+def test_refresh_seed_data_logs_job_and_stage_lifecycle(session, caplog):
+    _seed_valid_config(session)
+
+    def fake_load(dataset, *, session=None, job_status_id=None):
+        del session, job_status_id
+        return RawSeedLoadResult(
+            load_run_id=1,
+            dataset_type=dataset,
+            source_file_count=1,
+            rows_read=10,
+            rows_loaded=8,
+            rows_rejected=2,
+            status="completed",
+        )
+
+    def fake_normalize(dataset, *, replace_production=False, config_payload=None, session=None):
+        del dataset, replace_production, config_payload, session
+        return SeedNormalizeResult(
+            dataset="normalized",
+            status="completed",
+            rows_read=10,
+            rows_deleted=3,
+            rows_loaded=7,
+        )
+
+    service = SeedRefreshService(
+        load_dataset_fn=fake_load,
+        normalize_dataset_fn=fake_normalize,
+        reset_generated_data_fn=lambda **kwargs: None,
+    )
+
+    with caplog.at_level("INFO", logger="uvicorn.error"):
+        service.refresh_seed_data(session=session)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Seed job started" in message and "mode=refresh" in message for message in messages)
+    assert any(
+        "Seed stage completed" in message and "stage_name=raw_seed_ingest" in message
+        for message in messages
+    )
+    assert any(
+        "Seed stage completed" in message and "stage_name=generated_data_reset" in message
+        for message in messages
+    )
+    assert any(
+        "Seed stage completed" in message and "stage_name=seed_normalization" in message
+        for message in messages
+    )
+    assert any("Seed job completed" in message and "phase=completed" in message for message in messages)
+    assert all(
+        re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC", message)
+        for message in messages
+        if "Seed job" in message or "Seed stage completed" in message
+    )

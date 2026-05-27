@@ -173,12 +173,6 @@ class SeedRefreshService:
         mode: str,
     ) -> None:
         """Run a previously registered seed job with durable background commits."""
-        logger.info(
-            "Starting background seed job config_version_id=%s job_status_id=%s mode=%s",
-            config_version_id,
-            job_status_id,
-            mode,
-        )
         session = SessionLocal()
         try:
             self._execute_registered_seed_job(
@@ -190,12 +184,6 @@ class SeedRefreshService:
                 re_raise=False,
             )
             session.commit()
-            logger.info(
-                "Completed background seed job config_version_id=%s job_status_id=%s mode=%s",
-                config_version_id,
-                job_status_id,
-                mode,
-            )
         except Exception:
             session.rollback()
             raise
@@ -375,6 +363,13 @@ class SeedRefreshService:
         normalize_results: list[SeedNormalizeResult] = []
 
         try:
+            _log_job_message(
+                "Seed job started",
+                job_id=job_status.job_id,
+                job_type=job_status.job_type,
+                config_version_id=config_version.id,
+                mode=mode,
+            )
             if mode in {"load", "refresh"}:
                 self._set_job_status(
                     job_status,
@@ -428,6 +423,14 @@ class SeedRefreshService:
                 percent_complete=Decimal("100.00"),
                 completed=True,
             )
+            _log_job_message(
+                "Seed job completed",
+                job_id=job_status.job_id,
+                job_type=job_status.job_type,
+                config_version_id=config_version.id,
+                mode=mode,
+                phase="completed",
+            )
             self._checkpoint(session, checkpoint)
             return SeedRefreshResult(
                 configuration_version=config_version,
@@ -443,6 +446,15 @@ class SeedRefreshService:
                 phase="failed",
                 message=str(exc),
                 completed=True,
+            )
+            _log_job_message(
+                "Seed job failed",
+                job_id=job_status.job_id,
+                job_type=job_status.job_type,
+                config_version_id=config_version.id,
+                mode=mode,
+                phase="failed",
+                error=str(exc),
             )
             self._checkpoint(session, checkpoint)
             if re_raise:
@@ -525,6 +537,12 @@ class SeedRefreshService:
                 "total_datasets": len(datasets),
             },
         )
+        _log_stage_message(
+            "Seed stage completed",
+            job_id=job_status.job_id,
+            job_type=job_status.job_type,
+            stage_name=stage_name,
+        )
         self._set_job_status(
             job_status,
             status="running",
@@ -591,6 +609,12 @@ class SeedRefreshService:
                 "total_models": len(DELETE_MODELS_IN_ORDER),
                 "reset_strategy": "completed",
             },
+        )
+        _log_stage_message(
+            "Seed stage completed",
+            job_id=job_status.job_id,
+            job_type=job_status.job_type,
+            stage_name=stage_name,
         )
         self._set_job_status(
             job_status,
@@ -673,6 +697,12 @@ class SeedRefreshService:
                 "completed_datasets": len(datasets),
                 "total_datasets": len(datasets),
             },
+        )
+        _log_stage_message(
+            "Seed stage completed",
+            job_id=job_status.job_id,
+            job_type=job_status.job_type,
+            stage_name=stage_name,
         )
         self._set_job_status(
             job_status,
@@ -917,3 +947,22 @@ def _percent(current: int, total: int) -> Decimal:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _log_job_message(message: str, **fields: object) -> None:
+    logger.info("%s %s", _timestamp_label(), _format_log_message(message, **fields))
+
+
+def _log_stage_message(message: str, **fields: object) -> None:
+    logger.info("%s %s", _timestamp_label(), _format_log_message(message, **fields))
+
+
+def _format_log_message(message: str, **fields: object) -> str:
+    field_text = " ".join(
+        f"{key}={value}" for key, value in fields.items() if value is not None
+    )
+    return f"{message} {field_text}".rstrip()
+
+
+def _timestamp_label() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

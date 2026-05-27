@@ -2,6 +2,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -870,3 +871,40 @@ def test_launch_generation_run_uses_skip_existing_for_successive_months(session)
     service.launch_generation_run("skip existing run", session=session)
 
     assert pipeline.last_skip_existing is True
+
+
+def test_launch_generation_run_logs_job_and_stage_lifecycle(session, caplog):
+    _seed_valid_config(session, historical_months=1)
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=FakePipeline(),
+    )
+
+    with caplog.at_level("INFO", logger="uvicorn.error"):
+        service.launch_generation_run("logged run", session=session)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Generation job started" in message and "phase=destructive_reset" in message
+        for message in messages
+    )
+    assert any(
+        "Generation stage completed" in message
+        and "stage_name=destructive_reset" in message
+        for message in messages
+    )
+    assert any(
+        "Generation stage completed" in message
+        and "stage_name=players" in message
+        and "batch_month=2026-01-01" in message
+        for message in messages
+    )
+    assert any(
+        "Generation job completed" in message and "phase=completed" in message
+        for message in messages
+    )
+    assert all(
+        re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC", message)
+        for message in messages
+        if "Generation job" in message or "Generation stage completed" in message
+    )
