@@ -1,4 +1,4 @@
-<section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+<section class="panel-section">
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
         <div>
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generation Run</div>
@@ -16,27 +16,27 @@
                     </div>
                 {% endif %}
                 <div style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Seed</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.seed_value }}</div>
                     </div>
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Simulation Version</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.simulation_version or "n/a" }}</div>
                     </div>
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Batches</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.batch_count }}</div>
                     </div>
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Completed</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.succeeded_batch_count }}</div>
                     </div>
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Running</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.running_batch_count }}</div>
                     </div>
-                    <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                    <div class="metric-card">
                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Failed</div>
                         <div style="margin-top:6px;">{{ snapshot.generation_run_summary.failed_batch_count }}</div>
                     </div>
@@ -56,7 +56,7 @@
                 {% if snapshot.active_job_stage_progress %}
                     <div style="margin-top:12px; display:grid; gap:8px;">
                         {% for stage in snapshot.active_job_stage_progress %}
-                            <div style="border:1px solid #eef1f5; border-radius:8px; padding:10px 12px;">
+                            <div class="metric-card">
                                 <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
                                     <span>{{ stage.stage_name }}</span>
                                     <span>
@@ -88,7 +88,7 @@
                 {% endif %}
             </div>
         {% else %}
-            <div style="min-width:220px; border:1px dashed #d6d9df; border-radius:8px; padding:12px;">
+            <div class="empty-state-card" style="min-width:220px; border:1px dashed #d6d9df;">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Active Job</div>
                 <div style="margin-top:8px; font-size:18px;">Not started</div>
                 <div style="margin-top:6px; color:#5a6477;">Job progress objects will populate here.</div>

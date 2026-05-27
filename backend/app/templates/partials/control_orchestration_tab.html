@@ -27,7 +27,7 @@
         </div>
     {% endif %}
 
-    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+    <section class="panel-section {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 1</div>
@@ -48,7 +48,7 @@
         </div>
 
         <div style="margin-top:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card {% if snapshot.seed_data_summary.is_ready %}state-card-ready{% else %}state-card-blocked{% endif %}">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed Readiness</div>
                 <div style="margin-top:8px; font-size:18px;">{{ snapshot.seed_data_summary.readiness_label }}</div>
                 {% if snapshot.seed_data_summary.readiness_blockers %}
@@ -61,14 +61,14 @@
                     <div style="margin-top:6px; color:#5a6477;">Reference tables are populated and synthetic generation can rely on them.</div>
                 {% endif %}
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Reference Row Counts</div>
                 <div style="margin-top:8px; color:#1d2433;">Regions: {{ snapshot.seed_data_summary.regions_count }}</div>
                 <div style="margin-top:6px; color:#1d2433;">Clubs: {{ snapshot.seed_data_summary.clubs_count }}</div>
                 <div style="margin-top:6px; color:#1d2433;">First names: {{ snapshot.seed_data_summary.first_names_count }}</div>
                 <div style="margin-top:6px; color:#1d2433;">Last names: {{ snapshot.seed_data_summary.last_names_count }}</div>
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Seed Job</div>
                 {% if snapshot.seed_data_summary.latest_seed_job %}
                     <div style="margin-top:8px; font-size:18px;">{{ snapshot.seed_data_summary.latest_seed_job.job_type }}</div>
@@ -112,7 +112,7 @@
                     <div style="margin-top:8px; font-size:18px;">No seed job yet</div>
                 {% endif %}
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run Preconditions</div>
                 {% if snapshot.allowed_actions.seed_refresh_blockers %}
                     <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
@@ -161,7 +161,7 @@
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
                 {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
-                style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                style="border:1px solid #5d708c; background:#5d708c; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
             >
                 Refresh Full Seed Dataset
             </button>
@@ -233,7 +233,7 @@
         {% endif %}
     </section>
 
-    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+    <section class="panel-section {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 2</div>
@@ -265,7 +265,7 @@
         {% endif %}
 
         <div style="margin-top:16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Valid Config</div>
                 <div style="margin-top:8px; font-size:18px;">
                     {% if snapshot.config_summary %}
@@ -282,7 +282,7 @@
                     {% endif %}
                 </div>
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Synthetic Run Preconditions</div>
                 <div style="margin-top:8px; font-size:18px;">
                     {% if snapshot.allowed_actions.can_start_generation_run %}
@@ -299,7 +299,7 @@
                     </ul>
                 {% endif %}
             </div>
-            <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+            <div class="info-card {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Dataset Release</div>
                 <div style="margin-top:8px; font-size:18px;">
                     {% if snapshot.allowed_actions.can_generate_student_dataset %}

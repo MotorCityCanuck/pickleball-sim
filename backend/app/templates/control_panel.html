@@ -11,6 +11,8 @@
             --border: #d6d9df;
             --bg: #f4f6fa;
             --panel: #ffffff;
+            --card-bg: #edf3f9;
+            --card-bg-strong: #e7eef6;
             --text: #1d2433;
             --muted: #5a6477;
             --accent: #1857c2;
@@ -86,6 +88,37 @@
         }
         .tab-content {
             padding: 20px;
+        }
+        .panel-section {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            background: var(--card-bg);
+        }
+        .info-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            background: var(--card-bg);
+        }
+        .state-card-ready {
+            background: #edf8f0;
+            border-color: #b7dfc2;
+        }
+        .state-card-blocked {
+            background: #fef3f2;
+            border-color: #f1b2ad;
+        }
+        .metric-card {
+            border: 1px solid #eef1f5;
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: var(--card-bg-strong);
+        }
+        .empty-state-card {
+            border-radius: 8px;
+            padding: 12px;
+            background: var(--card-bg);
         }
     </style>
 </head>

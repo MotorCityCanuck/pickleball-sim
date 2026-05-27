@@ -249,7 +249,7 @@
         border: 1px solid #d6d9df;
         border-radius: 12px;
         padding: 18px;
-        background: #f9fbff;
+        background: var(--card-bg);
     }
     #config-tab-panel .config-section-grid {
         display: grid;
@@ -258,7 +258,7 @@
     #config-tab-panel .config-section-card {
         border: 1px solid #d6d9df;
         border-radius: 12px;
-        background: #e4e8ee;
+        background: var(--card-bg-strong);
         overflow: hidden;
     }
     #config-tab-panel .config-section-card[open] {
@@ -304,7 +304,7 @@
 
 <section id="config-tab-panel" style="display:grid; gap:16px;">
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
-        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+        <div class="info-card">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Config</div>
             {% if snapshot.config_summary %}
                 <div style="margin-top:8px; font-size:20px;">{{ snapshot.config_summary.title }}</div>
@@ -314,7 +314,7 @@
                 <div style="margin-top:8px; font-size:18px;">No valid configuration</div>
             {% endif %}
         </div>
-        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+        <div class="info-card">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed Preparation Scope</div>
             {% if snapshot.config_summary %}
                 <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.seed_dataset_count }} raw datasets</div>
@@ -323,7 +323,7 @@
                 <div style="margin-top:8px; font-size:18px;">Unavailable</div>
             {% endif %}
         </div>
-        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+        <div class="info-card">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Synthetic Run Scope</div>
             {% if snapshot.config_summary %}
                 <div style="margin-top:8px; font-size:18px;">{{ snapshot.config_summary.target_total_players or 0 }} players</div>
@@ -332,7 +332,7 @@
                 <div style="margin-top:8px; font-size:18px;">Unavailable</div>
             {% endif %}
         </div>
-        <div style="border:1px solid #d6d9df; border-radius:8px; padding:14px;">
+        <div class="info-card {% if snapshot.allowed_actions.can_edit_config %}state-card-ready{% else %}state-card-blocked{% endif %}">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Edit Eligibility</div>
             <div style="margin-top:8px; font-size:18px;">
                 {% if snapshot.allowed_actions.can_edit_config %}
@@ -347,7 +347,7 @@
         </div>
     </div>
 
-    <section style="border:1px solid #d6d9df; border-radius:8px; padding:16px;">
+    <section class="panel-section">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Configuration Editor</div>
