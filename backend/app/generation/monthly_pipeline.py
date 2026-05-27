@@ -430,23 +430,22 @@ class MonthlyGenerationPipeline:
         skip_existing: bool,
         session: Session,
     ) -> PipelineStepResult:
-        active_teams = _count(
+        batch_team_events = _count(
             session,
             select(func.count()).select_from(Team).where(
                 Team.generation_run_id == generation_run_id,
-                Team.formation_date <= batch.batch_month,
-                (Team.dissolution_date.is_(None))
-                | (Team.dissolution_date > batch.batch_month),
+                (Team.formation_date == batch.batch_month)
+                | (Team.dissolution_date == batch.batch_month),
             ),
         )
-        if active_teams:
+        if batch_team_events:
             if skip_existing:
                 return PipelineStepResult(
                     "teams",
                     "skipped",
-                    {"active_teams": active_teams},
+                    {"batch_team_events": batch_team_events},
                 )
-            raise ValueError("Active teams already exist for this generation run")
+            raise ValueError("Team generation already ran for this batch")
 
         result = self.team_generator.generate_for_batch(
             generation_run_id=generation_run_id,

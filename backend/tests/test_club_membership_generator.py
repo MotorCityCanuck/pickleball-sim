@@ -469,6 +469,178 @@ def test_generate_for_batch_registrations_leaves_players_unaffiliated_when_regio
     assert _club_membership_counts(session) == {club.id: 1}
 
 
+def test_generate_for_run_uses_cross_region_primary_fallback_for_zero_club_region(session):
+    payload = test_payload(1)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 0
+    payload["club_generation"]["cross_region_assignment_enabled"] = True
+    generation_run = GenerationRun(
+        generation_name="cross-region primary fallback",
+        seed_value=123,
+        simulation_version="test",
+        parameter_snapshot=payload,
+        status="pending",
+    )
+    session.add(generation_run)
+    session.flush()
+    session.add(
+        Club(
+            club_name="Region 1 Club A",
+            region_id=1,
+            club_type="public_park",
+            competitiveness_level="recreational",
+            member_capacity=5,
+            founding_date=date(2010, 1, 1),
+        )
+    )
+    session.flush()
+    player = Player(
+        first_name="Fallback",
+        last_name="Test",
+        birth_date=date(1980, 1, 1),
+        home_region_id=99,
+        registration_date=date(2024, 1, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(player)
+    session.commit()
+
+    result = ClubMembershipGenerator().generate_for_run(
+        generation_run_id=generation_run.id,
+        session=session,
+    )
+
+    membership = session.query(ClubMembership).one()
+    assigned_club = session.get(Club, membership.club_id)
+    assert result.players_evaluated == 1
+    assert result.affiliated_player_count == 1
+    assert result.unaffiliated_player_count == 0
+    assert result.rows_loaded == 1
+    assert membership.is_primary is True
+    assert assigned_club.region_id == 1
+
+
+def test_generate_for_run_uses_cross_region_secondary_fallback_for_one_club_region(session):
+    payload = test_payload(1)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 1
+    payload["club_generation"]["min_club_memberships_per_affiliated_player"] = 2
+    payload["club_generation"]["max_club_memberships_per_player"] = 2
+    payload["club_generation"]["secondary_membership_same_region_rate"] = 1
+    payload["club_generation"]["cross_region_assignment_enabled"] = True
+    generation_run = GenerationRun(
+        generation_name="cross-region secondary fallback",
+        seed_value=123,
+        simulation_version="test",
+        parameter_snapshot=payload,
+        status="pending",
+    )
+    session.add(generation_run)
+    session.flush()
+    session.add_all(
+        [
+            Club(
+                club_name="Region 1 Club A",
+                region_id=1,
+                club_type="public_park",
+                competitiveness_level="recreational",
+                member_capacity=5,
+                founding_date=date(2010, 1, 1),
+            ),
+            Club(
+                club_name="Region 2 Club A",
+                region_id=2,
+                club_type="public_park",
+                competitiveness_level="recreational",
+                member_capacity=5,
+                founding_date=date(2010, 1, 1),
+            ),
+        ]
+    )
+    session.flush()
+    player = Player(
+        first_name="MultiClub",
+        last_name="Test",
+        birth_date=date(1980, 1, 1),
+        home_region_id=1,
+        registration_date=date(2024, 1, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(player)
+    session.commit()
+
+    result = ClubMembershipGenerator().generate_for_run(
+        generation_run_id=generation_run.id,
+        session=session,
+    )
+
+    memberships = session.query(ClubMembership).order_by(ClubMembership.is_primary.desc()).all()
+    assigned_region_ids = {session.get(Club, membership.club_id).region_id for membership in memberships}
+    assert result.players_evaluated == 1
+    assert result.affiliated_player_count == 1
+    assert result.multi_club_player_count == 1
+    assert result.rows_loaded == 2
+    assert len(memberships) == 2
+    assert assigned_region_ids == {1, 2}
+    assert sum(1 for membership in memberships if membership.is_primary) == 1
+
+
+def test_generate_for_run_preserves_capacity_with_cross_region_fallback(session):
+    payload = test_payload(3)
+    payload["club_generation"]["unaffiliated_player_rate"] = 0
+    payload["club_generation"]["multi_club_membership_rate"] = 0
+    payload["club_generation"]["cross_region_assignment_enabled"] = True
+    generation_run = GenerationRun(
+        generation_name="cross-region capacity cap",
+        seed_value=123,
+        simulation_version="test",
+        parameter_snapshot=payload,
+        status="pending",
+    )
+    session.add(generation_run)
+    session.flush()
+    session.add(
+        Club(
+            club_name="Region 2 Club A",
+            region_id=2,
+            club_type="public_park",
+            competitiveness_level="recreational",
+            member_capacity=2,
+            founding_date=date(2010, 1, 1),
+        )
+    )
+    session.flush()
+    session.add_all(
+        [
+            Player(
+                first_name=f"Player{index}",
+                last_name="Test",
+                birth_date=date(1980, 1, 1),
+                home_region_id=99,
+                registration_date=date(2024, 1, 1),
+                player_status="ACTIVE",
+                generation_run_id=generation_run.id,
+            )
+            for index in range(3)
+        ]
+    )
+    session.commit()
+
+    result = ClubMembershipGenerator().generate_for_run(
+        generation_run_id=generation_run.id,
+        session=session,
+    )
+
+    club = session.query(Club).one()
+    assert result.players_evaluated == 3
+    assert result.affiliated_player_count == 2
+    assert result.unaffiliated_player_count == 1
+    assert result.rows_loaded == 2
+    assert _club_membership_counts(session) == {club.id: 2}
+
+
 def test_generate_for_run_requires_players(session):
     generation_run = GenerationRun(
         generation_name="empty",

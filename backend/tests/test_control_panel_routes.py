@@ -1203,6 +1203,7 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
     assert "Club size distribution and capacity ranges" in body
     assert "Distribution" in body
     assert "Club court ranges" in body
+    assert "Allow cross-region club assignment" in body
     assert "Multi-club membership rate" in body
     assert "Name Assignment" not in body
     assert 'data-config-section="seed:seed_raw_ingest"' in body

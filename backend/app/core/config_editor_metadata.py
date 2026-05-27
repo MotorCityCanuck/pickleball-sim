@@ -973,7 +973,6 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         field_paths=(
             "club_generation.capacity_ranges",
             "club_generation.unaffiliated_player_rate",
-            "club_generation.cross_region_assignment_enabled",
         ),
     ),
     ConfigEditorSectionDefinition(
@@ -984,6 +983,7 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         field_paths=(
             "club_generation.court_ranges",
             "club_generation.indoor_court_ratios",
+            "club_generation.cross_region_assignment_enabled",
             "club_generation.multi_club_membership_rate",
             "club_generation.min_club_memberships_per_affiliated_player",
             "club_generation.max_club_memberships_per_player",

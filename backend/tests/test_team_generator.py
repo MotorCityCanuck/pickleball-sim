@@ -401,7 +401,7 @@ def test_generate_for_batch_rejects_existing_active_teams(session):
         session=session,
     )
 
-    with pytest.raises(ValueError, match="already has active teams"):
+    with pytest.raises(ValueError, match="already has team updates for batch"):
         TeamGenerator().generate_for_batch(
             generation_run_id=generation_run.id,
             batch_id=batch.id,
@@ -458,6 +458,95 @@ def test_config_validates_probability_fields():
 
     with pytest.raises(ValueError, match="player_team_participation_rate"):
         TeamFormationConfig.from_payload(payload)
+
+
+def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
+    payload = test_payload(20)
+    payload["team_formation"]["player_team_participation_rate"] = 1.0
+    payload["team_formation"]["monthly_team_dissolution_rate"] = 0.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=20)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="future_increment",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.flush()
+
+    new_players = [
+        Player(
+            first_name="LateA",
+            last_name="Team",
+            gender="M",
+            birth_date=date(1982, 1, 1),
+            home_region_id=1,
+            registration_date=date(2024, 2, 1),
+            player_status="ACTIVE",
+            generation_run_id=generation_run.id,
+        ),
+        Player(
+            first_name="LateB",
+            last_name="Team",
+            gender="F",
+            birth_date=date(1984, 1, 1),
+            home_region_id=1,
+            registration_date=date(2024, 2, 1),
+            player_status="ACTIVE",
+            generation_run_id=generation_run.id,
+        ),
+    ]
+    session.add_all(new_players)
+    session.flush()
+    north_club = session.query(Club).filter_by(region_id=1).one()
+    for player, rating in zip(new_players, [Decimal("1510"), Decimal("1520")]):
+        session.add(
+            ClubMembership(
+                player_id=player.id,
+                club_id=north_club.id,
+                membership_type="member",
+                start_date=date(2024, 2, 1),
+                is_primary=True,
+                generation_run_id=generation_run.id,
+            )
+        )
+        session.add(
+            PlayerRatingHistory(
+                player_id=player.id,
+                rating_date=date(2024, 2, 1),
+                rating_type="initial",
+                rating_value=rating,
+                confidence_score=Decimal("0.2"),
+                batch_id=second_batch.id,
+            )
+        )
+    session.commit()
+
+    result = TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    assert result.rows_loaded == 1
+    assert result.membership_rows_loaded == 2
+    assert result.target_team_count == 1
+    assert session.query(Team).count() == 9
+    new_team = session.query(Team).order_by(Team.id.desc()).first()
+    assert new_team.formation_date == date(2024, 2, 1)
+    assert {membership.player_id for membership in new_team.memberships} == {
+        new_players[0].id,
+        new_players[1].id,
+    }
 
 
 def _all_teams_have_two_players(session):

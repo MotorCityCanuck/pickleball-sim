@@ -176,7 +176,7 @@ path to the full configuration surface as the metadata-driven editor expands.
 | Parameter Name | Type | Recommended Edit Control | Default | Range/Options | Units | Description |
 |----------------|------|--------------------------|---------|---------------|-------|-------------|
 | `target_team_count` | INTEGER/null | Numeric input | null | null or >0 | teams | Optional explicit team count target. Leave null to derive demand automatically, or enter a positive integer team count. |
-| `player_team_participation_rate` | DECIMAL | Slider | 0.70 | 0.0-1.0 | probability | Share of eligible players assigned to at least one active team in a batch. Allowed range is 0.0 to 1.0. |
+| `player_team_participation_rate` | DECIMAL | Slider | 0.90 | 0.0-1.0 | probability | Share of eligible players assigned to at least one active team in a batch. Allowed range is 0.0 to 1.0. |
 | `multi_team_player_rate` | DECIMAL | Slider | 0.08 | 0.0-0.30 | probability | Share of team-participating players allowed on multiple active teams. Allowed range is 0.0 to 0.30. |
 | `max_active_teams_per_player` | INTEGER | Numeric input | 2 | 1-5 | teams | Maximum active teams per player when multiple active teams are allowed. Allowed range is 1 to 5 teams. |
 | `same_club_team_rate` | DECIMAL | Slider | 0.78 | 0.0-1.0 | probability | Share of new teams whose partners should share a club when feasible. Allowed range is 0.0 to 1.0. |

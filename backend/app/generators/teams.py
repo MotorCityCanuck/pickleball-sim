@@ -45,6 +45,8 @@ class TeamFormationConfig:
     team_type_weights: tuple[tuple[str, Decimal], ...]
     team_persistence_probability_recreational: Decimal
     team_persistence_probability_competitive: Decimal
+    dormant_team_reactivation_rate: Decimal
+    retired_team_rate_on_dissolution: Decimal
     team_chemistry_weight: Decimal
     team_skill_balance_weight: Decimal
     team_club_proximity_weight: Decimal
@@ -89,7 +91,7 @@ class TeamFormationConfig:
         return cls(
             target_team_count=target_team_count,
             player_team_participation_rate=_probability(
-                team_config.get("player_team_participation_rate", 0.70),
+                team_config.get("player_team_participation_rate", 0.90),
                 "player_team_participation_rate",
             ),
             multi_team_player_rate=_probability(
@@ -116,6 +118,14 @@ class TeamFormationConfig:
             team_persistence_probability_competitive=_probability(
                 team_config.get("team_persistence_probability_competitive", 0.88),
                 "team_persistence_probability_competitive",
+            ),
+            dormant_team_reactivation_rate=_probability(
+                team_config.get("dormant_team_reactivation_rate", 0.04),
+                "dormant_team_reactivation_rate",
+            ),
+            retired_team_rate_on_dissolution=_probability(
+                team_config.get("retired_team_rate_on_dissolution", 0.10),
+                "retired_team_rate_on_dissolution",
             ),
             team_chemistry_weight=_probability(
                 team_config.get("team_chemistry_weight", 0.35),
@@ -438,27 +448,56 @@ class TeamGenerator:
         if batch.generation_run_id != generation_run_id:
             raise ValueError("Batch does not belong to the generation run")
 
-        existing_teams = session.scalar(
+        batch_team_events = session.scalar(
             select(func.count()).select_from(Team).where(
                 Team.generation_run_id == generation_run_id,
-                Team.formation_date <= batch.batch_month,
-                or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch.batch_month),
+                or_(
+                    Team.formation_date == batch.batch_month,
+                    Team.dissolution_date == batch.batch_month,
+                ),
             )
         )
-        if existing_teams:
+        if batch_team_events:
             raise ValueError(
-                f"Generation run {generation_run_id} already has active teams"
+                f"Generation run {generation_run_id} already has team updates for batch "
+                f"{batch_id}"
             )
 
         config = TeamFormationConfig.from_payload(generation_run.parameter_snapshot)
-        candidates = _eligible_players(session, generation_run_id, batch.batch_month)
-        if len(candidates) < 2:
-            raise ValueError("At least two eligible players are required")
-
-        target_team_count = _target_team_count(config, len(candidates))
         rng = random.Random(
             int(generation_run.seed_value) * 1_000_003 + int(batch_id) * 10_007 + 29
         )
+        _apply_monthly_team_lifecycle(
+            session,
+            generation_run_id=generation_run_id,
+            batch_month=batch.batch_month,
+            config=config,
+            rng=rng,
+        )
+        covered_player_ids = _active_team_player_ids(
+            session,
+            generation_run_id=generation_run_id,
+            batch_month=batch.batch_month,
+        )
+        candidates = _eligible_players(
+            session,
+            generation_run_id,
+            batch.batch_month,
+            exclude_player_ids=covered_player_ids,
+        )
+        if len(candidates) < 2:
+            return TeamGenerationResult(
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                batch_month=batch.batch_month,
+                eligible_player_count=len(candidates),
+                target_team_count=0,
+                rows_loaded=0,
+                membership_rows_loaded=0,
+                leftover_player_count=len(candidates),
+            )
+
+        target_team_count = _target_team_count(config, len(candidates))
         team_type_sampler = WeightedSampler(config.team_type_weights)
         active_team_counts: dict[int, int] = {}
         candidate_pool = TeamCandidatePool(candidates)
@@ -541,6 +580,8 @@ def _eligible_players(
     session: Session,
     generation_run_id: int,
     batch_month: date,
+    *,
+    exclude_player_ids: set[int] | None = None,
 ) -> list[PlayerCandidate]:
     latest_ratings = (
         select(
@@ -606,10 +647,138 @@ def _eligible_players(
             primary_club_competitiveness=primary_competitiveness_by_player.get(player_id),
         )
         for player_id, gender, home_region_id, rating_value in player_rows
+        if exclude_player_ids is None or player_id not in exclude_player_ids
     ]
-    if not candidates:
+    if not candidates and exclude_player_ids is None:
         raise ValueError("No rating snapshots are available for team formation")
     return candidates
+
+
+def _apply_monthly_team_lifecycle(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+    config: TeamFormationConfig,
+    rng: random.Random,
+) -> None:
+    active_teams = tuple(
+        session.scalars(
+            select(Team)
+            .where(
+                Team.generation_run_id == generation_run_id,
+                Team.team_status == "active",
+                Team.formation_date < batch_month,
+                or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
+            )
+            .order_by(Team.id)
+        )
+    )
+    for team in active_teams:
+        persistence = float(team.persistence_probability or Decimal("0"))
+        dissolve_probability = float(config.monthly_team_dissolution_rate) * max(
+            0.0,
+            1.0 - persistence,
+        )
+        if rng.random() >= dissolve_probability:
+            continue
+        team.team_status = (
+            "retired"
+            if rng.random() < float(config.retired_team_rate_on_dissolution)
+            else "dormant"
+        )
+        team.dissolution_date = batch_month
+    session.flush()
+
+    if config.dormant_team_reactivation_rate <= 0:
+        return
+
+    covered_player_ids = _active_team_player_ids(
+        session,
+        generation_run_id=generation_run_id,
+        batch_month=batch_month,
+    )
+    eligible_player_ids = {
+        candidate.id
+        for candidate in _eligible_players(
+            session,
+            generation_run_id,
+            batch_month,
+            exclude_player_ids=None,
+        )
+    }
+    for team, player_ids in _reactivable_dormant_teams(
+        session,
+        generation_run_id=generation_run_id,
+        batch_month=batch_month,
+        eligible_player_ids=eligible_player_ids,
+    ):
+        if covered_player_ids.intersection(player_ids):
+            continue
+        if rng.random() >= float(config.dormant_team_reactivation_rate):
+            continue
+        team.team_status = "active"
+        team.dissolution_date = None
+        covered_player_ids.update(player_ids)
+    session.flush()
+
+
+def _active_team_player_ids(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+) -> set[int]:
+    return {
+        int(player_id)
+        for player_id in session.scalars(
+            select(TeamMembership.player_id)
+            .join(Team, Team.id == TeamMembership.team_id)
+            .where(
+                Team.generation_run_id == generation_run_id,
+                Team.team_status == "active",
+                Team.formation_date <= batch_month,
+                or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
+                TeamMembership.joined_date <= batch_month,
+                or_(TeamMembership.left_date.is_(None), TeamMembership.left_date > batch_month),
+            )
+        )
+    }
+
+
+def _reactivable_dormant_teams(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+    eligible_player_ids: set[int],
+) -> tuple[tuple[Team, tuple[int, int]], ...]:
+    team_rows: dict[int, list[int]] = {}
+    teams_by_id: dict[int, Team] = {}
+    for team, player_id in session.execute(
+        select(Team, TeamMembership.player_id)
+        .join(TeamMembership, TeamMembership.team_id == Team.id)
+        .join(Player, Player.id == TeamMembership.player_id)
+        .where(
+            Team.generation_run_id == generation_run_id,
+            Team.team_status == "dormant",
+            Team.dissolution_date.is_not(None),
+            Team.dissolution_date < batch_month,
+            TeamMembership.joined_date <= batch_month,
+            or_(TeamMembership.left_date.is_(None), TeamMembership.left_date > batch_month),
+            Player.player_status == "ACTIVE",
+            Player.registration_date <= batch_month,
+        )
+        .order_by(Team.id, TeamMembership.player_position)
+    ):
+        teams_by_id[int(team.id)] = team
+        team_rows.setdefault(int(team.id), []).append(int(player_id))
+
+    return tuple(
+        (teams_by_id[team_id], (player_ids[0], player_ids[1]))
+        for team_id, player_ids in sorted(team_rows.items())
+        if len(player_ids) == 2 and all(player_id in eligible_player_ids for player_id in player_ids)
+    )
 
 
 def _target_team_count(config: TeamFormationConfig, eligible_player_count: int) -> int:

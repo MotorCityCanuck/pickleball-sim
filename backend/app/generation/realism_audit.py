@@ -1139,6 +1139,241 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         ),
     ),
     RealismAuditQuery(
+        name="zero_match_players_by_registration_cohort",
+        scope="batch",
+        category="matches",
+        description=(
+            "Zero-match active players split between initial-batch registrations "
+            "and later registration cohorts."
+        ),
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            first_run_batch AS (
+                SELECT
+                    MIN(b.batch_month) AS first_batch_month
+                FROM monthly_batches b
+                JOIN batch_context bc
+                    ON bc.generation_run_id = b.generation_run_id
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id,
+                    CASE
+                        WHEN COALESCE(
+                            MIN(pr.registration_month),
+                            p.registration_date
+                        ) = (SELECT first_batch_month FROM first_run_batch)
+                            THEN 'initial_batch'
+                        ELSE 'later_batch'
+                    END AS registration_cohort
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                LEFT JOIN player_registrations pr
+                    ON pr.player_id = p.id
+                WHERE p.player_status = 'ACTIVE'
+                    AND p.registration_date <= bc.batch_month
+                GROUP BY p.id, p.registration_date
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    ap.registration_cohort,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id, ap.registration_cohort
+            )
+            SELECT
+                registration_cohort,
+                COUNT(*) AS active_player_count,
+                SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END) AS zero_match_player_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS zero_match_player_pct
+            FROM player_match_counts
+            GROUP BY registration_cohort
+            ORDER BY
+                CASE registration_cohort
+                    WHEN 'initial_batch' THEN 0
+                    ELSE 1
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "cadence", "players", "registrations"),
+    ),
+    RealismAuditQuery(
+        name="zero_match_players_by_team_membership",
+        scope="batch",
+        category="matches",
+        description=(
+            "Zero-match active players split by whether they belong to an active "
+            "team in the batch month."
+        ),
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            active_team_players AS (
+                SELECT DISTINCT
+                    tm.player_id
+                FROM batch_context bc
+                JOIN teams t
+                    ON t.generation_run_id = bc.generation_run_id
+                    AND t.team_status = 'active'
+                    AND t.formation_date <= bc.batch_month
+                    AND (t.dissolution_date IS NULL OR t.dissolution_date > bc.batch_month)
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.joined_date <= bc.batch_month
+                    AND (tm.left_date IS NULL OR tm.left_date > bc.batch_month)
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id,
+                    CASE
+                        WHEN atp.player_id IS NULL THEN 'unteamed'
+                        ELSE 'teamed'
+                    END AS team_membership_status
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                LEFT JOIN active_team_players atp
+                    ON atp.player_id = p.id
+                WHERE p.player_status = 'ACTIVE'
+                    AND p.registration_date <= bc.batch_month
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    ap.team_membership_status,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id, ap.team_membership_status
+            )
+            SELECT
+                team_membership_status,
+                COUNT(*) AS active_player_count,
+                SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END) AS zero_match_player_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS zero_match_player_pct
+            FROM player_match_counts
+            GROUP BY team_membership_status
+            ORDER BY
+                CASE team_membership_status
+                    WHEN 'teamed' THEN 0
+                    ELSE 1
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "cadence", "players", "teams"),
+    ),
+    RealismAuditQuery(
+        name="zero_match_players_by_club_affiliation",
+        scope="batch",
+        category="matches",
+        description=(
+            "Zero-match active players split by whether they have an active club "
+            "membership in the batch month."
+        ),
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            affiliated_players AS (
+                SELECT DISTINCT
+                    cm.player_id
+                FROM batch_context bc
+                JOIN club_memberships cm
+                    ON cm.generation_run_id = bc.generation_run_id
+                    AND cm.start_date <= bc.batch_month
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id,
+                    CASE
+                        WHEN af.player_id IS NULL THEN 'unaffiliated'
+                        ELSE 'affiliated'
+                    END AS club_affiliation_status
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                LEFT JOIN affiliated_players af
+                    ON af.player_id = p.id
+                WHERE p.player_status = 'ACTIVE'
+                    AND p.registration_date <= bc.batch_month
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    ap.club_affiliation_status,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id, ap.club_affiliation_status
+            )
+            SELECT
+                club_affiliation_status,
+                COUNT(*) AS active_player_count,
+                SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END) AS zero_match_player_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS zero_match_player_pct
+            FROM player_match_counts
+            GROUP BY club_affiliation_status
+            ORDER BY
+                CASE club_affiliation_status
+                    WHEN 'affiliated' THEN 0
+                    ELSE 1
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "cadence", "players", "clubs"),
+    ),
+    RealismAuditQuery(
         name="daily_team_match_cap_violations",
         scope="batch",
         category="matches",

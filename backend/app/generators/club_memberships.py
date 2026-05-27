@@ -124,8 +124,17 @@ class ClubIndex:
         ):
             self._membership_counts[int(club_id)] = int(membership_count)
 
-    def choose_primary(self, rng: random.Random, region_id: int) -> ClubCandidate | None:
-        return self.choose_in_region(rng, region_id, excluded_ids=set())
+    def choose_primary(
+        self,
+        rng: random.Random,
+        *,
+        region_id: int,
+        allow_cross_region_fallback: bool,
+    ) -> ClubCandidate | None:
+        primary_club = self.choose_in_region(rng, region_id, excluded_ids=set())
+        if primary_club is not None or not allow_cross_region_fallback:
+            return primary_club
+        return self.choose_any(rng, excluded_ids=set())
 
     def choose_secondary(
         self,
@@ -134,18 +143,17 @@ class ClubIndex:
         region_id: int,
         excluded_ids: set[int],
         same_region: bool,
+        allow_cross_region_fallback: bool,
     ) -> ClubCandidate | None:
         if same_region:
-            return self.choose_in_region(rng, region_id, excluded_ids=excluded_ids)
-        candidates = [
-            club
-            for club in self.all_clubs
-            if club.id not in excluded_ids and self._has_capacity(club)
-        ]
-        sampler = self._sampler(candidates)
-        if sampler is None:
-            return None
-        return sampler.choose(rng)
+            secondary_club = self.choose_in_region(
+                rng,
+                region_id,
+                excluded_ids=excluded_ids,
+            )
+            if secondary_club is not None or not allow_cross_region_fallback:
+                return secondary_club
+        return self.choose_any(rng, excluded_ids=excluded_ids)
 
     def choose_in_region(
         self,
@@ -157,6 +165,22 @@ class ClubIndex:
         candidates = [
             club
             for club in self.clubs_by_region.get(region_id, [])
+            if club.id not in excluded_ids and self._has_capacity(club)
+        ]
+        sampler = self._sampler(candidates)
+        if sampler is None:
+            return None
+        return sampler.choose(rng)
+
+    def choose_any(
+        self,
+        rng: random.Random,
+        *,
+        excluded_ids: set[int],
+    ) -> ClubCandidate | None:
+        candidates = [
+            club
+            for club in self.all_clubs
             if club.id not in excluded_ids and self._has_capacity(club)
         ]
         sampler = self._sampler(candidates)
@@ -375,7 +399,11 @@ class ClubMembershipGenerator:
                 unaffiliated_count += 1
                 continue
 
-            primary_club = club_index.choose_primary(rng, player.home_region_id)
+            primary_club = club_index.choose_primary(
+                rng,
+                region_id=player.home_region_id,
+                allow_cross_region_fallback=config.cross_region_assignment_enabled,
+            )
             if primary_club is None:
                 unaffiliated_count += 1
                 continue
@@ -406,6 +434,7 @@ class ClubMembershipGenerator:
                         region_id=player.home_region_id,
                         excluded_ids=selected_club_ids,
                         same_region=same_region,
+                        allow_cross_region_fallback=config.cross_region_assignment_enabled,
                     )
                     if secondary_club is None:
                         break

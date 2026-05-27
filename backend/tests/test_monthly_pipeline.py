@@ -460,7 +460,7 @@ def test_pipeline_runs_successive_months_and_skips_run_setup_after_first(session
     ] == ["generated", "generated", "generated", "generated", "generated"]
     assert [
         step.status for step in result.batch_results[1].step_results
-    ] == ["generated", "generated", "skipped", "generated", "generated"]
+    ] == ["generated", "generated", "generated", "generated", "generated"]
     assert session.query(Match).count() == 2
     assert session.query(RatingsUpdateLog).count() == 2
     assert session.query(Player).count() == 3

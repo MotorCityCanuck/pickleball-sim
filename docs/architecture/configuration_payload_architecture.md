@@ -219,7 +219,7 @@ Suggested groups:
   },
   "team_formation": {
     "target_team_count": null,
-    "player_team_participation_rate": 0.70,
+    "player_team_participation_rate": 0.90,
     "multi_team_player_rate": 0.08,
     "max_active_teams_per_player": 2,
     "same_club_team_rate": 0.78,

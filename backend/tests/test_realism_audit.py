@@ -785,6 +785,140 @@ def test_player_age_distribution_uses_batch_created_at_instead_of_registration_d
     )
 
 
+def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
+            ) VALUES
+                (11, 1, '2026-02-01', 2, 'historical_incremental', 'succeeded', '2026-02-15 12:00:00', '2026-02-15 12:00:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO players (
+                id, first_name, last_name, gender, birth_date, registration_date, player_status, home_region_id, generation_run_id
+            ) VALUES
+                (9, 'Indy', 'Wilson', 'F', '1995-06-01', '2026-02-01', 'ACTIVE', 3, 1)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO player_registrations (
+                id, player_id, batch_id, registration_month
+            ) VALUES
+                (108, 9, 11, '2026-02-01')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO player_rating_history (
+                id, player_id, rating_date, rating_type, rating_value, confidence_score, batch_id
+            ) VALUES
+                (208, 9, '2026-02-01', 'initial', 1450, 0.20, 11)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO matches (
+                id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number,
+                predicted_win_probability, batch_id
+            ) VALUES
+                (2002, '2026-02-03', 1, 'recreational', 3004, 1, 0.65, 11)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_teams (
+                id, match_id, team_number, team_score
+            ) VALUES
+                (3004, 2002, 1, 1),
+                (3005, 2002, 2, 0)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_team_players (
+                id, match_team_id, player_id
+            ) VALUES
+                (3508, 3004, 1),
+                (3509, 3004, 2),
+                (3510, 3005, 3),
+                (3511, 3005, 4)
+            """
+        )
+    )
+    session.commit()
+
+    runner = RealismAuditRunner(session)
+    results = runner.run(
+        query_names=[
+            "zero_match_players_by_registration_cohort",
+            "zero_match_players_by_team_membership",
+            "zero_match_players_by_club_affiliation",
+        ]
+    )
+
+    result_map = {result.query.name: result.rows for result in results}
+
+    assert result_map["zero_match_players_by_registration_cohort"] == (
+        {
+            "registration_cohort": "initial_batch",
+            "active_player_count": 6,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 33.33,
+        },
+        {
+            "registration_cohort": "later_batch",
+            "active_player_count": 1,
+            "zero_match_player_count": 1,
+            "zero_match_player_pct": 100.0,
+        },
+    )
+    assert result_map["zero_match_players_by_team_membership"] == (
+        {
+            "team_membership_status": "teamed",
+            "active_player_count": 6,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 33.33,
+        },
+        {
+            "team_membership_status": "unteamed",
+            "active_player_count": 1,
+            "zero_match_player_count": 1,
+            "zero_match_player_pct": 100.0,
+        },
+    )
+    assert result_map["zero_match_players_by_club_affiliation"] == (
+        {
+            "club_affiliation_status": "affiliated",
+            "active_player_count": 6,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 33.33,
+        },
+        {
+            "club_affiliation_status": "unaffiliated",
+            "active_player_count": 1,
+            "zero_match_player_count": 1,
+            "zero_match_player_pct": 100.0,
+        },
+    )
+
+
 def test_realism_audit_runner_uses_latest_batch_when_scope_is_omitted(session):
     seed_audit_dataset(session)
     session.execute(
