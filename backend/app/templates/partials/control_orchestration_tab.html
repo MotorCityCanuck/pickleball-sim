@@ -137,11 +137,25 @@
             </div>
         {% endif %}
 
+        <div style="margin-top:16px; display:flex; gap:8px; align-items:center; font-size:13px; color:#5a6477;">
+            <input
+                id="seed-destructive-confirm"
+                type="checkbox"
+                name="destructive_confirm"
+                value="yes"
+                {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
+            >
+            <label for="seed-destructive-confirm">
+                Confirm seed data load can destructively reset player and match data
+            </label>
+        </div>
+
         <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
             <button
                 hx-post="/control/seed/load"
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
+                hx-include="#seed-destructive-confirm"
                 {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
                 style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
             >
@@ -151,6 +165,7 @@
                 hx-post="/control/seed/normalize"
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
+                hx-include="#seed-destructive-confirm"
                 {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
                 style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
             >
@@ -160,6 +175,7 @@
                 hx-post="/control/seed/refresh"
                 hx-target="#control-tab-content"
                 hx-swap="innerHTML"
+                hx-include="#seed-destructive-confirm"
                 {% if not snapshot.allowed_actions.can_start_seed_refresh %}disabled{% endif %}
                 style="border:1px solid #5d708c; background:#5d708c; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_start_seed_refresh %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
             >
@@ -212,6 +228,7 @@
                             <th style="padding:8px 10px;">Status</th>
                             <th style="padding:8px 10px;">Rows Loaded</th>
                             <th style="padding:8px 10px;">Rows Rejected</th>
+                            <th style="padding:8px 10px;">Total Duration</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -221,6 +238,7 @@
                                 <td style="padding:8px 10px;">{{ load.status }}</td>
                                 <td style="padding:8px 10px;">{{ load.rows_loaded }}</td>
                                 <td style="padding:8px 10px;">{{ load.rows_rejected }}</td>
+                                <td style="padding:8px 10px;">{{ load.elapsed_label or "—" }}</td>
                             </tr>
                         {% endfor %}
                     </tbody>
@@ -377,6 +395,7 @@
     </section>
 
     {% include "partials/control_run_status.html" %}
+    {% include "partials/control_overall_progress.html" %}
     {% include "partials/control_batch_table.html" %}
     {% include "partials/control_progress_bars.html" %}
 

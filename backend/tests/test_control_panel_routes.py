@@ -1,4 +1,5 @@
 """Route tests for the read-only control panel shell."""
+from datetime import datetime
 from pathlib import Path
 import re
 import sys
@@ -694,6 +695,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config" in routes
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
+    assert "/control/partials/overall-progress" in routes
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
@@ -719,6 +721,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
             session=session,
             queries=ControlPanelQueries(),
         )
+        overall_progress = routes["/control/partials/overall-progress"](
+            request=_request("/control/partials/overall-progress"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
         progress = routes["/control/partials/progress-bars"](
             request=_request("/control/partials/progress-bars"),
             session=session,
@@ -740,6 +747,12 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Monthly Batches" in batch_table.body.decode()
     assert "2026-02-01" in batch_table.body.decode()
 
+    assert overall_progress.status_code == 200
+    assert "Overall Progress" in overall_progress.body.decode()
+    assert "1 of 2 stages completed" in overall_progress.body.decode()
+    assert 'hx-get="/control/partials/overall-progress"' in overall_progress.body.decode()
+    assert 'hx-trigger="every 10s"' in overall_progress.body.decode()
+
     assert progress.status_code == 200
     assert "Stage Progress" in progress.body.decode()
     assert "matches" in progress.body.decode()
@@ -748,11 +761,64 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
+    assert "Overall Progress" in orchestration.body.decode()
+    assert "1 of 2 stages completed" in orchestration.body.decode()
+    assert 'id="seed-destructive-confirm"' in orchestration.body.decode()
+    assert 'hx-include="#seed-destructive-confirm"' in orchestration.body.decode()
     assert 'hx-post="/control/seed/load"' in orchestration.body.decode()
     assert 'hx-post="/control/seed/normalize"' in orchestration.body.decode()
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
     assert 'hx-trigger="every 10s"' in orchestration.body.decode()
+
+
+def test_orchestration_partial_renders_raw_load_duration_column(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    71, 'seed_refresh', 'seed-refresh-71', 'succeeded', 'completed', 100.00,
+                    'Seed refresh completed successfully.',
+                    '2026-05-20 08:00:00', '2026-05-20 08:10:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO raw_seed_load_runs (
+                    id, job_status_id, dataset_type, source_path, source_file_count, status,
+                    rows_read, rows_loaded, rows_rejected, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    71, 71, 'metro_areas_us', 'data/raw/metro/us.csv', 1, 'completed',
+                    100, 98, 2, '2026-05-20 08:01:00', '2026-05-20 08:06:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+
+        orchestration = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(now_fn=lambda: datetime(2026, 5, 20, 8, 11, 0)),
+        )
+    finally:
+        session.close()
+
+    body = orchestration.body.decode()
+    assert orchestration.status_code == 200
+    assert "Total Duration" in body
+    assert "5m 30s" in body
 
 
 def test_completed_generation_run_renders_completion_popup_script(session_factory):
@@ -1292,6 +1358,32 @@ def test_control_panel_generation_start_requires_destructive_confirmation(sessio
     assert fake_service.calls == []
 
 
+def test_control_panel_seed_refresh_requires_destructive_confirmation(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    fake_service = FakeSeedRefreshService()
+    fake_runner = FakeBackgroundRunner()
+    try:
+        response = routes["/control/seed/refresh"](
+            request=_request("/control/seed/refresh", method="POST"),
+            destructive_confirm=None,
+            session=session,
+            queries=ControlPanelQueries(),
+            seed_service=fake_service,
+            background_runner=fake_runner,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Destructive reset confirmation is required before starting a seed data load." in body
+    assert fake_service.calls == []
+    assert fake_runner.submissions == []
+
+
 def test_control_panel_seed_refresh_launches_when_allowed(session_factory):
     _seed_idle_config_state(session_factory)
     app = create_app()
@@ -1302,6 +1394,7 @@ def test_control_panel_seed_refresh_launches_when_allowed(session_factory):
     try:
         response = routes["/control/seed/refresh"](
             request=_request("/control/seed/refresh", method="POST"),
+            destructive_confirm="yes",
             session=session,
             queries=ControlPanelQueries(),
             seed_service=fake_service,
@@ -1327,6 +1420,7 @@ def test_control_panel_seed_refresh_surfaces_service_failure(session_factory):
     try:
         response = routes["/control/seed/normalize"](
             request=_request("/control/seed/normalize", method="POST"),
+            destructive_confirm="yes",
             session=session,
             queries=ControlPanelQueries(),
             seed_service=fake_service,

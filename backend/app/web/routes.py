@@ -219,6 +219,7 @@ def build_control_panel_router() -> APIRouter:
     @router.post("/control/seed/load", response_class=HTMLResponse)
     def control_panel_seed_load_start(
         request: Request,
+        destructive_confirm: str | None = Form(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
@@ -231,12 +232,14 @@ def build_control_panel_router() -> APIRouter:
             seed_service=seed_service,
             background_runner=background_runner,
             action="load",
+            destructive_confirm=destructive_confirm,
             templates=templates,
         )
 
     @router.post("/control/seed/normalize", response_class=HTMLResponse)
     def control_panel_seed_normalize_start(
         request: Request,
+        destructive_confirm: str | None = Form(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
@@ -249,12 +252,14 @@ def build_control_panel_router() -> APIRouter:
             seed_service=seed_service,
             background_runner=background_runner,
             action="normalize",
+            destructive_confirm=destructive_confirm,
             templates=templates,
         )
 
     @router.post("/control/seed/refresh", response_class=HTMLResponse)
     def control_panel_seed_refresh_start(
         request: Request,
+        destructive_confirm: str | None = Form(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         seed_service: SeedRefreshService = Depends(get_seed_refresh_service),
@@ -267,6 +272,7 @@ def build_control_panel_router() -> APIRouter:
             seed_service=seed_service,
             background_runner=background_runner,
             action="refresh",
+            destructive_confirm=destructive_confirm,
             templates=templates,
         )
 
@@ -423,6 +429,21 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_batch_table.html",
+            {
+                "snapshot": snapshot,
+            },
+        )
+
+    @router.get("/control/partials/overall-progress", response_class=HTMLResponse)
+    def control_panel_overall_progress_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_overall_progress.html",
             {
                 "snapshot": snapshot,
             },
@@ -614,13 +635,18 @@ def _run_seed_action(
     seed_service: SeedRefreshService,
     background_runner: BackgroundJobRunner,
     action: str,
+    destructive_confirm: str | None,
     templates: Jinja2Templates,
 ) -> HTMLResponse:
     snapshot = queries.get_control_panel_snapshot(session)
     seed_launch_message = None
     seed_launch_error = None
 
-    if not snapshot.allowed_actions.can_start_seed_refresh:
+    if destructive_confirm != "yes":
+        seed_launch_error = (
+            "Destructive reset confirmation is required before starting a seed data load."
+        )
+    elif not snapshot.allowed_actions.can_start_seed_refresh:
         seed_launch_error = (
             snapshot.allowed_actions.seed_refresh_blockers[0]
             if snapshot.allowed_actions.seed_refresh_blockers

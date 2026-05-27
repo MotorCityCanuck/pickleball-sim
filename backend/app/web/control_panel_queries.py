@@ -70,6 +70,7 @@ class SeedLoadRunSummary:
     rows_rejected: int
     started_at: datetime | None
     completed_at: datetime | None
+    elapsed_label: str | None
     error_message: str | None
 
 
@@ -163,6 +164,9 @@ class GenerationRunSummary:
     succeeded_batch_count: int
     failed_batch_count: int
     overall_progress_percent: Decimal | None
+    completed_stage_count: int
+    total_stage_count: int
+    stage_progress_percent: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -539,6 +543,10 @@ class ControlPanelQueries:
                 rows_rejected=load.rows_rejected,
                 started_at=load.started_at,
                 completed_at=load.completed_at,
+                elapsed_label=_format_elapsed_duration(
+                    started_at=load.started_at,
+                    completed_at=load.completed_at,
+                ),
                 error_message=load.error_message,
             )
             for load in (
@@ -734,6 +742,18 @@ class ControlPanelQueries:
             succeeded_batch_count=counts["succeeded"],
             failed_batch_count=counts["failed"],
             overall_progress_percent=active_job.percent_complete if active_job else None,
+            completed_stage_count=_completed_stage_count(
+                active_job_stage_progress=active_job_stage_progress,
+                batch_summaries=batch_summaries,
+            ),
+            total_stage_count=_total_stage_count(
+                active_job_stage_progress=active_job_stage_progress,
+                batch_summaries=batch_summaries,
+            ),
+            stage_progress_percent=_stage_progress_percent(
+                active_job_stage_progress=active_job_stage_progress,
+                batch_summaries=batch_summaries,
+            ),
         )
 
     def _build_allowed_actions(
@@ -1021,6 +1041,62 @@ def _batch_stage_progress(
     )
 
 
+def _all_stage_progress(
+    *,
+    active_job_stage_progress: tuple[StageProgressSummary, ...],
+    batch_summaries: tuple[BatchSummary, ...],
+) -> tuple[StageProgressSummary, ...]:
+    return active_job_stage_progress + _batch_stage_progress(batch_summaries)
+
+
+def _completed_stage_count(
+    *,
+    active_job_stage_progress: tuple[StageProgressSummary, ...],
+    batch_summaries: tuple[BatchSummary, ...],
+) -> int:
+    return sum(
+        1
+        for stage in _all_stage_progress(
+            active_job_stage_progress=active_job_stage_progress,
+            batch_summaries=batch_summaries,
+        )
+        if stage.status == "succeeded"
+    )
+
+
+def _total_stage_count(
+    *,
+    active_job_stage_progress: tuple[StageProgressSummary, ...],
+    batch_summaries: tuple[BatchSummary, ...],
+) -> int:
+    return len(
+        _all_stage_progress(
+            active_job_stage_progress=active_job_stage_progress,
+            batch_summaries=batch_summaries,
+        )
+    )
+
+
+def _stage_progress_percent(
+    *,
+    active_job_stage_progress: tuple[StageProgressSummary, ...],
+    batch_summaries: tuple[BatchSummary, ...],
+) -> Decimal | None:
+    total = _total_stage_count(
+        active_job_stage_progress=active_job_stage_progress,
+        batch_summaries=batch_summaries,
+    )
+    if total <= 0:
+        return None
+    completed = _completed_stage_count(
+        active_job_stage_progress=active_job_stage_progress,
+        batch_summaries=batch_summaries,
+    )
+    return (Decimal(completed) * Decimal("100") / Decimal(total)).quantize(
+        Decimal("0.01")
+    )
+
+
 def split_payload_sections(payload: dict[str, object] | None) -> tuple[dict[str, object], dict[str, object]]:
     """Split a full configuration payload into seed and synthetic sections."""
     source = payload or {}
@@ -1133,3 +1209,22 @@ def _first_label(details: dict[str, object]) -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _format_elapsed_duration(
+    *,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+) -> str | None:
+    if started_at is None or completed_at is None or completed_at < started_at:
+        return None
+
+    total_seconds = int((completed_at - started_at).total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes > 0:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"

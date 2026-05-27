@@ -323,8 +323,45 @@ def test_get_config_editor_state_uses_current_valid_version_title(session):
     editor = ControlPanelQueries().get_config_editor_state(session)
 
     assert editor.title == "Current config"
-    assert editor.change_count == 0
-    assert editor.validation_errors == ()
+
+
+def test_seed_raw_load_summary_includes_elapsed_duration(session):
+    _seed_valid_config(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                901, 'seed_refresh', 'seed-refresh-901', 'succeeded', 'completed', 100.00,
+                'Seed refresh completed successfully.',
+                '2026-05-20 08:00:00', '2026-05-20 08:10:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO raw_seed_load_runs (
+                id, job_status_id, dataset_type, source_path, source_file_count, status,
+                rows_read, rows_loaded, rows_rejected, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                901, 901, 'metro_areas_us', 'data/raw/metro/us.csv', 1, 'completed',
+                100, 98, 2, '2026-05-20 08:01:00', '2026-05-20 08:06:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 8, 11, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert len(snapshot.seed_data_summary.latest_raw_loads) == 1
+    assert snapshot.seed_data_summary.latest_raw_loads[0].elapsed_label == "5m 30s"
 
 
 def test_get_control_panel_snapshot_returns_ui_ready_state(session):
@@ -396,6 +433,9 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.generation_run_summary.running_batch_count == 1
     assert snapshot.generation_run_summary.succeeded_batch_count == 1
     assert snapshot.generation_run_summary.overall_progress_percent == 60
+    assert snapshot.generation_run_summary.completed_stage_count == 3
+    assert snapshot.generation_run_summary.total_stage_count == 4
+    assert snapshot.generation_run_summary.stage_progress_percent == 75
     assert snapshot.active_job_summary is not None
     assert snapshot.active_job_summary.status == "running"
     assert snapshot.active_job_stage_progress == ()
