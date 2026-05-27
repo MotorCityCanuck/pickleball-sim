@@ -45,7 +45,12 @@
             {% for batch in snapshot.batch_summaries %}
                 <div>
                     <div style="font-size:14px; margin-bottom:8px;">
-                        {{ batch.batch_month }} | {{ batch.processing_status }}
+                        {% set batch_status = (batch.processing_status or '')|lower %}
+                        <strong>{{ batch.batch_month }}</strong>
+                        |
+                        <span style="color:{% if batch_status == 'succeeded' %}#247a3d{% elif batch_status in ('running', 'pending', 'in_progress', 'in-progress', 'processing') %}#1857c2{% elif batch_status == 'failed' %}#b42318{% else %}#5a6477{% endif %};">
+                            {{ batch.processing_status }}
+                        </span>
                     </div>
                     {% if batch.stage_progress %}
                         <div style="display:grid; gap:10px;">

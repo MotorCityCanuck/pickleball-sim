@@ -1094,11 +1094,11 @@ def _completion_message(status: str, details: dict[str, object]) -> str | None:
     row_count = _first_int(
         details,
         "completed_datasets",
+        "rating_history_count",
         "rows_loaded",
         "membership_rows_loaded",
         "match_count",
         "log_count",
-        "rating_history_count",
     )
     if row_count is None:
         return None
@@ -1122,10 +1122,10 @@ def _first_label(details: dict[str, object]) -> str:
         return "Datasets completed"
     if "rows_loaded" in details or "membership_rows_loaded" in details:
         return "Rows created"
+    if "rating_history_count" in details:
+        return "Ratings updated"
     if "match_count" in details:
         return "Matches created"
-    if "rating_history_count" in details:
-        return "Ratings created"
     if "log_count" in details:
         return "Log rows created"
     return "Rows created"
