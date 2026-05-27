@@ -17,7 +17,7 @@
                                         {% if stage.progress_percent is not none %}
                                             | {{ stage.progress_percent }}%
                                         {% endif %}
-                                        {% if stage.progress_total %}
+                                        {% if stage.progress_total and stage.progress_unit != 'stage' %}
                                             | {{ stage.progress_current }}/{{ stage.progress_total }} {{ stage.progress_unit or 'units' }}
                                         {% endif %}
                                         {% if stage.liveness_state == 'quiet' %}
@@ -44,7 +44,7 @@
             {% endif %}
             {% for batch in snapshot.batch_summaries %}
                 <div>
-                    <div style="font-size:14px; margin-bottom:8px;">
+                    <div style="font-size:18px; margin-bottom:8px;">
                         {% set batch_status = (batch.processing_status or '')|lower %}
                         <strong>{{ batch.batch_month }}</strong>
                         |
@@ -63,7 +63,7 @@
                                             {% if stage.progress_percent is not none %}
                                                 | {{ stage.progress_percent }}%
                                             {% endif %}
-                                            {% if stage.progress_total %}
+                                            {% if stage.progress_total and stage.progress_unit != 'stage' %}
                                                 | {{ stage.progress_current }}/{{ stage.progress_total }} {{ stage.progress_unit or 'units' }}
                                             {% endif %}
                                             {% if stage.liveness_state == 'quiet' %}

@@ -1,4 +1,14 @@
-<section class="panel-section" style="padding:0; overflow:hidden;">
+{% set batch_table_active = snapshot.batch_summaries and snapshot.batch_summaries | selectattr("processing_status", "in", ("pending", "running")) | list %}
+<section
+    class="panel-section"
+    style="padding:0; overflow:hidden;"
+    {% if batch_table_active %}
+        hx-get="/control/partials/batch-table"
+        hx-trigger="every 10s"
+        hx-swap="outerHTML"
+        hx-target="this"
+    {% endif %}
+>
     <div style="padding:16px; border-bottom:1px solid #d6d9df;">
         <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Monthly Batches</div>
     </div>
@@ -8,9 +18,8 @@
                 <tr style="background:#f6f8fb; text-align:left;">
                     <th style="padding:12px;">Month</th>
                     <th style="padding:12px;">Sequence</th>
-                    <th style="padding:12px;">Type</th>
                     <th style="padding:12px;">Status</th>
-                    <th style="padding:12px;">Stages</th>
+                    <th style="padding:12px;">Total Duration</th>
                 </tr>
             </thead>
             <tbody>
@@ -18,9 +27,8 @@
                     <tr style="border-top:1px solid #eef1f5;">
                         <td style="padding:12px;">{{ batch.batch_month }}</td>
                         <td style="padding:12px;">{{ batch.batch_sequence }}</td>
-                        <td style="padding:12px;">{{ batch.batch_type }}</td>
                         <td style="padding:12px;">{{ batch.processing_status }}</td>
-                        <td style="padding:12px;">{{ batch.stage_progress | length }}</td>
+                        <td style="padding:12px;">{{ batch.elapsed_label or "—" }}</td>
                     </tr>
                 {% endfor %}
             </tbody>

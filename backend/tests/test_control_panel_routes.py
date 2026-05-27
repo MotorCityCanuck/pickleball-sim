@@ -746,6 +746,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert batch_table.status_code == 200
     assert "Monthly Batches" in batch_table.body.decode()
     assert "2026-02-01" in batch_table.body.decode()
+    assert "Total Duration" in batch_table.body.decode()
+    assert "Type" not in batch_table.body.decode()
+    assert "Stages" not in batch_table.body.decode()
+    assert 'hx-get="/control/partials/batch-table"' in batch_table.body.decode()
+    assert 'hx-trigger="every 10s"' in batch_table.body.decode()
 
     assert overall_progress.status_code == 200
     assert "Overall Progress" in overall_progress.body.decode()
@@ -761,6 +766,15 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
+    assert "Estimated Dataset Size" in orchestration.body.decode()
+    assert "Estimated Players" in orchestration.body.decode()
+    assert "1,020" in orchestration.body.decode()
+    assert "Estimated Teams" in orchestration.body.decode()
+    assert "982" in orchestration.body.decode()
+    assert "Estimated Matches" in orchestration.body.decode()
+    assert "1,964" in orchestration.body.decode()
+    assert "Estimated Games" in orchestration.body.decode()
+    assert "2,750" in orchestration.body.decode()
     assert "Overall Progress" in orchestration.body.decode()
     assert "1 of 2 stages completed" in orchestration.body.decode()
     assert 'id="seed-destructive-confirm"' in orchestration.body.decode()
@@ -838,6 +852,7 @@ def test_completed_generation_run_renders_completion_popup_script(session_factor
     body = orchestration.body.decode()
     assert orchestration.status_code == 200
     assert "All monthly batches are complete." in body
+    assert "2 of 2 stages completed - Duration 1:00:00" in body
     assert 'const runId = "2"' in body
     assert "generation-complete-notified:${runId}" in body
 

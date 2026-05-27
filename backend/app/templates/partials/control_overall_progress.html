@@ -12,7 +12,7 @@
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Overall Progress</div>
-                <div style="margin-top:6px; font-size:18px;">{{ snapshot.generation_run_summary.completed_stage_count }} of {{ snapshot.generation_run_summary.total_stage_count }} stages completed</div>
+                <div style="margin-top:6px; font-size:18px;">{{ snapshot.generation_run_summary.completed_stage_count }} of {{ snapshot.generation_run_summary.total_stage_count }} stages completed{% if snapshot.generation_run_summary.total_elapsed_label %} - Duration {{ snapshot.generation_run_summary.total_elapsed_label }}{% endif %}</div>
             </div>
             <div style="font-size:14px; color:#5a6477;">
                 {{ snapshot.generation_run_summary.stage_progress_percent }}%

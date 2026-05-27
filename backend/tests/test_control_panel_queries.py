@@ -427,6 +427,11 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.config_summary is not None
     assert snapshot.config_summary.title == "Current config"
     assert snapshot.config_summary.first_batch_month.isoformat() == "2026-01-01"
+    assert snapshot.config_summary.target_total_players == 1000
+    assert snapshot.config_summary.estimated_total_players == 1020
+    assert snapshot.config_summary.estimated_total_teams == 982
+    assert snapshot.config_summary.estimated_total_matches == 1964
+    assert snapshot.config_summary.estimated_total_games == 2750
     assert snapshot.seed_data_summary.is_ready is True
     assert snapshot.generation_run_summary is not None
     assert snapshot.generation_run_summary.generation_run_id == 1
@@ -436,6 +441,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.generation_run_summary.completed_stage_count == 3
     assert snapshot.generation_run_summary.total_stage_count == 4
     assert snapshot.generation_run_summary.stage_progress_percent == 75
+    assert snapshot.generation_run_summary.total_elapsed_label is None
     assert snapshot.active_job_summary is not None
     assert snapshot.active_job_summary.status == "running"
     assert snapshot.active_job_stage_progress == ()
@@ -447,6 +453,8 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert len(second_batch.stage_progress) == 2
     assert snapshot.batch_summaries[0].stage_progress[0].completion_message == "Rows created: 1,250"
     assert snapshot.batch_summaries[0].stage_progress[1].completion_message == "Ratings updated: 2,500"
+    assert snapshot.batch_summaries[0].elapsed_label == "3m 00s"
+    assert snapshot.batch_summaries[1].elapsed_label is None
     assert second_batch.stage_progress[1].stage_name == "matches"
     assert second_batch.stage_progress[1].is_stale is False
     assert second_batch.stage_progress[1].liveness_state == "active"
@@ -472,6 +480,70 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     stalled_snapshot = queries.get_control_panel_snapshot(session)
     assert "One or more running stages now look likely stalled." in stalled_snapshot.warnings
     assert stalled_snapshot.batch_summaries[1].stage_progress[1].is_stale is True
+
+
+def test_completed_generation_run_reports_total_elapsed_duration(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                2, 'Completed generation', 11, 'v1', 'succeeded',
+                '2026-05-20 09:00:00', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+            ) VALUES
+                (21, 2, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (22, 2, '2026-02-01', 2, 'historical_initial', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                200, 'generation_run', 'generation-run-200', 'succeeded', 'completed', 100.00,
+                'Generation run completed successfully.',
+                '2026-05-20 09:00:00', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
+                progress_current, progress_total, progress_unit, progress_percent, progress_message,
+                created_at, updated_at
+            ) VALUES
+                (2001, 200, 2, 21, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, 'players succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (2002, 200, 2, 22, 'matches', 4, 'succeeded', 1, 1, 'stage', 100.00, 'matches succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 10, 1, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.completed_stage_count == 2
+    assert snapshot.generation_run_summary.total_stage_count == 2
+    assert snapshot.generation_run_summary.total_elapsed_label == "1:00:00"
 
 
 def test_get_control_panel_snapshot_reports_missing_valid_config(session):

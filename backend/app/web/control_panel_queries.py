@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import json
 from typing import Callable
 
@@ -11,6 +11,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigValidationIssue
+from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.generation.progress_liveness import (
     DEFAULT_STAGE_LIKELY_STALLED_AFTER,
     liveness_state_for_stage,
@@ -56,6 +57,10 @@ class ConfigSummary:
     historical_batch_count: int | None
     target_total_players: int | None
     seed_dataset_count: int
+    estimated_total_players: int | None
+    estimated_total_teams: int | None
+    estimated_total_matches: int | None
+    estimated_total_games: int | None
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,7 @@ class BatchSummary:
     processing_status: str
     started_at: datetime | None
     completed_at: datetime | None
+    elapsed_label: str | None
     error_message: str | None
     stage_progress: tuple[StageProgressSummary, ...]
 
@@ -167,6 +173,7 @@ class GenerationRunSummary:
     completed_stage_count: int
     total_stage_count: int
     stage_progress_percent: Decimal | None
+    total_elapsed_label: str | None
 
 
 @dataclass(frozen=True)
@@ -661,6 +668,12 @@ class ControlPanelQueries:
                 processing_status=batch.processing_status,
                 started_at=batch.started_at,
                 completed_at=batch.completed_at,
+                elapsed_label=_batch_elapsed_label(
+                    processing_status=batch.processing_status,
+                    batch_started_at=batch.started_at,
+                    batch_completed_at=batch.completed_at,
+                    stage_progress=tuple(progress_by_batch.get(batch.id, [])),
+                ),
                 error_message=batch.error_message,
                 stage_progress=tuple(progress_by_batch.get(batch.id, [])),
             )
@@ -690,6 +703,14 @@ class ControlPanelQueries:
         simulation = payload.get("simulation", {})
         raw_seed_data = payload.get("raw_seed_data", {})
         supported_datasets = raw_seed_data.get("supported_datasets", []) if isinstance(raw_seed_data, dict) else []
+        (
+            estimated_total_players,
+            estimated_total_teams,
+            estimated_total_matches,
+            estimated_total_games,
+        ) = (
+            _estimate_dataset_footprint(payload)
+        )
         return (
             ConfigSummary(
                 version_id=version.id,
@@ -706,6 +727,10 @@ class ControlPanelQueries:
                 historical_batch_count=_coerce_int(simulation.get("historical_batch_count")),
                 target_total_players=_coerce_int(simulation.get("target_total_players")),
                 seed_dataset_count=len(supported_datasets) if isinstance(supported_datasets, list) else 0,
+                estimated_total_players=estimated_total_players,
+                estimated_total_teams=estimated_total_teams,
+                estimated_total_matches=estimated_total_matches,
+                estimated_total_games=estimated_total_games,
             ),
             None,
         )
@@ -751,6 +776,11 @@ class ControlPanelQueries:
                 batch_summaries=batch_summaries,
             ),
             stage_progress_percent=_stage_progress_percent(
+                active_job_stage_progress=active_job_stage_progress,
+                batch_summaries=batch_summaries,
+            ),
+            total_elapsed_label=_generation_run_elapsed_label(
+                generation_run=generation_run,
                 active_job_stage_progress=active_job_stage_progress,
                 batch_summaries=batch_summaries,
             ),
@@ -1097,6 +1127,98 @@ def _stage_progress_percent(
     )
 
 
+def _batch_started_at(
+    *,
+    batch_started_at: datetime | None,
+    stage_progress: tuple[StageProgressSummary, ...],
+) -> datetime | None:
+    if batch_started_at is not None:
+        return batch_started_at
+    stage_started = [stage.started_at for stage in stage_progress if stage.started_at is not None]
+    return min(stage_started) if stage_started else None
+
+
+def _batch_completed_at(
+    *,
+    batch_completed_at: datetime | None,
+    stage_progress: tuple[StageProgressSummary, ...],
+) -> datetime | None:
+    if batch_completed_at is not None:
+        return batch_completed_at
+    stage_completed = [
+        stage.completed_at for stage in stage_progress if stage.completed_at is not None
+    ]
+    return max(stage_completed) if stage_completed else None
+
+
+def _batch_elapsed_label(
+    *,
+    processing_status: str,
+    batch_started_at: datetime | None,
+    batch_completed_at: datetime | None,
+    stage_progress: tuple[StageProgressSummary, ...],
+) -> str | None:
+    if processing_status not in {"succeeded", "failed"}:
+        return None
+    return _format_elapsed_duration(
+        started_at=_batch_started_at(
+            batch_started_at=batch_started_at,
+            stage_progress=stage_progress,
+        ),
+        completed_at=_batch_completed_at(
+            batch_completed_at=batch_completed_at,
+            stage_progress=stage_progress,
+        ),
+    )
+
+
+def _generation_run_elapsed_label(
+    *,
+    generation_run: GenerationRun,
+    active_job_stage_progress: tuple[StageProgressSummary, ...],
+    batch_summaries: tuple[BatchSummary, ...],
+) -> str | None:
+    total = _total_stage_count(
+        active_job_stage_progress=active_job_stage_progress,
+        batch_summaries=batch_summaries,
+    )
+    completed = _completed_stage_count(
+        active_job_stage_progress=active_job_stage_progress,
+        batch_summaries=batch_summaries,
+    )
+    if total <= 0 or completed < total:
+        return None
+
+    started_at = generation_run.started_at
+    if started_at is None:
+        stage_started = [
+            stage.started_at
+            for stage in _all_stage_progress(
+                active_job_stage_progress=active_job_stage_progress,
+                batch_summaries=batch_summaries,
+            )
+            if stage.started_at is not None
+        ]
+        started_at = min(stage_started) if stage_started else None
+
+    completed_at = generation_run.completed_at
+    if completed_at is None:
+        batch_completed = [
+            _batch_completed_at(
+                batch_completed_at=batch.completed_at,
+                stage_progress=batch.stage_progress,
+            )
+            for batch in batch_summaries
+        ]
+        batch_completed = [value for value in batch_completed if value is not None]
+        completed_at = max(batch_completed) if batch_completed else None
+
+    return _format_clock_duration(
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+
 def split_payload_sections(payload: dict[str, object] | None) -> tuple[dict[str, object], dict[str, object]]:
     """Split a full configuration payload into seed and synthetic sections."""
     source = payload or {}
@@ -1228,3 +1350,193 @@ def _format_elapsed_duration(
     if minutes > 0:
         return f"{minutes}m {seconds:02d}s"
     return f"{seconds}s"
+
+
+def _format_clock_duration(
+    *,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+) -> str | None:
+    if started_at is None or completed_at is None or completed_at < started_at:
+        return None
+
+    total_seconds = int((completed_at - started_at).total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def _estimate_dataset_footprint(
+    payload: dict[str, object] | None,
+) -> tuple[int | None, int | None, int | None, int | None]:
+    source = payload or DEFAULT_CONFIG_PAYLOAD
+    simulation = _coerce_mapping(source.get("simulation"))
+    player_generation = _coerce_mapping(source.get("player_generation"))
+    team_formation = _coerce_mapping(source.get("team_formation"))
+    match_scheduling = _coerce_mapping(source.get("match_scheduling"))
+    match_types = _coerce_mapping(source.get("match_types"))
+    games_and_scores = _coerce_mapping(source.get("games_and_scores"))
+
+    estimated_players = _coerce_int(
+        player_generation.get("player_count")
+        or simulation.get("target_total_players")
+    )
+    historical_batch_count = _coerce_int(simulation.get("historical_batch_count"))
+    if not estimated_players or not historical_batch_count or historical_batch_count < 1:
+        return None, None, None, None
+
+    monthly_growth_rate = _decimal_or_default(
+        player_generation.get("monthly_player_growth_rate"),
+        Decimal("0.02"),
+    )
+    projected_players_by_batch = _project_players_by_batch(
+        initial_player_count=estimated_players,
+        historical_batch_count=historical_batch_count,
+        monthly_growth_rate=monthly_growth_rate,
+    )
+
+    matches_per_team_per_month = _decimal_or_default(
+        match_scheduling.get("matches_per_team_per_month"),
+        Decimal("4.0"),
+    )
+
+    default_match_types = _coerce_mapping(DEFAULT_CONFIG_PAYLOAD.get("match_types"))
+    default_games_and_scores = _coerce_mapping(
+        DEFAULT_CONFIG_PAYLOAD.get("games_and_scores")
+    )
+    match_type_weights = _coerce_mapping(
+        match_types.get("weights") or default_match_types.get("weights")
+    )
+    games_per_match = _coerce_mapping(
+        games_and_scores.get("games_per_match")
+        or default_games_and_scores.get("games_per_match")
+    )
+    weighted_games_per_match = Decimal("0")
+    for match_type, weight in match_type_weights.items():
+        weight_decimal = _decimal_or_default(weight, Decimal("0"))
+        game_count = _games_per_match_for_type(
+            match_type,
+            games_per_match=games_per_match,
+        )
+        weighted_games_per_match += weight_decimal * Decimal(game_count)
+
+    target_team_count = _coerce_int(team_formation.get("target_team_count"))
+    estimated_total_teams = 0
+    estimated_matches_decimal = Decimal("0")
+    for player_count_for_batch in projected_players_by_batch:
+        active_teams_per_batch = _estimate_active_teams_for_batch(
+            player_count=player_count_for_batch,
+            team_formation=team_formation,
+            target_team_count=target_team_count,
+        )
+        estimated_total_teams += active_teams_per_batch
+        estimated_matches_decimal += (
+            Decimal(active_teams_per_batch) * matches_per_team_per_month / Decimal("2")
+        )
+
+    estimated_total_players = projected_players_by_batch[-1]
+    estimated_total_matches = int(
+        estimated_matches_decimal.to_integral_value(rounding=ROUND_HALF_UP)
+    )
+    estimated_total_games = int(
+        (estimated_matches_decimal * weighted_games_per_match).to_integral_value(
+            rounding=ROUND_HALF_UP
+        )
+    )
+
+    return (
+        estimated_total_players,
+        estimated_total_teams,
+        estimated_total_matches,
+        estimated_total_games,
+    )
+
+
+def _project_players_by_batch(
+    *,
+    initial_player_count: int,
+    historical_batch_count: int,
+    monthly_growth_rate: Decimal,
+) -> list[int]:
+    if historical_batch_count <= 0 or initial_player_count <= 0:
+        return []
+
+    player_counts = [initial_player_count]
+    current_players = initial_player_count
+    for _ in range(1, historical_batch_count):
+        growth_players = int(
+            (
+                Decimal(current_players) * monthly_growth_rate
+            ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+        current_players += max(growth_players, 0)
+        player_counts.append(current_players)
+    return player_counts
+
+
+def _estimate_active_teams_for_batch(
+    *,
+    player_count: int,
+    team_formation: dict[str, object],
+    target_team_count: int | None,
+) -> int:
+    if target_team_count is not None and target_team_count > 0:
+        return target_team_count
+
+    participation_rate = _decimal_or_default(
+        team_formation.get("player_team_participation_rate"),
+        Decimal("0.90"),
+    )
+    multi_team_rate = _decimal_or_default(
+        team_formation.get("multi_team_player_rate"),
+        Decimal("0.08"),
+    )
+    max_active_teams_per_player = _coerce_int(
+        team_formation.get("max_active_teams_per_player"),
+        default=2,
+    ) or 2
+    extra_team_slots = max(max_active_teams_per_player - 1, 0)
+    estimated_team_slots = (
+        Decimal(player_count)
+        * participation_rate
+        * (Decimal("1") + multi_team_rate * Decimal(extra_team_slots))
+    )
+    return int(
+        (estimated_team_slots / Decimal("2")).to_integral_value(
+            rounding=ROUND_HALF_UP
+        )
+    )
+
+
+def _decimal_or_default(value: object, default: Decimal) -> Decimal:
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float, str)):
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return default
+    return default
+
+
+def _games_per_match_for_type(
+    match_type: object,
+    *,
+    games_per_match: dict[str, object],
+) -> int:
+    match_type_value = _coerce_str(match_type) or ""
+    explicit = _coerce_int(games_per_match.get(match_type_value))
+    if explicit is not None and explicit > 0:
+        return explicit
+    if match_type_value == "tournament":
+        return _coerce_int(games_per_match.get("tournament"), default=3) or 3
+    if match_type_value == "league":
+        return _coerce_int(games_per_match.get("league"), default=2) or 2
+    return _coerce_int(games_per_match.get("recreational"), default=1) or 1

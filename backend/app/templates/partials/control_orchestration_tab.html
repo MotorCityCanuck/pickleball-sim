@@ -340,6 +340,31 @@
             </div>
         </div>
 
+        <section class="info-card" style="margin-top:16px; display:grid; gap:12px;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Estimated Dataset Size</div>
+                <div style="margin-top:6px; color:#5a6477;">Estimated totals using the current player and match configuration.</div>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                <div class="metric-card">
+                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Estimated Players</div>
+                    <div style="margin-top:6px;">{% if snapshot.config_summary and snapshot.config_summary.estimated_total_players is not none %}{{ "{:,}".format(snapshot.config_summary.estimated_total_players) }}{% else %}n/a{% endif %}</div>
+                </div>
+                <div class="metric-card">
+                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Estimated Teams</div>
+                    <div style="margin-top:6px;">{% if snapshot.config_summary and snapshot.config_summary.estimated_total_teams is not none %}{{ "{:,}".format(snapshot.config_summary.estimated_total_teams) }}{% else %}n/a{% endif %}</div>
+                </div>
+                <div class="metric-card">
+                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Estimated Matches</div>
+                    <div style="margin-top:6px;">{% if snapshot.config_summary and snapshot.config_summary.estimated_total_matches is not none %}{{ "{:,}".format(snapshot.config_summary.estimated_total_matches) }}{% else %}n/a{% endif %}</div>
+                </div>
+                <div class="metric-card">
+                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Estimated Games</div>
+                    <div style="margin-top:6px;">{% if snapshot.config_summary and snapshot.config_summary.estimated_total_games is not none %}{{ "{:,}".format(snapshot.config_summary.estimated_total_games) }}{% else %}n/a{% endif %}</div>
+                </div>
+            </div>
+        </section>
+
         <form
             style="margin-top:16px; display:grid; gap:12px;"
             hx-post="/control/generation/start"
