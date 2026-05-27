@@ -108,7 +108,7 @@ run-level seed, version, target scale, and output directory.
   **Field**                           **Specification**
   ----------------------------------- -----------------------------------
   **Inputs**                          run name; master seed; environment;
-                                      target total players
+                                      initial player count
 
   **Outputs**                         simulation_run_id; run audit row
 

@@ -278,11 +278,11 @@ players (many) ──> team_memberships (many) ──> teams (many)
 ```yaml
 # Global
 master_seed: 42                          # Reproducibility
-target_total_players: 50000             # Population size
 first_batch_month: "2024-01-01"         # Current simulation start month
 historical_batch_count: 12               # Initial history
 
 # Player Growth
+player_count: 50000                      # Initial population size
 monthly_player_growth_rate: 0.02         # 2% monthly growth
 
 # Ratings

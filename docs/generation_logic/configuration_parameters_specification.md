@@ -70,7 +70,6 @@ path to the full configuration surface as the metadata-driven editor expands.
 | `master_seed` | INTEGER | Numeric input | (required) | > 0 | - | Master random seed for reproducibility. Required positive integer greater than 0. |
 | `simulation_version` | STRING | Text input | "1.0" | semantic version | - | Platform version identifier. Enter a semantic version string such as `1.0` or `1.2.3`. |
 | `simulation_name` | STRING | Text input | (required) | max 255 chars | - | Human-readable simulation name. Required text value up to 255 characters. |
-| `target_total_players` | INTEGER | Numeric input | 50000 | 1000-10000000 | players | Total player population target. Allowed range is 1,000 to 10,000,000 players. |
 | `historical_batch_count` | INTEGER | Numeric input | 12 | 1-36 | months | Number of historical months to generate. Allowed range is 1 to 36 months. |
 | `first_batch_month` | DATE | Date picker | 2024-01-01 | ISO date | date | First monthly batch date for the simulation timeline. Must be entered as an ISO date in `YYYY-MM-DD` format. |
 | `generation_run_mode` | ENUM | Select | "full" | full, historical_only, incremental | - | Execution mode. Allowed options are `full`, `historical_only`, or `incremental`. |
@@ -326,7 +325,6 @@ simulation:
   master_seed: 42
   simulation_name: "NAPA_Olympic_Analytics_v1"
   simulation_version: "1.0"
-  target_total_players: 50000
   historical_batch_count: 12
   first_batch_month: "2024-01-01"
 
@@ -410,7 +408,6 @@ export:
   "simulation": {
     "master_seed": 42,
     "simulation_name": "NAPA_Olympic_Analytics_v1",
-    "target_total_players": 50000,
     "first_batch_month": "2024-01-01"
   },
   "player_generation": {
@@ -455,7 +452,7 @@ export:
 
 All configuration parsers must enforce:
 
-1. **Required parameters**: `master_seed`, `simulation_name`, `target_total_players`
+1. **Required parameters**: `master_seed`, `simulation_name`, `player_generation.player_count`
 2. **Range validation**: All numeric parameters within documented ranges
 3. **Probability sum validation**: All distribution groups sum to 1.0 ± 0.01,
    including gender, dominant hand, player status, club size, match type, and

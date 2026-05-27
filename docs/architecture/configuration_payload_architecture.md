@@ -75,7 +75,6 @@ Suggested groups:
     "simulation_name": "NAPA_Olympic_Analytics_v1",
     "simulation_version": "1.0",
     "generation_run_mode": "full",
-    "target_total_players": 50000,
     "historical_batch_count": 12,
     "first_batch_month": "2024-01-01",
     "commit_strategy": "per_module",

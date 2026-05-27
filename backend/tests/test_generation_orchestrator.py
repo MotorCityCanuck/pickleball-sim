@@ -225,7 +225,9 @@ def test_create_initial_generation_plan_marks_loaded_config_version_used(session
             "master_seed": 123,
             "historical_batch_count": 2,
             "first_batch_month": "2026-01-01",
-            "target_total_players": 1000,
+        },
+        "player_generation": {
+            "player_count": 1000,
         },
     }
     saved = lifecycle.save_new_version(

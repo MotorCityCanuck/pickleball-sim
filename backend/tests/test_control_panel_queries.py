@@ -254,7 +254,9 @@ def _seed_valid_config(session):
             "master_seed": 77,
             "historical_batch_count": 2,
             "first_batch_month": "2026-01-01",
-            "target_total_players": 1000,
+        },
+        "player_generation": {
+            "player_count": 1000,
         },
     }
     lifecycle.save_new_version(
@@ -427,7 +429,7 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert snapshot.config_summary is not None
     assert snapshot.config_summary.title == "Current config"
     assert snapshot.config_summary.first_batch_month.isoformat() == "2026-01-01"
-    assert snapshot.config_summary.target_total_players == 1000
+    assert snapshot.config_summary.player_count == 1000
     assert snapshot.config_summary.estimated_total_players == 1020
     assert snapshot.config_summary.estimated_total_teams == 982
     assert snapshot.config_summary.estimated_total_matches == 1964

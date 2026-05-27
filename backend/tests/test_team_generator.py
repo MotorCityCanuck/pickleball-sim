@@ -31,7 +31,6 @@ from app.models import (  # noqa: E402
 def test_payload(player_count=20):
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
     payload["player_generation"]["player_count"] = player_count
-    payload["simulation"]["target_total_players"] = player_count
     payload["team_formation"]["player_team_participation_rate"] = 0.80
     payload["team_formation"]["team_type_weights"] = {
         "mens_doubles": 0.25,
@@ -465,6 +464,15 @@ def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
     payload["team_formation"]["player_team_participation_rate"] = 1.0
     payload["team_formation"]["monthly_team_dissolution_rate"] = 0.0
     payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    payload["team_formation"]["same_club_team_rate"] = 0.0
+    payload["team_formation"]["same_region_team_rate"] = 0.0
+    payload["team_formation"]["rating_gap_max"] = 10_000
+    payload["team_formation"]["team_type_weights"] = {
+        "mens_doubles": 0.0,
+        "womens_doubles": 0.0,
+        "mixed_doubles": 0.0,
+        "open_doubles": 1.0,
+    }
     generation_run, batch = seed_team_data(session, payload=payload, player_count=20)
 
     TeamGenerator().generate_for_batch(
@@ -540,7 +548,7 @@ def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
     assert result.rows_loaded == 1
     assert result.membership_rows_loaded == 2
     assert result.target_team_count == 1
-    assert session.query(Team).count() == 9
+    assert session.query(Team).count() == 11
     new_team = session.query(Team).order_by(Team.id.desc()).first()
     assert new_team.formation_date == date(2024, 2, 1)
     assert {membership.player_id for membership in new_team.memberships} == {

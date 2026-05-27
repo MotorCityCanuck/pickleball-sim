@@ -31,9 +31,7 @@ from app.models import (  # noqa: E402
 def test_payload(player_count):
     """Build a compact generation payload for player generator tests."""
     payload = {
-        "simulation": {
-            "target_total_players": player_count,
-        },
+        "simulation": {},
         "player_generation": {
             "player_count": player_count,
             "age_min": 18,
@@ -1129,14 +1127,14 @@ def test_payload_generator_does_not_create_ratings_yet(session):
     assert session.query(PlayerRegistration).one().initial_rating_value is not None
 
 
-def test_payload_player_count_from_simulation_when_player_count_missing(session):
+def test_payload_player_count_is_required_when_missing(session):
     from app.generators.players import PlayerGenerationConfig
 
     payload = test_payload(3)
     del payload["player_generation"]["player_count"]
-    payload["simulation"]["target_total_players"] = 7
 
-    assert PlayerGenerationConfig.from_payload(payload).player_count == 7
+    with pytest.raises(ValueError, match="player_generation.player_count"):
+        PlayerGenerationConfig.from_payload(payload)
 
 
 def test_payload_missing_snapshot_uses_default_config(session):
@@ -3693,7 +3691,7 @@ def test_payload_generation_uses_sorted_region_order_for_stability(session):
 
 def test_payload_generation_can_generate_from_minimal_payload(session):
     payload = {
-        "simulation": {"target_total_players": 1},
+        "simulation": {},
         "player_generation": {"player_count": 1},
     }
     generation_run, monthly_batch = seed_reference_data(session, payload=payload)
@@ -3763,7 +3761,7 @@ def test_payload_generation_values_are_not_none(session):
 def test_payload_generation_configured_player_count_large_does_not_run_here():
     from app.core import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
+    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
 def test_payload_generation_registration_rating_fields_are_optional_but_populated(session):
@@ -3958,7 +3956,6 @@ def test_payload_generation_can_run_after_config_version_two_limit(session):
 
     payload = default_config_payload()
     payload["player_generation"]["player_count"] = 2
-    payload["simulation"]["target_total_players"] = 2
     generation_run, monthly_batch = seed_reference_data(session, payload=payload)
 
     result = PlayerGenerator().generate_initial_population(
@@ -4185,12 +4182,11 @@ def test_payload_generation_player_count_is_int(session):
     assert PlayerGenerationConfig.from_payload(payload).player_count == 2
 
 
-def test_payload_generation_target_total_players_is_int_fallback():
+def test_payload_generation_player_count_is_int_coercible():
     from app.generators.players import PlayerGenerationConfig
 
     payload = test_payload(1)
-    del payload["player_generation"]["player_count"]
-    payload["simulation"]["target_total_players"] = "3"
+    payload["player_generation"]["player_count"] = "3"
 
     assert PlayerGenerationConfig.from_payload(payload).player_count == 3
 
@@ -4718,27 +4714,25 @@ def test_payload_generation_count_override_one_does_not_load_snapshot_count(sess
 def test_payload_generation_default_payload_is_100():
     from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
     assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
-def test_payload_generation_uses_player_count_when_present_over_target_total():
+def test_payload_generation_uses_player_count():
     from app.generators.players import PlayerGenerationConfig
 
     payload = test_payload(2)
-    payload["simulation"]["target_total_players"] = 99
 
     assert PlayerGenerationConfig.from_payload(payload).player_count == 2
 
 
-def test_payload_generation_uses_target_total_when_player_count_absent():
+def test_payload_generation_rejects_missing_player_count():
     from app.generators.players import PlayerGenerationConfig
 
     payload = test_payload(2)
     del payload["player_generation"]["player_count"]
-    payload["simulation"]["target_total_players"] = 99
 
-    assert PlayerGenerationConfig.from_payload(payload).player_count == 99
+    with pytest.raises(ValueError, match="player_generation.player_count"):
+        PlayerGenerationConfig.from_payload(payload)
 
 
 def test_payload_generation_error_message_for_existing_batch_registration(session):
@@ -4997,7 +4991,7 @@ def test_payload_generation_no_more_assertions(session):
 def test_payload_generation_default_limit_is_documented_by_constant():
     from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 
-    assert DEFAULT_CONFIG_PAYLOAD["simulation"]["target_total_players"] == 100
+    assert DEFAULT_CONFIG_PAYLOAD["player_generation"]["player_count"] == 100
 
 
 def test_payload_generation_current_default_version_is_three():

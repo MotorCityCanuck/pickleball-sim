@@ -140,7 +140,9 @@ def _seed_valid_config(session):
             "master_seed": 42,
             "historical_batch_count": 2,
             "first_batch_month": "2026-01-01",
-            "target_total_players": 100,
+        },
+        "player_generation": {
+            "player_count": 100,
         },
         "raw_seed_data": {
             "supported_datasets": [

@@ -569,7 +569,9 @@ def _seed_valid_config(session, *, seed=42, historical_months=2):
             "master_seed": seed,
             "historical_batch_count": historical_months,
             "first_batch_month": "2026-01-01",
-            "target_total_players": 1000,
+        },
+        "player_generation": {
+            "player_count": 1000,
         },
     }
     saved = lifecycle.save_new_version(

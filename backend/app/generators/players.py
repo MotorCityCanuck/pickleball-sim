@@ -71,18 +71,12 @@ class PlayerGenerationConfig:
     def from_payload(cls, payload: dict[str, Any] | None) -> "PlayerGenerationConfig":
         """Build typed player generation settings from JSON payload."""
         source = payload or DEFAULT_CONFIG_PAYLOAD
-        simulation = source.get("simulation", {})
         player_config = source.get("player_generation", {})
         ratings = source.get("ratings", {})
         confidence = source.get("confidence", {})
         skill_seed = player_config.get("initial_skill_seed", {})
 
-        player_count = int(
-            player_config.get(
-                "player_count",
-                simulation.get("target_total_players", 0),
-            )
-        )
+        player_count = int(player_config.get("player_count", 0))
         if player_count < 1:
             raise ValueError("player_generation.player_count must be at least 1")
         monthly_player_growth_rate = _decimal(

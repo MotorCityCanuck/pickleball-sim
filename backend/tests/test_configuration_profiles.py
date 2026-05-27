@@ -71,7 +71,7 @@ def test_upsert_default_configuration_profile_creates_valid_version(session):
     assert profile_version.title == "Default configuration"
     assert profile_version.config_hash is not None
     assert profile_version.config_payload["simulation"]["master_seed"] == 42
-    assert profile_version.config_payload["simulation"]["target_total_players"] == 100
+    assert profile_version.config_payload["player_generation"]["player_count"] == 100
 
 
 def test_get_configuration_payload_returns_latest_valid_version(session):

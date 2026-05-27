@@ -172,13 +172,6 @@ class ConfigurationLifecycleService:
             ):
                 issues.append(issue)
                 errors.append(issue.error_text)
-            for issue in _validate_int_field(
-                simulation,
-                "target_total_players",
-                minimum=1,
-            ):
-                issues.append(issue)
-                errors.append(issue.error_text)
         for issue in validate_live_config_payload(normalized_payload):
             issues.append(issue)
             errors.append(issue.error_text)

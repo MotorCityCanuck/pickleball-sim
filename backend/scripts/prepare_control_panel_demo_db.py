@@ -15,7 +15,9 @@ DEMO_PAYLOAD = {
         "master_seed": 42,
         "historical_batch_count": 3,
         "first_batch_month": "2026-01-01",
-        "target_total_players": 100,
+    },
+    "player_generation": {
+        "player_count": 100,
     },
 }
 

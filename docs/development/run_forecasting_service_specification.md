@@ -124,8 +124,7 @@ be operationally useful.
 
 Relevant current behaviors:
 
-- Initial player population is driven by `player_generation.player_count`,
-  falling back to `simulation.target_total_players`.
+- Initial player population is driven by `player_generation.player_count`.
 - Later monthly player additions are driven by
   `player_generation.monthly_player_growth_rate` plus seeded noise.
 - Team formation coverage is driven primarily by
@@ -184,7 +183,6 @@ The service may also accept:
 
 The first version depends most directly on:
 
-- `simulation.target_total_players`
 - `simulation.historical_batch_count`
 - `player_generation.player_count`
 - `player_generation.monthly_player_growth_rate`
@@ -263,11 +261,7 @@ Projected initial players should be:
 
 ```text
 player_generation.player_count
-or
-simulation.target_total_players
 ```
-
-depending on which live generator field resolves first.
 
 ### Later Batches
 

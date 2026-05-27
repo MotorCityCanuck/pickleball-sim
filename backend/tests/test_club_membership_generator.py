@@ -30,7 +30,6 @@ from app.models import (  # noqa: E402
 def test_payload(player_count=100):
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
     payload["player_generation"]["player_count"] = player_count
-    payload["simulation"]["target_total_players"] = player_count
     return payload
 
 

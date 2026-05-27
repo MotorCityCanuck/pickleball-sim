@@ -55,7 +55,7 @@ class ConfigSummary:
     simulation_version: str | None
     first_batch_month: date | None
     historical_batch_count: int | None
-    target_total_players: int | None
+    player_count: int | None
     seed_dataset_count: int
     estimated_total_players: int | None
     estimated_total_teams: int | None
@@ -701,6 +701,7 @@ class ControlPanelQueries:
         version = valid_versions[0]
         payload = version.config_payload or {}
         simulation = payload.get("simulation", {})
+        player_generation = payload.get("player_generation", {})
         raw_seed_data = payload.get("raw_seed_data", {})
         supported_datasets = raw_seed_data.get("supported_datasets", []) if isinstance(raw_seed_data, dict) else []
         (
@@ -725,7 +726,11 @@ class ControlPanelQueries:
                 simulation_version=_coerce_str(simulation.get("simulation_version")),
                 first_batch_month=_coerce_date(simulation.get("first_batch_month")),
                 historical_batch_count=_coerce_int(simulation.get("historical_batch_count")),
-                target_total_players=_coerce_int(simulation.get("target_total_players")),
+                player_count=(
+                    _coerce_int(player_generation.get("player_count"))
+                    if isinstance(player_generation, dict)
+                    else None
+                ),
                 seed_dataset_count=len(supported_datasets) if isinstance(supported_datasets, list) else 0,
                 estimated_total_players=estimated_total_players,
                 estimated_total_teams=estimated_total_teams,
@@ -1380,10 +1385,7 @@ def _estimate_dataset_footprint(
     match_types = _coerce_mapping(source.get("match_types"))
     games_and_scores = _coerce_mapping(source.get("games_and_scores"))
 
-    estimated_players = _coerce_int(
-        player_generation.get("player_count")
-        or simulation.get("target_total_players")
-    )
+    estimated_players = _coerce_int(player_generation.get("player_count"))
     historical_batch_count = _coerce_int(simulation.get("historical_batch_count"))
     if not estimated_players or not historical_batch_count or historical_batch_count < 1:
         return None, None, None, None
