@@ -104,6 +104,17 @@ This stage likely grows with:
 - increasing rejection work late in planning
 - increasing historical scan cost for prior pairings
 
+Updated interpretation from the current observed large run:
+
+- one observed `matches` stage duration was approximately 3 hours 20 minutes
+- surrounding observations indicate that `matches` is consuming roughly 75% to
+  80% of total monthly batch runtime
+- `matches` should therefore be treated as the primary optimization target for
+  the current workload shape
+
+This is now an empirical working conclusion, not just an architectural
+inference.
+
 ### 4.3 ORM-heavy persistence
 
 The current generation path appears to rely heavily on:
