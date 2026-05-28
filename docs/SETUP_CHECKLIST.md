@@ -2,12 +2,14 @@
 
 **Pickleball Simulation Platform - Development Setup Checklist**
 
-**Current status note (2026-05-18):** The foundation work described here is
-complete in the live repository. The active codebase now includes 34 ORM-backed
+**Current status note (2026-05-28):** The foundation work described here is
+complete in the live repository. The active codebase now includes 37 ORM-backed
 tables, ORM schema recreation/export scripts, configuration profiles, raw seed
-loading/normalization, player generation, club memberships, team determination,
-match generation, and game generation. Use this file as an environment setup
-checklist, not as the current implementation status source.
+loading/normalization, generation run planning, monthly pipeline orchestration,
+player/club/team/match/game/rating generation, job-stage tracking, student
+dataset release metadata, and a FastAPI/HTMX control panel shell. Use this file
+as an environment setup checklist, not as the current implementation status
+source.
 
 ---
 
@@ -33,7 +35,7 @@ checklist, not as the current implementation status source.
 - [x] Created `.gitignore`
 - [x] Created `env.example`
 - [x] Created `README.md`
-- [x] Created `docker-compose.yml`
+- [x] Created `compose.yaml`
 - [x] Created `requirements.txt`
 - [x] Created setup script
 
@@ -59,16 +61,15 @@ checklist, not as the current implementation status source.
 
 ### Quick Setup Option
 
-Run the automated setup script:
-```bash
-./scripts/setup_dev_environment.sh
-```
+There is no dedicated setup script in the current repository. Use the manual
+steps below, then use `scripts/start_control_panel.sh` when you want to launch
+the local web control panel.
 
 ### Manual Setup Steps
 
 1. **Start PostgreSQL**
    ```bash
-   docker-compose up -d postgres
+   docker compose up -d postgres
    ```
    - [ ] PostgreSQL container running
    - [ ] Can connect to database
@@ -106,8 +107,8 @@ Run the automated setup script:
 
 The executable schema is defined by SQLAlchemy models in `backend/app/models`.
 
-- [ ] Create `backend/scripts/recreate_db_from_orm.py`
-- [ ] Create `backend/scripts/export_schema_from_orm.py`
+- [x] Create `backend/scripts/recreate_db_from_orm.py`
+- [x] Create `backend/scripts/export_schema_from_orm.py`
 - [ ] Ensure all indexes and constraints are declared in ORM models
 
 ### Apply Schema to Database
@@ -129,13 +130,13 @@ python backend/scripts/export_schema_from_orm.py
 docker exec -it pickleball-postgres psql -U postgres -d pickleball
 ```
 ```sql
-\dt                    -- List all tables (should see 34)
+\dt                    -- List all tables (should see 37)
 \d players             -- Describe players table
 \d+ players            -- Detailed view with constraints
 SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';
 \q
 ```
-- [x] All 34 ORM-backed tables created
+- [x] All 37 ORM-backed tables created
 - [x] Constraints applied correctly
 - [x] Indexes created
 - [x] Foreign keys established
@@ -353,14 +354,14 @@ append new `player_rating_history` rows.
 
 **PostgreSQL won't start:**
 ```bash
-docker-compose down
-docker-compose up -d postgres
-docker-compose logs -f postgres
+docker compose down
+docker compose up -d postgres
+docker compose logs -f postgres
 ```
 
 **Can't connect to PostgreSQL:**
 - Check container is running: `docker ps`
-- Check logs: `docker-compose logs postgres`
+- Check logs: `docker compose logs postgres`
 - Verify port 5432 not in use: `netstat -an | grep 5432`
 
 ### Python Issues
@@ -392,8 +393,8 @@ Foundation setup is complete when:
 - [x] Python virtual environment created
 - [x] All dependencies installed
 - [x] `backend/schema.sql` generated from ORM metadata
-- [x] All 34 SQLAlchemy models created
-- [x] Schema applied to database (all 34 tables exist)
+- [x] All 37 ORM-backed tables created
+- [x] Schema applied to database (all 37 tables exist)
 - [x] Database session management working
 - [x] Configuration system working
 - [x] Basic tests passing

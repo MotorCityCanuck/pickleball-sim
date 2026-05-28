@@ -42,7 +42,7 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 3. **Start PostgreSQL**
    ```bash
-   docker-compose up -d postgres
+   docker compose up -d postgres
    ```
 
 4. **Create virtual environment**
@@ -55,7 +55,7 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 5. **Initialize database**
    ```bash
-   python backend/scripts/recreate_db_from_orm.py
+   python scripts/recreate_db_from_orm.py
    ```
 
 ## Project Structure
@@ -85,7 +85,7 @@ pickleball-sim/
 ├── database/                  # Database design documents
 ├── generation_logic/          # Generation algorithm specs
 ├── student_assignment/        # Student project materials
-├── docker-compose.yml         # Docker services
+├── compose.yaml               # Docker services
 └── README.md                  # This file
 ```
 
@@ -107,7 +107,8 @@ pickleball-sim/
 - **Database**: PostgreSQL 16
 - **ORM**: SQLAlchemy 2.0
 - **Schema Management**: ORM-first development recreation
-- **Web Framework**: FastAPI (Phase 2)
+- **Web Framework**: FastAPI with server-rendered Jinja2 and HTMX control
+  panel interactions
 - **Data Processing**: Pandas, NumPy
 - **Export Format**: Parquet (PyArrow)
 - **Testing**: Pytest
@@ -150,18 +151,20 @@ Configuration → Monthly Batch Processor
 - [x] Game and score generation
 - [x] Rating calculation engine with per-match update logs
 
-### 🔜 Phase 4: Monthly Batch Processing
-- [ ] Batch orchestration
-- [ ] New player registration
-- [ ] Monthly continuity logic
-- [ ] Validation framework
-- [ ] Parquet export pipeline
+### 🔄 Phase 4: Monthly Batch Processing and Export
+- [x] Generation run and monthly batch planning
+- [x] End-to-end monthly pipeline CLI for implemented stages
+- [x] Job and stage status tracking
+- [x] Student-facing dataset release specifications
+- [ ] Multi-batch new player inflow
+- [ ] Full validation and Parquet export hardening
 
-### 🔜 Phase 5: Web Interface
-- [ ] FastAPI setup
-- [ ] HTMX control panel
-- [ ] Job status tracking
-- [ ] Export management UI
+### 🔄 Phase 5: Web Control Panel
+- [x] FastAPI app shell
+- [x] Server-rendered control panel structure
+- [x] HTMX-driven status and workflow interactions
+- [x] Job status tracking views
+- [ ] Export management workflow completion
 
 ## Key Design Principles
 
@@ -175,13 +178,14 @@ Configuration → Monthly Batch Processor
 
 ## Database Schema
 
-34 ORM-backed tables organized into layers:
+37 ORM-backed tables organized into layers:
 
 - **Bronze**: Raw ingestion and staging (`uploaded_files`, `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases`)
 - **Silver**: Validated entities (`players`, `clubs`, `teams`, `regions`)
 - **Gold**: Analytics-ready (`player_rating_history`, `ratings_update_log`, `matches`, `match_games`, `monthly_batches`)
-- **Operational**: Platform metadata (`generation_runs`, `validation_results`, `job_status`)
+- **Operational**: Platform metadata (`generation_runs`, `batch_runs`, `validation_results`, `job_status`, `job_stage_progress`, `uploaded_files`, `export_runs`)
 - **Configuration Repository**: Versioned generation settings (`configuration_profiles`, `configuration_profile_versions`)
+- **Student Dataset Releases**: Export-release metadata (`student_dataset_releases`, `student_dataset_release_files`)
 
 See [Database Design](database/Pickleball_Simulation_Database_Design_v3.md) for complete DDL.
 

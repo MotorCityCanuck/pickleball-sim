@@ -145,8 +145,9 @@ CREATE INDEX idx_club_memberships_primary ON club_memberships(player_id, is_prim
 - `validation_results` (NEW)
 - `job_status` (NEW)
 
-**Current Total Tables**: 34 ORM-backed tables: 24 core platform tables, 8
-raw seed-data staging and tracking tables, and 2 configuration repository tables
+**Current Total Tables**: 37 ORM-backed tables: 25 core platform tables, 8
+raw seed-data staging and tracking tables, 2 configuration repository tables,
+and 2 student dataset release metadata tables
 
 ---
 

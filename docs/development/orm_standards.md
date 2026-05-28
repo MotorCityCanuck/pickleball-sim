@@ -28,8 +28,9 @@ The project uses an ORM-first database strategy during active development.
 
 ## Current Live Model Scope
 
-The current live schema and ORM define 34 tables: 24 core platform tables,
-8 raw seed-data staging tables, and 2 configuration repository tables.
+The current live schema and ORM define 37 tables: 25 core platform tables,
+8 raw seed-data staging tables, 2 configuration repository tables, and 2
+student dataset release metadata tables.
 
 1. `generation_runs`
 2. `regions`
@@ -55,16 +56,19 @@ The current live schema and ORM define 34 tables: 24 core platform tables,
 22. `export_runs`
 23. `validation_results`
 24. `job_status`
-25. `raw_seed_load_runs`
-26. `raw_seed_load_errors`
-27. `raw_metro_areas`
-28. `raw_pickleball_club_names`
-29. `raw_pickleball_club_distributions`
-30. `raw_first_names`
-31. `raw_last_names`
-32. `raw_state_prov_biases`
-33. `configuration_profiles`
-34. `configuration_profile_versions`
+25. `job_stage_progress`
+26. `raw_seed_load_runs`
+27. `raw_seed_load_errors`
+28. `raw_metro_areas`
+29. `raw_pickleball_club_names`
+30. `raw_pickleball_club_distributions`
+31. `raw_first_names`
+32. `raw_last_names`
+33. `raw_state_prov_biases`
+34. `configuration_profiles`
+35. `configuration_profile_versions`
+36. `student_dataset_releases`
+37. `student_dataset_release_files`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

@@ -386,6 +386,10 @@ Suggested groups:
 }
 ```
 
+`initial_player_count` is intentionally retained as a nullable computed/display
+field. Operators should not enter it directly; services may populate it from
+growth assumptions and workload estimates when showing forecasted run size.
+
 ## Validation Expectations
 
 - All probability distributions must sum to `1.0` within configured tolerance.

@@ -73,7 +73,7 @@ Graduate students will:
               │
 ┌─────────────▼───────────────────────┐
 │   PostgreSQL Database               │
-│   - 34 ORM-backed tables            │
+│   - 37 ORM-backed tables            │
 │   - Historical rating tracking      │
 │   - Monthly batch metadata          │
 └─────────────┬───────────────────────┘
@@ -546,7 +546,7 @@ You now know:
 
 ```bash
 # Docker environment
-docker-compose up -d
+docker compose up -d
 
 # Database connection
 psql -h localhost -U postgres -d pickleball

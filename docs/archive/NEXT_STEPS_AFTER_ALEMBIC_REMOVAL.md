@@ -8,6 +8,8 @@
 > truth, `backend/scripts/recreate_db_from_orm.py` for destructive development
 > database recreation, and `backend/scripts/export_schema_from_orm.py` to
 > generate `backend/schema.sql`.
+> This archived file contains stale 34-table schema references; use current ORM
+> standards and setup docs for live schema guidance.
 
 ## Current State
 

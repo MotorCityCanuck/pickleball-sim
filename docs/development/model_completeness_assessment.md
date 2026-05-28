@@ -5,8 +5,9 @@ generation-design documents.
 
 ## Current ORM Scope
 
-The live ORM now defines 34 tables: 24 core platform tables, 8 raw seed-data
-staging tables, and 2 configuration repository tables. Before the
+The live ORM now defines 37 tables: 25 core platform tables, 8 raw seed-data
+staging tables, 2 configuration repository tables, and 2 student dataset
+release metadata tables. Before the
 `match_games` assessment, the live ORM
 defined these 22 core tables:
 
@@ -78,13 +79,15 @@ The following documented concepts already have ORM coverage:
 - match games, expected scores, and actual scores: `match_games`
 - consolidated name reference data: `first_names`, `last_names`
 - operational metadata: `uploaded_files`, `export_runs`, `validation_results`,
-  `job_status`
+  `job_status`, `job_stage_progress`
 - raw seed-data ingestion staging: `raw_seed_load_runs`,
   `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`,
   `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`,
   `raw_state_prov_biases`
 - configuration repository storage: `configuration_profiles`,
   `configuration_profile_versions`
+- student dataset release metadata: `student_dataset_releases`,
+  `student_dataset_release_files`
 
 ## Deferred Optional Gaps
 
@@ -102,8 +105,8 @@ remain optional or deferred:
   not an immediate core ORM table.
 - typed configuration API models: current persistence uses versioned JSONB
   configuration profiles plus frozen `generation_runs.parameter_snapshot`;
-  typed loader/service code should be added when generation orchestration is
-  implemented.
+  typed loader/service code should be added when the configuration surface
+  expands beyond the current payload/profile workflow.
 
 ## Completed Follow-Up
 

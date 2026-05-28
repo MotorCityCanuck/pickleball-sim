@@ -2,6 +2,9 @@
 
 Date: 2026-05-25
 
+> Historical archive: a newer same-day assessment remains at
+> `docs/generation_logic/realism_audit_assessment_2026_05_25.md`.
+
 ## Scope
 
 - Repository: `/home/brett/projects/pickleball-sim`

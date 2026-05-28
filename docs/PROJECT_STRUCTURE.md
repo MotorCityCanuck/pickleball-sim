@@ -14,7 +14,7 @@ pickleball-sim/
 ├── 📄 PROJECT_STRUCTURE.md                         # This file
 ├── 📄 .gitignore                                   # Git ignore rules
 ├── 📄 env.example                                  # Environment template
-├── 📄 docker-compose.yml                           # Docker services definition
+├── 📄 compose.yaml                                 # Docker services definition
 │
 ├── 📂 backend/                                     # Python application root
 │   ├── 📄 requirements.txt                         # Python dependencies
@@ -32,7 +32,7 @@ pickleball-sim/
 │   │   │   ├── 📄 __init__.py
 │   │   │   └── 📄 session.py                       # SQLAlchemy engine/session scope
 │   │   │
-│   │   ├── 📂 models/                              # SQLAlchemy ORM models (34 total)
+│   │   ├── 📂 models/                              # SQLAlchemy ORM models (37 tables)
 │   │   │   ├── 📄 __init__.py
 │   │   │   ├── 📄 base.py                          # Base model + mixins
 │   │   │   ├── 📄 generation_runs.py               # Generation control
@@ -59,6 +59,8 @@ pickleball-sim/
 │   │   │   ├── 📄 export_runs.py                   # Export metadata
 │   │   │   ├── 📄 validation_results.py            # Validation logs
 │   │   │   ├── 📄 job_status.py                    # Job tracking
+│   │   │   ├── 📄 job_stage_progress.py            # Per-stage job progress
+│   │   │   ├── 📄 student_dataset_releases.py      # Student export release metadata
 │   │   │   ├── 📄 raw_seed_load_runs.py            # Raw seed load tracking
 │   │   │   ├── 📄 raw_seed_load_errors.py          # Raw seed load errors
 │   │   │   ├── 📄 raw_metro_areas.py               # Raw metro-area staging
@@ -83,7 +85,7 @@ pickleball-sim/
 │   │   │   ├── 📄 games.py                         # Game scores and expected score metrics
 │   │   │   └── 📄 ratings.py                       # Rating updates and audit logging
 │   │   │
-│   │   ├── 📂 web/                                 # Web interface (Phase 5)
+│   │   ├── 📂 web/                                 # FastAPI/HTMX control panel
 │   │   │   ├── 📄 __init__.py
 │   │   │   ├── 📂 routes/                          # FastAPI routes
 │   │   │   │   └── 📄 __init__.py
@@ -95,15 +97,15 @@ pickleball-sim/
 │   │   │
 │   │   └── 📂 utils/                               # Shared utilities
 │   │       ├── 📄 __init__.py
-│   │       ├── 📄 random_context.py                # [TODO] Seeded randomness
-│   │       └── 📄 module_result.py                 # [TODO] Standard return objects
+│   │       ├── 📄 random_context.py                # Seeded randomness helpers
+│   │       └── 📄 module_result.py                 # Standard return objects
 │   │
 │   ├── 📂 scripts/                                 # ORM schema utilities
-│   │   ├── 📄 recreate_db_from_orm.py              # [TODO] Recreate dev DB
-│   │   └── 📄 export_schema_from_orm.py            # [TODO] Generate schema.sql
+│   │   ├── 📄 recreate_db_from_orm.py              # Recreate dev DB
+│   │   └── 📄 export_schema_from_orm.py            # Generate schema.sql
 │   │
 │   └── 📂 tests/                                   # Test suite
-│       ├── 📄 conftest.py                          # [TODO] Pytest fixtures
+│       ├── 📄 conftest.py                          # Pytest fixtures
 │       ├── 📂 unit/                                # Unit tests
 │       ├── 📂 integration/                         # Integration tests
 │       ├── 📂 generators/                          # Generator tests
@@ -183,7 +185,7 @@ pickleball-sim/
 |-----------|---------|----------|--------|
 | `backend/app/core/` | Configuration and settings | 🔴 Critical | Implemented |
 | `backend/app/db/` | Database session management | 🔴 Critical | Implemented |
-| `backend/app/models/` | SQLAlchemy ORM models (34 tables) | 🔴 Critical | Implemented |
+| `backend/app/models/` | SQLAlchemy ORM models (37 tables) | 🔴 Critical | Implemented |
 | `backend/app/generation/` | Generation run planning and orchestration | 🟠 High | Implemented |
 | `backend/app/generators/` | Data generation modules | 🟠 High | In progress |
 | `backend/app/seed_data_ingest/` | Raw seed loading | 🟠 High | Implemented |
@@ -199,7 +201,7 @@ pickleball-sim/
 
 ### Phase 1: Foundation
 1. ✅ Project structure created
-2. ✅ Database models (34 tables)
+2. ✅ Database models (37 tables)
 3. ✅ ORM schema recreation scripts
 4. ✅ Session management
 5. ✅ Configuration system
@@ -218,18 +220,18 @@ pickleball-sim/
 14. ✅ Predicted winner and expected score fields
 15. ✅ Rating calculation and audit logging
 
-### Phase 4: Batch Processing
+### Phase 4: Batch Processing and Export
 16. ✅ Generation run and batch creation
-17. ⏭️ Full monthly orchestration
-18. ⏭️ Validation framework
-19. ⏭️ Parquet exports
-20. ✅ Integration tests for implemented modules
+17. ✅ Monthly pipeline CLI for implemented generation stages
+18. ✅ Job and stage progress tracking
+19. ✅ Student dataset release metadata and specifications
+20. ⏭️ Full validation and Parquet export hardening
 
-### Phase 5: Web Interface - Days 18-20
-21. FastAPI setup
-22. HTMX control panel
-23. Job monitoring
-24. Export management
+### Phase 5: Web Control Panel
+21. ✅ FastAPI setup
+22. ✅ HTMX control panel structure
+23. ✅ Job monitoring views
+24. ⏭️ Export management workflow completion
 
 ---
 
@@ -263,13 +265,13 @@ pickleball-sim/
    python backend/scripts/recreate_db_from_orm.py
    ```
 
-4. Maintain all 34 SQLAlchemy models in `backend/app/models/`
+4. Maintain all 37 ORM-backed tables in `backend/app/models/`
 
 5. Generate reference SQL from ORM metadata
 
 ---
 
-**Last Updated**: 2026-05-18  
-**Current Phase**: Monthly orchestration and export buildout
+**Last Updated**: 2026-05-28  
+**Current Phase**: Monthly orchestration, web control panel, and export buildout
 **Progress**: Core ORM, seed loading, players, clubs, teams, matches,
 games, and rating updates implemented.

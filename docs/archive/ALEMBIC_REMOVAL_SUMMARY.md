@@ -6,10 +6,10 @@
 **Date**: 2024-05-15  
 **Decision**: Remove Alembic from architecture in favor of direct DDL execution
 
-> Historical note: this document captures the original Alembic-removal decision.
-> The active workflow is now ORM-first: SQLAlchemy metadata is the schema source
-> of truth, `backend/schema.sql` is generated from ORM metadata, and the live
-> schema currently contains 34 ORM-backed tables.
+> Historical archive: this document captures the original Alembic-removal
+> decision and contains stale 34-table schema references. The active workflow
+> is now ORM-first; use current ORM standards and setup docs for live schema
+> guidance.
 
 ---
 

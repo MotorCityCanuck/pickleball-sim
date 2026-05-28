@@ -3,14 +3,17 @@
 **Pickleball Simulation Platform - Authoritative Design Documentation**
 
 **Last Updated**: 2026-05-27  
-**Status**: ✅ Reviewed and Refreshed  
-**Version**: 1.2
+**Status**: Refreshed index with known cleanup items tracked  
+**Version**: 1.3
 
 ---
 
 ## Document Purpose
 
-This index provides a hierarchical guide to all authoritative design documents for the Pickleball Simulation Platform. All documents have been reviewed for consistency and conflicts have been resolved.
+This index provides a hierarchical guide to the primary design documents for
+the Pickleball Simulation Platform. It is current as of the date above, but
+some archived and reference documents intentionally preserve historical
+context and may contain superseded implementation details.
 
 **Development Rule**: These documents are the source of truth. Implementation must conform to these specifications.
 
@@ -49,7 +52,7 @@ This index provides a hierarchical guide to all authoritative design documents f
 **Purpose**: Authoritative schema definition and data model  
 **Key Sections**:
 - Complete DDL for the core schema, with ORM-generated reference SQL covering
-  34 live tables
+  37 live tables
 - 90 explicit ORM indexes in the generated reference SQL
 - 63 live check constraints verified by `backend/tests/schema_expectations.py`
 - 14 unique constraints in the live ORM expectations
@@ -309,6 +312,36 @@ editing, payload validation, and run snapshot creation.
 
 ---
 
+### 3.4 Generation Runtime Optimization
+**File**: `development/generation_runtime_optimization_specification.md`
+**Purpose**: Performance analysis and optimization plan for long-running
+monthly generation runs.
+
+**When to Reference**: Profiling monthly pipeline performance, prioritizing
+runtime improvements, comparing optimization experiments
+
+---
+
+### 3.5 Student-Facing Dataset Build Specification
+**File**: `development/student_facing_dataset_build_specification.md`
+**Purpose**: Rules for building, scoping, and releasing instructor-approved
+student datasets from generation runs.
+
+**When to Reference**: Student export implementation, release metadata,
+included/excluded table policy, release validation
+
+---
+
+### 3.6 Student-Facing Dataset Data Dictionary
+**File**: `development/student_facing_dataset_data_dictionary.md`
+**Purpose**: Student-facing table and column descriptions for the exported
+analytics dataset.
+
+**When to Reference**: Student handoff materials, data dictionary updates,
+analytics table documentation
+
+---
+
 ## 4. Student-Facing Documents (CONTEXT)
 
 ### 4.1 Capstone Assignment
@@ -424,6 +457,9 @@ architecture.md (FOUNDATION)
 development/*.md (SUPPORTING SERVICES)
     ├── realism_audit_module_specification.md
     ├── run_forecasting_service_specification.md
+    ├── generation_runtime_optimization_specification.md
+    ├── student_facing_dataset_build_specification.md
+    ├── student_facing_dataset_data_dictionary.md
     └── web_control_panel_design.md
 ```
 
@@ -458,9 +494,12 @@ development/*.md (SUPPORTING SERVICES)
 16. `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md`
 17. `development/realism_audit_module_specification.md`
 18. `development/run_forecasting_service_specification.md`
+19. `development/generation_runtime_optimization_specification.md`
+20. `development/student_facing_dataset_build_specification.md`
+21. `development/student_facing_dataset_data_dictionary.md`
 
 ### Phase 6: Context (As Needed)
-19. `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md`
+22. `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md`
 
 ---
 
@@ -498,6 +537,9 @@ development/*.md (SUPPORTING SERVICES)
 | `architecture/Pickleball_Simulation_Detailed_Module_Interface_Specifications.md` | ✅ 📋 | 🟡 MEDIUM |
 | `development/realism_audit_module_specification.md` | ✅ 📋 | 🟡 MEDIUM |
 | `development/run_forecasting_service_specification.md` | ✅ 📋 | 🟡 MEDIUM |
+| `development/generation_runtime_optimization_specification.md` | ✅ | 🟡 MEDIUM |
+| `development/student_facing_dataset_build_specification.md` | ✅ 📋 | 🟡 MEDIUM |
+| `development/student_facing_dataset_data_dictionary.md` | ✅ 📋 | 🟡 MEDIUM |
 | `development/web_control_panel_design.md` | ✅ | 🟡 MEDIUM |
 | `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md` | ✅ | 🟢 REFERENCE |
 | `student_assignment/NAPA_Olympic_Analytics_RFP_Industry_Style_v2.md` | ✅ | 🟢 REFERENCE |

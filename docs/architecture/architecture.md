@@ -180,8 +180,8 @@ project-root/
 │   ├── ai-development.md
 │   └── setup.md
 ├── scripts/
-├── docker-compose.yml
-├── .env.example
+├── compose.yaml
+├── env.example
 └── README.md
 ```
 
@@ -848,10 +848,10 @@ backend/app/web/
 backend/app/db/
 backend/schema.sql
 backend/tests/
-docker-compose.yml
+compose.yaml
 Dockerfile
 .devcontainer/
-.env.example
+env.example
 ```
 
 Initial functional goals:
