@@ -566,6 +566,40 @@ Key questions this must answer:
 - how much time is spent computing vs writing?
 - how much total cost is attributable to `ratings_update_log`?
 
+### 8.2.1 Observed `matches complete` to `ratings pending` gap
+
+Another observed behavior in the current large run is that the `matches` stage
+appears complete in the UI while the `ratings` stage remains in `pending
+execution` for a noticeable period of time.
+
+The most likely explanation is not that the pipeline is idle, but that:
+
+- the large `matches` stage is still completing final flush and commit work
+- the `ratings` stage has not yet become visible as `running`
+- once `ratings` does begin, it currently provides little or no internal
+  heartbeat/progress visibility
+
+This creates a misleading UI impression that the pipeline is stalled between
+stages even when work is still advancing.
+
+Implications for instrumentation:
+
+- explicitly measure the elapsed interval between:
+  - `matches` stage logical completion
+  - `matches` stage durable completion
+  - `ratings` stage start visibility
+- capture a ratings stage `started` event independently from ratings internal
+  subphase checkpoints
+- later instrumentation should also capture ratings subphases so long-running
+  ratings work does not appear visually idle
+
+Key questions this must answer:
+
+- how much time is being spent after `matches` appears complete but before
+  `ratings` begins visibly?
+- is that gap dominated by transaction finalization, state transition commits,
+  or actual uninstrumented ratings startup work?
+
 ### 8.3 Secondary stages
 
 Capture at minimum for:
