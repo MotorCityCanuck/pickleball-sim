@@ -511,6 +511,41 @@ Key questions this must answer:
 - how quickly does the planning attempt count grow by month?
 - how much of the later-month slowdown comes from historical rematch lookup?
 
+### 8.1.1 Observed two-pass progress behavior in matches
+
+An important observed behavior in the current implementation is that the
+`matches` stage appears to approach 100% complete in the UI, then revert to 0%
+and advance again.
+
+This is most likely explained by the current internal structure of the stage:
+
+- first pass: planning and persisting `Match` rows up to the target match count
+- second pass: iterating back through the planned pairings to generate scoring
+  outcomes, `match_teams`, `match_team_players`, and `games`
+
+The second pass is expected to progress more quickly than the first because:
+
+- the constrained matchmaking search has already completed
+- the remaining work is more deterministic row fabrication and persistence
+
+This behavior should be treated as a progress-modeling issue rather than proof
+that the match stage is regenerating the entire match set from scratch.
+
+Implications for instrumentation:
+
+- `matches` must be instrumented as multiple explicit subphases rather than one
+  flat stage timer
+- the first instrumentation pass should separately capture:
+  - planning and match-row creation
+  - scoring and related-row creation
+  - persistence of `match_teams`, `match_team_players`, and `games`
+
+Implications for future UI interpretation:
+
+- the current single-stage progress bar is semantically misleading
+- future progress reporting should distinguish matches subphases instead of
+  treating them as a single monotonic percent
+
 ### 8.2 Ratings stage
 
 Capture at minimum:
