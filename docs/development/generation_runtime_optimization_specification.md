@@ -643,6 +643,59 @@ Key questions this must answer:
 - is that gap dominated by `matches` finalization work, durable commit work, or
   actual ratings startup?
 
+### 8.2.2 Observed completed-month to next-month start delay
+
+Another observed behavior in the current large run is a noticeable delay after
+the UI reports that ratings have been updated, posts the prior monthly batch as
+successfully completed, and displays that prior month runtime, but before the
+next monthly phase becomes visibly active.
+
+One observed later-month ratings phase reported approximately 1.6 million
+rating updates. Even when the logical rating calculation is relatively fast,
+that volume implies substantial durable persistence work:
+
+- one `player_rating_history` row per player-match update
+- one `ratings_update_log` row per player-match update
+- index maintenance for both inserted row sets
+- stage status and batch status updates
+- final transaction flush and commit work
+
+The updated interpretation is that, because the UI has already posted prior
+month success and runtime before the delay, the delay is probably after prior
+monthly-batch completion rather than inside ratings finalization itself.
+
+The likely remaining work is inter-batch transition and next-month startup:
+
+- transaction/session cleanup after completing the prior month
+- selecting or creating the next monthly batch
+- marking the next monthly batch as `running`
+- starting the first next-month stage
+- making that next-stage `running` signal visible to the UI
+
+Implications for instrumentation:
+
+- explicitly separate ratings compute completion from ratings durable
+  completion
+- measure the interval between:
+  - ratings compute start
+  - ratings compute completion
+  - `player_rating_history` rows flushed
+  - `ratings_update_log` rows flushed
+  - ratings stage marked `succeeded`
+  - monthly batch marked `succeeded`
+  - prior monthly batch completion visible to the UI
+  - next batch selection or creation started
+  - next monthly batch marked `running`
+  - next monthly stage first visible `running` signal
+
+Key questions this must answer:
+
+- how much post-message delay is ratings insert/index/commit cost before the
+  prior month is marked complete?
+- how much delay remains after the prior month is already visibly complete?
+- how much of the remaining delay is next-batch startup?
+- does this delay grow materially with row count across later months?
+
 ### 8.3 Secondary stages
 
 Capture at minimum for:
