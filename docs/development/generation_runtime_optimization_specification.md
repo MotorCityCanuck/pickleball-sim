@@ -74,6 +74,19 @@ This stage likely grows with:
 - number of prior months already completed
 - number of prior rating history rows per player
 
+Updated interpretation from the current observed large run:
+
+- although ratings remains structurally important, the currently observed
+  runtime suggests that ratings may not be the dominant wall-clock bottleneck
+  in the present implementation
+- one observed batch produced approximately 1.5 million player rating updates
+  in less than 15 minutes
+- this indicates that, at least for the current run profile, the ratings stage
+  is materially faster than the matches stage
+
+As a result, ratings optimization should remain on the roadmap, but match-stage
+analysis and optimization now take precedence.
+
 ### 4.2 Match generation cost
 
 The matches stage is likely the second major driver because it combines:
@@ -116,7 +129,7 @@ strongly suggests a cumulative history tax, especially in:
 The following items are listed in expected time-reduction value order, not
 implementation ease order.
 
-### 5.1 Priority 1: Rewrite ratings prior-state lookup to a set-based approach
+### 5.1 Priority 1: Reduce match-planning rejection work
 
 Expected value:
 
@@ -124,34 +137,8 @@ Expected value:
 
 Why this ranks first:
 
-- current behavior likely performs repeated prior-history lookup per player
-- that cost grows with both player count and history depth
-- it directly matches the observed pattern of later months slowing down
-
-Target outcome:
-
-- fetch current player rating state for the batch in one set-based operation
-  instead of repeated per-player history scans
-
-Expected benefits:
-
-- large reduction in rating-stage wall time
-- reduced database round-trips
-- reduced growth in rating-stage cost across later months
-
-Risks:
-
-- moderate implementation complexity
-- must preserve exact rating semantics and ordering
-
-### 5.2 Priority 2: Reduce match-planning rejection work
-
-Expected value:
-
-- very high
-
-Why this ranks second:
-
+- the current observed large run strongly suggests that `matches` is the
+  dominant wall-clock bottleneck
 - match planning appears to be more than simple row insertion
 - later batches likely incur growing search effort before legal pairings are
   found
@@ -171,17 +158,17 @@ Expected benefits:
 
 Risks:
 
-- moderate to high implementation complexity
+- moderate implementation complexity
 - must preserve business rules for rematches, participation limits, and target
   match counts
 
-### 5.3 Priority 3: Bound rematch-history lookback to the actual rule window
+### 5.2 Priority 2: Bound rematch-history lookback to the actual rule window
 
 Expected value:
 
 - high
 
-Why this ranks third:
+Why this ranks second:
 
 - the current historical rematch lookup likely grows every month
 - if the rule only cares about a recent rematch window, scanning the full
@@ -203,35 +190,25 @@ Risks:
 - requires clear confirmation that the business rule is window-bounded rather
   than entire-history-bounded
 
-### 5.4 Priority 4: Replace hot-path ORM writes with bulk persistence
+### 5.3 Priority 3: Replace hot-path ORM writes with bulk persistence
 
 Expected value:
 
 - high
 
-Why this ranks fourth:
+Why this ranks third:
 
 - multiple stages create very large Python object collections and persist them
   through ORM-heavy paths
 - the machine observations suggest CPU is being spent on application-layer row
   handling rather than storage saturation
+- the matches stage is a prime candidate because it writes high volumes of
+  related rows after planning completes
 
 Target outcome:
 
 - move hot persistence paths toward Core bulk insert patterns or other
   lower-overhead write mechanisms
-
-Primary candidate stages:
-
-- players
-- registrations
-- initial rating history
-- matches
-- match teams
-- match team players
-- games
-- rating history updates
-- ratings update logs
 
 Expected benefits:
 
@@ -243,6 +220,35 @@ Risks:
 
 - moderate
 - higher implementation and testing cost because ORM lifecycle behavior changes
+
+### 5.4 Priority 4: Rewrite ratings prior-state lookup to a set-based approach
+
+Expected value:
+
+- high
+
+Why this now ranks fourth:
+
+- current behavior likely performs repeated prior-history lookup per player
+- that cost grows with both player count and history depth
+- this still matters for larger scales even though current observed wall-clock
+  evidence suggests `matches` is the more immediate bottleneck
+
+Target outcome:
+
+- fetch current player rating state for the batch in one set-based operation
+  instead of repeated per-player history scans
+
+Expected benefits:
+
+- large reduction in rating-stage wall time
+- reduced database round-trips
+- reduced growth in rating-stage cost across later months
+
+Risks:
+
+- moderate
+- must preserve exact rating semantics and ordering
 
 ### 5.5 Priority 5: Reduce or make optional `ratings_update_log` write volume
 
@@ -272,6 +278,18 @@ Risks:
 - business and audit tradeoff
 - any reduction must not break required downstream validation or realism audit
   use cases
+
+Important clarification:
+
+- current ratings audit logging is already at the match level in the sense that
+  ratings are updated once per player per match, not once per game
+- the current `ratings_update_log` granularity is one row per player-match
+- a future optional redesign could move to one aggregate audit row per match if
+  the project decides that per-player before/after detail is not required for
+  all large runs
+
+That potential redesign should be treated as a separate business and audit
+decision, not just a mechanical performance change.
 
 ### 5.6 Priority 6: Parallelize safe intra-month work
 
@@ -566,26 +584,40 @@ Key questions this must answer:
 - how much time is spent computing vs writing?
 - how much total cost is attributable to `ratings_update_log`?
 
-### 8.2.1 Observed `matches complete` to `ratings pending` gap
+### 8.2.1 Observed `matches complete` to `ratings pending` handoff delay
 
 Another observed behavior in the current large run is that the `matches` stage
 appears complete in the UI while the `ratings` stage remains in `pending
-execution` for a noticeable period of time.
+execution` for a noticeable period of time, followed later by a visible
+`ratings` `running` signal.
 
-The most likely explanation is not that the pipeline is idle, but that:
+The updated interpretation is that this delay is most likely caused by
+post-progress cleanup and finalization inside the `matches` stage rather than
+true pipeline idleness.
 
-- the large `matches` stage is still completing final flush and commit work
-- the `ratings` stage has not yet become visible as `running`
-- once `ratings` does begin, it currently provides little or no internal
-  heartbeat/progress visibility
+The likely remaining work after match progress appears visually complete
+includes:
+
+- persistence of related match rows
+- winner/final-state assignment
+- batch-level counter updates
+- final flush and durable commit work
+
+Only after that work completes does the `ratings` stage become visibly
+`running`.
+
+Once `ratings` does begin, it still provides little or no internal
+heartbeat/progress visibility, so it may continue to appear opaque even when it
+is actively working.
 
 This creates a misleading UI impression that the pipeline is stalled between
-stages even when work is still advancing.
+stages even when the prior stage is still finalizing successfully.
 
 Implications for instrumentation:
 
 - explicitly measure the elapsed interval between:
-  - `matches` stage logical completion
+  - `matches` stage visible progress completion
+  - `matches` stage related-row persistence completion
   - `matches` stage durable completion
   - `ratings` stage start visibility
 - capture a ratings stage `started` event independently from ratings internal
@@ -597,8 +629,8 @@ Key questions this must answer:
 
 - how much time is being spent after `matches` appears complete but before
   `ratings` begins visibly?
-- is that gap dominated by transaction finalization, state transition commits,
-  or actual uninstrumented ratings startup work?
+- is that gap dominated by `matches` finalization work, durable commit work, or
+  actual ratings startup?
 
 ### 8.3 Secondary stages
 
@@ -659,10 +691,10 @@ cleanliness.
 After instrumentation is added and one or more large-run datasets are captured,
 the expected implementation sequence should be:
 
-1. ratings latest-state lookup rewrite
-2. match-planning optimization
-3. rematch-history bounding
-4. bulk persistence on hottest write paths
+1. match-planning optimization
+2. rematch-history bounding
+3. bulk persistence on hottest match-stage write paths
+4. ratings latest-state lookup rewrite
 5. optional reduction of ratings audit row volume
 6. safe intra-month parallelism
 7. targeted index tuning based on measured query patterns
