@@ -25,6 +25,7 @@ from .export_runs import ExportRun
 from .validation_results import ValidationResult
 from .job_status import JobStatus
 from .job_stage_progress import JobStageProgress
+from .generation_runtime_metrics import GenerationRuntimeMetric
 from .configuration_profiles import ConfigurationProfile, ConfigurationProfileVersion
 from .student_dataset_releases import (
     StudentDatasetRelease,
@@ -67,6 +68,7 @@ __all__ = [
     'ValidationResult',
     'JobStatus',
     'JobStageProgress',
+    'GenerationRuntimeMetric',
     'ConfigurationProfile',
     'ConfigurationProfileVersion',
     'StudentDatasetRelease',

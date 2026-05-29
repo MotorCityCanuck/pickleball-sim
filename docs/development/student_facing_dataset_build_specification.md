@@ -263,6 +263,7 @@ The following source tables must not be exported to the student-facing release:
 | `configuration_profiles` | Configuration metadata. |
 | `export_runs` | Operational export tracking. |
 | `first_names` | Normalized seed/reference data, not student analytical output. |
+| `generation_runtime_metrics` | Operational runtime instrumentation. |
 | `generation_runs` | Operational generation tracking and configuration snapshot exposure. |
 | `job_stage_progress` | Operational job liveness and progress tracking. |
 | `job_status` | Operational job tracking. |

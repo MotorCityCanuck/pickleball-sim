@@ -57,18 +57,19 @@ student dataset release metadata tables.
 23. `validation_results`
 24. `job_status`
 25. `job_stage_progress`
-26. `raw_seed_load_runs`
-27. `raw_seed_load_errors`
-28. `raw_metro_areas`
-29. `raw_pickleball_club_names`
-30. `raw_pickleball_club_distributions`
-31. `raw_first_names`
-32. `raw_last_names`
-33. `raw_state_prov_biases`
-34. `configuration_profiles`
-35. `configuration_profile_versions`
-36. `student_dataset_releases`
-37. `student_dataset_release_files`
+26. `generation_runtime_metrics`
+27. `raw_seed_load_runs`
+28. `raw_seed_load_errors`
+29. `raw_metro_areas`
+30. `raw_pickleball_club_names`
+31. `raw_pickleball_club_distributions`
+32. `raw_first_names`
+33. `raw_last_names`
+34. `raw_state_prov_biases`
+35. `configuration_profiles`
+36. `configuration_profile_versions`
+37. `student_dataset_releases`
+38. `student_dataset_release_files`
 
 The reference-name design uses consolidated `first_names` and `last_names`
 tables with `country_code`, rather than separate USA and Canada tables.

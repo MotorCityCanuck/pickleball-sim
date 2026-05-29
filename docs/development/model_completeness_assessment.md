@@ -5,7 +5,7 @@ generation-design documents.
 
 ## Current ORM Scope
 
-The live ORM now defines 37 tables: 25 core platform tables, 8 raw seed-data
+The live ORM now defines 38 tables: 26 core platform tables, 8 raw seed-data
 staging tables, 2 configuration repository tables, and 2 student dataset
 release metadata tables. Before the
 `match_games` assessment, the live ORM
@@ -79,7 +79,7 @@ The following documented concepts already have ORM coverage:
 - match games, expected scores, and actual scores: `match_games`
 - consolidated name reference data: `first_names`, `last_names`
 - operational metadata: `uploaded_files`, `export_runs`, `validation_results`,
-  `job_status`, `job_stage_progress`
+  `job_status`, `job_stage_progress`, `generation_runtime_metrics`
 - raw seed-data ingestion staging: `raw_seed_load_runs`,
   `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`,
   `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`,

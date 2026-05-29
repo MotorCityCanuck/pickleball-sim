@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import random
-from typing import Any, Callable
+from typing import Any, Callable, ContextManager
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -496,6 +497,7 @@ class MatchGenerator:
         batch_id: int,
         progress_listener: Callable[[MatchGenerationProgress], None] | None = None,
         session: Session | None = None,
+        runtime_recorder: Any | None = None,
     ) -> MatchGenerationResult:
         """Generate matches for an existing monthly batch."""
         if session is not None:
@@ -503,6 +505,7 @@ class MatchGenerator:
                 batch_id=batch_id,
                 progress_listener=progress_listener,
                 session=session,
+                runtime_recorder=runtime_recorder,
             )
 
         with session_scope() as active_session:
@@ -510,6 +513,7 @@ class MatchGenerator:
                 batch_id=batch_id,
                 progress_listener=progress_listener,
                 session=active_session,
+                runtime_recorder=runtime_recorder,
             )
 
     def _generate_for_batch(
@@ -518,6 +522,7 @@ class MatchGenerator:
         batch_id: int,
         progress_listener: Callable[[MatchGenerationProgress], None] | None,
         session: Session,
+        runtime_recorder: Any | None = None,
     ) -> MatchGenerationResult:
         batch = session.get(MonthlyBatch, batch_id)
         if batch is None:
@@ -534,23 +539,45 @@ class MatchGenerator:
             if hasattr(batch, "generation_run") and batch.generation_run
             else _generation_payload(session, batch)
         )
-        teams = _active_teams(session, batch.generation_run_id, batch.batch_month)
+        with _measure_runtime(
+            runtime_recorder,
+            "load_active_teams",
+            metadata={"batch_month": batch.batch_month},
+        ) as metric:
+            teams = _active_teams(session, batch.generation_run_id, batch.batch_month)
+            metric["output_count"] = len(teams)
         if len(teams) < 2:
             raise ValueError("At least two active teams are required")
 
         rng = random.Random(
             int(batch.generation_run_id) * 1_000_003 + int(batch_id) * 10_007 + 41
         )
-        team_target_matches = _team_target_match_counts(teams, rng, config)
-        target_match_count = sum(team_target_matches.values()) // 2
+        with _measure_runtime(
+            runtime_recorder,
+            "calculate_team_targets",
+            input_count=len(teams),
+        ) as metric:
+            team_target_matches = _team_target_match_counts(teams, rng, config)
+            target_match_count = sum(team_target_matches.values()) // 2
+            metric["output_count"] = target_match_count
+            metric["metadata"]["team_target_sum"] = sum(team_target_matches.values())
         date_sampler = _date_sampler(batch.batch_month, config)
         match_type_sampler = WeightedSampler(config.match_type_weights)
-        recent_pair_dates = _recent_pair_dates(
-            session,
-            generation_run_id=batch.generation_run_id,
-            batch_month=batch.batch_month,
-            active_teams=teams,
-        )
+        with _measure_runtime(
+            runtime_recorder,
+            "load_recent_pair_dates",
+            input_count=len(teams),
+        ) as metric:
+            recent_pair_dates = _recent_pair_dates(
+                session,
+                generation_run_id=batch.generation_run_id,
+                batch_month=batch.batch_month,
+                active_teams=teams,
+            )
+            metric["output_count"] = len(recent_pair_dates)
+            metric["metadata"]["prior_pair_date_count"] = sum(
+                len(pair_dates) for pair_dates in recent_pair_dates.values()
+            )
         team_day_counts: dict[tuple[int, date], int] = {}
         team_month_counts: dict[int, int] = {}
         team_pool = MatchTeamPool(teams)
@@ -572,95 +599,122 @@ class MatchGenerator:
             },
         )
 
-        while len(matches) < target_match_count and attempts < max_attempts:
-            attempts += 1
-            under_target_ids = [
-                team.id
-                for team in teams
-                if team_month_counts.get(team.id, 0) < team_target_matches[team.id]
-            ]
-            if len(under_target_ids) < 2:
-                break
-            match_date = date_sampler.choose(rng)
-            match_type = str(match_type_sampler.choose(rng))
-            first_team = team_pool.choose_team(
-                rng,
-                source_ids=under_target_ids,
-                team_day_counts=team_day_counts,
-                match_date=match_date,
-                config=config,
-            )
-            if first_team is None:
-                continue
-            second_team = team_pool.choose_opponent(
-                rng,
-                allowed_team_ids=set(under_target_ids),
-                first_team=first_team,
-                match_date=match_date,
-                match_type=match_type,
-                recent_pair_dates=recent_pair_dates,
-                team_day_counts=team_day_counts,
-                config=config,
-            )
-            if second_team is None:
-                continue
-
-            expected_win_probability = _expected_win_probability(
-                first_team.average_rating,
-                second_team.average_rating,
-            )
-            match = Match(
-                match_date=match_date,
-                region_id=first_team.region_id or second_team.region_id,
-                match_type=match_type,
-                court_type="standard",
-                match_format=_match_format(match_type, config),
-                predicted_winning_team_number=(
-                    1 if expected_win_probability >= Decimal("0.5") else 2
-                ),
-                predicted_win_probability=max(
-                    expected_win_probability,
-                    Decimal("1") - expected_win_probability,
-                ),
-                expected_competitiveness=_competitiveness(expected_win_probability),
-                simulation_noise_factor=_noise_value(rng, config.matchmaking_noise_factor),
-                batch_id=batch_id,
-            )
-            matches.append(match)
-            pairings.append((match, first_team, second_team, expected_win_probability))
-            team_day_counts[(first_team.id, match_date)] = (
-                team_day_counts.get((first_team.id, match_date), 0) + 1
-            )
-            team_day_counts[(second_team.id, match_date)] = (
-                team_day_counts.get((second_team.id, match_date), 0) + 1
-            )
-            team_month_counts[first_team.id] = team_month_counts.get(first_team.id, 0) + 1
-            team_month_counts[second_team.id] = (
-                team_month_counts.get(second_team.id, 0) + 1
-            )
-            recent_pair_dates.setdefault(
-                frozenset((first_team.id, second_team.id)),
-                [],
-            ).append(match_date)
-            if len(matches) % heartbeat_chunk_size == 0:
-                self._emit_progress(
-                    progress_listener,
-                    progress_current=len(matches),
-                    progress_total=max(target_match_count, 1),
-                    progress_unit="match",
-                    message=(
-                        f"Planned {len(matches)}/{target_match_count} matches "
-                        f"for {batch.batch_month}."
-                    ),
-                    details={
-                        "phase": "planning",
-                        "attempts": attempts,
-                        "target_match_count": target_match_count,
-                    },
+        with _measure_runtime(
+            runtime_recorder,
+            "planning",
+            input_count=target_match_count,
+            metadata={
+                "active_team_count": len(teams),
+                "max_attempts": max_attempts,
+                "heartbeat_chunk_size": heartbeat_chunk_size,
+            },
+        ) as metric:
+            while len(matches) < target_match_count and attempts < max_attempts:
+                attempts += 1
+                under_target_ids = [
+                    team.id
+                    for team in teams
+                    if team_month_counts.get(team.id, 0) < team_target_matches[team.id]
+                ]
+                if len(under_target_ids) < 2:
+                    break
+                match_date = date_sampler.choose(rng)
+                match_type = str(match_type_sampler.choose(rng))
+                first_team = team_pool.choose_team(
+                    rng,
+                    source_ids=under_target_ids,
+                    team_day_counts=team_day_counts,
+                    match_date=match_date,
+                    config=config,
                 )
+                if first_team is None:
+                    continue
+                second_team = team_pool.choose_opponent(
+                    rng,
+                    allowed_team_ids=set(under_target_ids),
+                    first_team=first_team,
+                    match_date=match_date,
+                    match_type=match_type,
+                    recent_pair_dates=recent_pair_dates,
+                    team_day_counts=team_day_counts,
+                    config=config,
+                )
+                if second_team is None:
+                    continue
 
-        session.add_all(matches)
-        session.flush()
+                expected_win_probability = _expected_win_probability(
+                    first_team.average_rating,
+                    second_team.average_rating,
+                )
+                match = Match(
+                    match_date=match_date,
+                    region_id=first_team.region_id or second_team.region_id,
+                    match_type=match_type,
+                    court_type="standard",
+                    match_format=_match_format(match_type, config),
+                    predicted_winning_team_number=(
+                        1 if expected_win_probability >= Decimal("0.5") else 2
+                    ),
+                    predicted_win_probability=max(
+                        expected_win_probability,
+                        Decimal("1") - expected_win_probability,
+                    ),
+                    expected_competitiveness=_competitiveness(expected_win_probability),
+                    simulation_noise_factor=_noise_value(
+                        rng,
+                        config.matchmaking_noise_factor,
+                    ),
+                    batch_id=batch_id,
+                )
+                matches.append(match)
+                pairings.append((match, first_team, second_team, expected_win_probability))
+                team_day_counts[(first_team.id, match_date)] = (
+                    team_day_counts.get((first_team.id, match_date), 0) + 1
+                )
+                team_day_counts[(second_team.id, match_date)] = (
+                    team_day_counts.get((second_team.id, match_date), 0) + 1
+                )
+                team_month_counts[first_team.id] = (
+                    team_month_counts.get(first_team.id, 0) + 1
+                )
+                team_month_counts[second_team.id] = (
+                    team_month_counts.get(second_team.id, 0) + 1
+                )
+                recent_pair_dates.setdefault(
+                    frozenset((first_team.id, second_team.id)),
+                    [],
+                ).append(match_date)
+                if len(matches) % heartbeat_chunk_size == 0:
+                    self._emit_progress(
+                        progress_listener,
+                        progress_current=len(matches),
+                        progress_total=max(target_match_count, 1),
+                        progress_unit="match",
+                        message=(
+                            f"Planned {len(matches)}/{target_match_count} matches "
+                            f"for {batch.batch_month}."
+                        ),
+                        details={
+                            "phase": "planning",
+                            "attempts": attempts,
+                            "target_match_count": target_match_count,
+                        },
+                    )
+            metric["output_count"] = len(matches)
+            metric["attempt_count"] = attempts
+            metric["metadata"]["target_match_count"] = target_match_count
+            metric["metadata"]["success_rate"] = (
+                round(len(matches) / attempts, 6) if attempts else None
+            )
+
+        with _measure_runtime(
+            runtime_recorder,
+            "persist_matches",
+            input_count=len(matches),
+        ) as metric:
+            session.add_all(matches)
+            session.flush()
+            metric["output_count"] = len(matches)
         self._emit_progress(
             progress_listener,
             progress_current=len(matches),
@@ -680,53 +734,70 @@ class MatchGenerator:
         match_teams: list[MatchTeam] = []
         match_team_players: list[MatchTeamPlayer] = []
         games = []
-        for index, (match, first_team, second_team, expected_prob) in enumerate(pairings, start=1):
-            generated_games = generate_match_games(
-                rng,
-                match=match,
-                expected_team_one_win_probability=expected_prob,
-                match_type=match.match_type,
-                config=config,
-            )
-            team_one = MatchTeam(
-                match_id=match.id,
-                team_number=1,
-                team_score=generated_games.team_one_games_won,
-                expected_win_probability=expected_prob,
-                average_team_rating=first_team.average_rating,
-            )
-            team_two = MatchTeam(
-                match_id=match.id,
-                team_number=2,
-                team_score=generated_games.team_two_games_won,
-                expected_win_probability=Decimal("1") - expected_prob,
-                average_team_rating=second_team.average_rating,
-            )
-            match_teams.extend([team_one, team_two])
-            games.extend(generated_games.games)
-            match.total_points_played = sum(
-                game.team_one_score + game.team_two_score
-                for game in generated_games.games
-            )
-            if index % heartbeat_chunk_size == 0:
-                self._emit_progress(
-                    progress_listener,
-                    progress_current=index,
-                    progress_total=max(target_match_count, 1),
-                    progress_unit="match",
-                    message=(
-                        f"Scored {index}/{target_match_count} matches "
-                        f"for {batch.batch_month}."
-                    ),
-                    details={
-                        "phase": "scoring",
-                        "game_count_so_far": len(games),
-                        "target_match_count": target_match_count,
-                    },
+        with _measure_runtime(
+            runtime_recorder,
+            "scoring",
+            input_count=len(pairings),
+        ) as metric:
+            for index, (match, first_team, second_team, expected_prob) in enumerate(
+                pairings,
+                start=1,
+            ):
+                generated_games = generate_match_games(
+                    rng,
+                    match=match,
+                    expected_team_one_win_probability=expected_prob,
+                    match_type=match.match_type,
+                    config=config,
                 )
+                team_one = MatchTeam(
+                    match_id=match.id,
+                    team_number=1,
+                    team_score=generated_games.team_one_games_won,
+                    expected_win_probability=expected_prob,
+                    average_team_rating=first_team.average_rating,
+                )
+                team_two = MatchTeam(
+                    match_id=match.id,
+                    team_number=2,
+                    team_score=generated_games.team_two_games_won,
+                    expected_win_probability=Decimal("1") - expected_prob,
+                    average_team_rating=second_team.average_rating,
+                )
+                match_teams.extend([team_one, team_two])
+                games.extend(generated_games.games)
+                match.total_points_played = sum(
+                    game.team_one_score + game.team_two_score
+                    for game in generated_games.games
+                )
+                if index % heartbeat_chunk_size == 0:
+                    self._emit_progress(
+                        progress_listener,
+                        progress_current=index,
+                        progress_total=max(target_match_count, 1),
+                        progress_unit="match",
+                        message=(
+                            f"Scored {index}/{target_match_count} matches "
+                            f"for {batch.batch_month}."
+                        ),
+                        details={
+                            "phase": "scoring",
+                            "game_count_so_far": len(games),
+                            "target_match_count": target_match_count,
+                        },
+                    )
+            metric["output_count"] = len(games)
+            metric["metadata"]["match_team_count"] = len(match_teams)
+            metric["metadata"]["game_count"] = len(games)
 
-        session.add_all(match_teams)
-        session.flush()
+        with _measure_runtime(
+            runtime_recorder,
+            "persist_match_teams",
+            input_count=len(match_teams),
+        ) as metric:
+            session.add_all(match_teams)
+            session.flush()
+            metric["output_count"] = len(match_teams)
         self._emit_progress(
             progress_listener,
             progress_current=len(pairings),
@@ -743,22 +814,45 @@ class MatchGenerator:
             },
         )
 
-        for pairing_index, (_, first_team, second_team, _) in enumerate(pairings):
-            team_one = match_teams[pairing_index * 2]
-            team_two = match_teams[pairing_index * 2 + 1]
-            match_team_players.extend(_match_team_players(team_one, first_team))
-            match_team_players.extend(_match_team_players(team_two, second_team))
-            match = pairings[pairing_index][0]
-            winning_match_team = (
-                team_one if team_one.team_score > team_two.team_score else team_two
-            )
-            match.winning_team_id = winning_match_team.id
+        with _measure_runtime(
+            runtime_recorder,
+            "build_match_team_players",
+            input_count=len(pairings),
+        ) as metric:
+            for pairing_index, (_, first_team, second_team, _) in enumerate(pairings):
+                team_one = match_teams[pairing_index * 2]
+                team_two = match_teams[pairing_index * 2 + 1]
+                match_team_players.extend(_match_team_players(team_one, first_team))
+                match_team_players.extend(_match_team_players(team_two, second_team))
+                match = pairings[pairing_index][0]
+                winning_match_team = (
+                    team_one if team_one.team_score > team_two.team_score else team_two
+                )
+                match.winning_team_id = winning_match_team.id
+            metric["output_count"] = len(match_team_players)
 
-        session.add_all(match_team_players)
-        session.add_all(games)
-        session.flush()
-        batch.match_count_generated = len(matches)
-        session.flush()
+        with _measure_runtime(
+            runtime_recorder,
+            "persist_match_related_rows",
+            input_count=len(match_team_players) + len(games),
+            metadata={
+                "match_team_player_count": len(match_team_players),
+                "game_count": len(games),
+            },
+        ) as metric:
+            session.add_all(match_team_players)
+            session.add_all(games)
+            session.flush()
+            metric["output_count"] = len(match_team_players) + len(games)
+
+        with _measure_runtime(
+            runtime_recorder,
+            "finalize_batch",
+            input_count=len(matches),
+        ) as metric:
+            batch.match_count_generated = len(matches)
+            session.flush()
+            metric["output_count"] = len(matches)
 
         return MatchGenerationResult(
             batch_id=batch_id,
@@ -791,6 +885,33 @@ class MatchGenerator:
                 details=details,
             )
         )
+
+
+def _measure_runtime(
+    runtime_recorder: Any | None,
+    subphase_name: str,
+    *,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    attempt_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ContextManager[dict[str, Any]]:
+    if runtime_recorder is None:
+        return nullcontext(
+            {
+                "input_count": input_count,
+                "output_count": output_count,
+                "attempt_count": attempt_count,
+                "metadata": dict(metadata or {}),
+            }
+        )
+    return runtime_recorder.measure(
+        subphase_name,
+        input_count=input_count,
+        output_count=output_count,
+        attempt_count=attempt_count,
+        metadata=metadata,
+    )
 
 
 def _generation_payload(session: Session, batch: MonthlyBatch) -> dict[str, Any] | None:

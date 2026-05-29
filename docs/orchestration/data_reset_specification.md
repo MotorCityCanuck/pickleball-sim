@@ -82,6 +82,7 @@ Examples:
 - `configuration_profile_versions`
 - `job_status`
 - `job_stage_progress`
+- `generation_runtime_metrics`
 - `generation_runs`
 - `monthly_batches`
 - `batch_runs`

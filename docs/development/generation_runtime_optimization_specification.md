@@ -452,7 +452,7 @@ Suggested logical structure for an instrumentation table:
 
 `generation_runtime_metrics`
 
-Suggested columns:
+Implemented first-pass columns:
 
 - `id`
 - `generation_run_id`
@@ -460,20 +460,21 @@ Suggested columns:
 - `stage_name`
 - `subphase_name`
 - `event_type`
-  - examples: `started`, `completed`, `checkpoint`
+  - values: `completed`, `failed`
 - `started_at`
-- `completed_at` nullable
-- `elapsed_ms` nullable
-- `row_count` nullable
+- `completed_at`
+- `elapsed_ms`
 - `input_count` nullable
 - `output_count` nullable
 - `attempt_count` nullable
-- `warning_count` nullable
-- `extra_metrics_json` nullable
+- `metadata_json` nullable
 - `created_at`
+- `updated_at`
 
-Optional additional columns:
+Deferred optional columns:
 
+- `row_count`
+- `warning_count`
 - `host_name`
 - `process_id`
 - `worker_name`
@@ -533,6 +534,19 @@ Capture at minimum:
 - `match_teams` write duration
 - `match_team_players` write duration
 - `games` write duration
+
+The first implementation records these match subphases:
+
+- `load_active_teams`
+- `calculate_team_targets`
+- `load_recent_pair_dates`
+- `planning`
+- `persist_matches`
+- `scoring`
+- `persist_match_teams`
+- `build_match_team_players`
+- `persist_match_related_rows`
+- `finalize_batch`
 
 Key questions this must answer:
 

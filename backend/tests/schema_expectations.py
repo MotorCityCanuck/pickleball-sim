@@ -9,6 +9,7 @@ EXPECTED_TABLES = {
     "export_runs",
     "first_names",
     "generation_runs",
+    "generation_runtime_metrics",
     "job_stage_progress",
     "job_status",
     "last_names",
@@ -71,6 +72,11 @@ EXPECTED_INDEXES = {
     "idx_first_names_probability",
     "idx_generation_runs_started",
     "idx_generation_runs_status",
+    "idx_generation_runtime_metrics_batch",
+    "idx_generation_runtime_metrics_event",
+    "idx_generation_runtime_metrics_run",
+    "idx_generation_runtime_metrics_stage",
+    "idx_generation_runtime_metrics_subphase",
     "idx_job_stage_progress_batch",
     "idx_job_stage_progress_generation_run",
     "idx_job_stage_progress_heartbeat",
@@ -170,6 +176,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "chk_first_names_gender",
     },
     "generation_runs": {"chk_generation_status"},
+    "generation_runtime_metrics": {
+        "chk_generation_runtime_metric_elapsed",
+        "chk_generation_runtime_metric_event_type",
+    },
     "job_status": {"chk_job_status", "chk_percent_complete"},
     "last_names": {"chk_last_names_country", "chk_last_names_freq"},
     "match_games": {
@@ -264,6 +274,10 @@ EXPECTED_FOREIGN_KEYS = {
         "profile_id->configuration_profiles.id",
     },
     "export_runs": {"batch_id->monthly_batches.id"},
+    "generation_runtime_metrics": {
+        "batch_id->monthly_batches.id",
+        "generation_run_id->generation_runs.id",
+    },
     "job_stage_progress": {
         "batch_id->monthly_batches.id",
         "generation_run_id->generation_runs.id",

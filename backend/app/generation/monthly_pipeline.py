@@ -29,6 +29,7 @@ from app.models import (
 )
 
 from .control_plane import GenerationControlPlane
+from .runtime_metrics import RuntimeMetricRecorder
 
 
 PIPELINE_STEPS = (
@@ -99,6 +100,7 @@ class MonthlyGenerationPipeline:
         team_generator: TeamGenerator | None = None,
         match_generator: MatchGenerator | None = None,
         rating_update_generator: RatingUpdateGenerator | None = None,
+        runtime_metrics_enabled: bool = False,
     ) -> None:
         self.control_plane = control_plane or GenerationControlPlane()
         self.player_generator = player_generator or PlayerGenerator()
@@ -108,6 +110,7 @@ class MonthlyGenerationPipeline:
         self.team_generator = team_generator or TeamGenerator()
         self.match_generator = match_generator or MatchGenerator()
         self.rating_update_generator = rating_update_generator or RatingUpdateGenerator()
+        self.runtime_metrics_enabled = runtime_metrics_enabled
 
     def run_months(
         self,
@@ -495,17 +498,31 @@ class MonthlyGenerationPipeline:
                 )
             raise ValueError(f"Monthly batch {batch.id} already has matches")
 
-        result = self.match_generator.generate_for_batch(
-            batch_id=batch.id,
-            session=session,
-            progress_listener=lambda progress: self._emit_match_progress(
+        runtime_recorder = (
+            RuntimeMetricRecorder(
+                session=session,
+                generation_run_id=generation_run_id,
+                batch_id=batch.id,
+                stage_name="matches",
+            )
+            if self.runtime_metrics_enabled
+            else None
+        )
+        match_generator_kwargs = {
+            "batch_id": batch.id,
+            "session": session,
+            "progress_listener": lambda progress: self._emit_match_progress(
                 generation_run_id=generation_run_id,
                 batch_id=batch.id,
                 batch_month=batch.batch_month,
                 progress=progress,
                 progress_listener=progress_listener,
             ),
-        )
+        }
+        if runtime_recorder is not None:
+            match_generator_kwargs["runtime_recorder"] = runtime_recorder
+
+        result = self.match_generator.generate_for_batch(**match_generator_kwargs)
         return PipelineStepResult(
             "matches",
             "generated",

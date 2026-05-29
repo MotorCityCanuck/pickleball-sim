@@ -84,7 +84,8 @@ class GenerationRunService:
         )
         self.control_plane = control_plane or GenerationControlPlane(self.settings)
         self.pipeline = pipeline or MonthlyGenerationPipeline(
-            control_plane=self.control_plane
+            control_plane=self.control_plane,
+            runtime_metrics_enabled=True,
         )
 
     def register_generation_run(

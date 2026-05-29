@@ -12,6 +12,7 @@ from app.models import (
     ExportRun,
     FirstName,
     GenerationRun,
+    GenerationRuntimeMetric,
     JobStageProgress,
     JobStatus,
     LastName,
@@ -59,6 +60,7 @@ CONTROL_PLANE_PRESERVED_MODELS = (
     ConfigurationProfileVersion,
     JobStatus,
     JobStageProgress,
+    GenerationRuntimeMetric,
     GenerationRun,
     MonthlyBatch,
     BatchRun,
@@ -142,4 +144,3 @@ RESET_DOMAIN_PLANS = (
 RESET_MODELS_BY_DOMAIN = {
     domain.domain_key: domain.models for domain in RESET_DOMAIN_PLANS
 }
-

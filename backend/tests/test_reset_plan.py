@@ -18,6 +18,7 @@ from app.generation.reset_plan import (  # noqa: E402
 from app.models import (  # noqa: E402
     ExportRun,
     GenerationRun,
+    GenerationRuntimeMetric,
     JobStageProgress,
     Match,
     MatchTeam,
@@ -43,6 +44,7 @@ def test_reset_plan_marks_preserved_history_tables_explicitly():
     assert GenerationRun in CONTROL_PLANE_PRESERVED_MODELS
     assert MonthlyBatch in CONTROL_PLANE_PRESERVED_MODELS
     assert JobStageProgress in CONTROL_PLANE_PRESERVED_MODELS
+    assert GenerationRuntimeMetric in CONTROL_PLANE_PRESERVED_MODELS
     assert ExportRun in CONTROL_PLANE_PRESERVED_MODELS
     assert StudentDatasetRelease in CONTROL_PLANE_PRESERVED_MODELS
 
