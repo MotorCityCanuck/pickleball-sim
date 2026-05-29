@@ -696,6 +696,44 @@ Key questions this must answer:
 - how much of the remaining delay is next-batch startup?
 - does this delay grow materially with row count across later months?
 
+### 8.2.3 Observed UI state lag versus database-authoritative state
+
+Another observed behavior in the current large run is that the control panel UI
+can temporarily imply that a monthly batch or stage is still pending/running
+even after the database shows authoritative completion.
+
+Observed example:
+
+- the UI appeared to show month 9 `players` stuck in `pending execution` while
+  the monthly batch grid showed the batch as `running`
+- database inspection later showed the highest observed batch id, `143`, had
+  `5,861` player registrations
+- `job_stage_progress` rows for that batch showed all stages complete
+- `monthly_batches.processing_status` for that batch was `succeeded`
+
+This suggests that at least some apparent stalls may be stale UI state or
+partial-refresh lag rather than actual pipeline stalls.
+
+Implications for instrumentation:
+
+- record database-authoritative state transition timestamps for:
+  - monthly batch `pending` to `running`
+  - each stage `pending` to `running`
+  - each stage `running` to `succeeded`
+  - monthly batch `running` to `succeeded`
+- optionally record or derive UI-observed refresh timestamps separately if a
+  control-panel diagnostic mode is ever added
+- compare UI-visible state to database state during long runs before treating a
+  displayed stall as a true worker stall
+
+Key questions this must answer:
+
+- how often does UI state lag behind database-authoritative state?
+- are stale displays associated with long transaction boundaries, HTMX polling
+  cadence, partial refresh ordering, or browser-side state?
+- should the control panel refresh the batch grid and stage-progress grid from
+  a shared snapshot endpoint to reduce inconsistent displays?
+
 ### 8.3 Secondary stages
 
 Capture at minimum for:
