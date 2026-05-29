@@ -272,6 +272,7 @@ def test_refresh_seed_data_tracks_stage_progress_and_marks_job_complete(session)
     ]
     assert result.job_status.job_type == "seed_refresh"
     assert result.job_status.status == "succeeded"
+    assert result.job_status.updated_at == result.job_status.completed_at
     assert result.configuration_version.last_used_at is not None
 
     job_rows = session.query(JobStatus).all()

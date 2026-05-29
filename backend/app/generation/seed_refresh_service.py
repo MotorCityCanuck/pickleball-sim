@@ -894,15 +894,17 @@ class SeedRefreshService:
         started: bool = False,
         completed: bool = False,
     ) -> None:
+        now = _utc_now()
         job_status.status = status
         job_status.current_phase = phase
         job_status.current_message = message
+        job_status.updated_at = now
         if percent_complete is not None:
             job_status.percent_complete = percent_complete
         if started and job_status.started_at is None:
-            job_status.started_at = _utc_now()
+            job_status.started_at = now
         if completed:
-            job_status.completed_at = _utc_now()
+            job_status.completed_at = now
 
 
 def _raw_datasets_from_payload(payload: dict[str, object]) -> tuple[str, ...]:

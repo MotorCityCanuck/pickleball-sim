@@ -9,13 +9,14 @@ from decimal import Decimal, ROUND_HALF_UP
 import random
 from typing import Any, Callable, ContextManager
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, insert, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.db.session import session_scope
 from app.models import (
     Match,
+    MatchGame,
     MatchTeam,
     MatchTeamPlayer,
     MonthlyBatch,
@@ -732,8 +733,8 @@ class MatchGenerator:
         )
 
         match_teams: list[MatchTeam] = []
-        match_team_players: list[MatchTeamPlayer] = []
-        games = []
+        match_team_player_rows: list[dict[str, Any]] = []
+        game_rows: list[dict[str, Any]] = []
         with _measure_runtime(
             runtime_recorder,
             "scoring",
@@ -765,7 +766,7 @@ class MatchGenerator:
                     average_team_rating=second_team.average_rating,
                 )
                 match_teams.extend([team_one, team_two])
-                games.extend(generated_games.games)
+                game_rows.extend(_match_game_rows(generated_games.games))
                 match.total_points_played = sum(
                     game.team_one_score + game.team_two_score
                     for game in generated_games.games
@@ -782,13 +783,13 @@ class MatchGenerator:
                         ),
                         details={
                             "phase": "scoring",
-                            "game_count_so_far": len(games),
+                            "game_count_so_far": len(game_rows),
                             "target_match_count": target_match_count,
                         },
                     )
-            metric["output_count"] = len(games)
+            metric["output_count"] = len(game_rows)
             metric["metadata"]["match_team_count"] = len(match_teams)
-            metric["metadata"]["game_count"] = len(games)
+            metric["metadata"]["game_count"] = len(game_rows)
 
         with _measure_runtime(
             runtime_recorder,
@@ -822,28 +823,34 @@ class MatchGenerator:
             for pairing_index, (_, first_team, second_team, _) in enumerate(pairings):
                 team_one = match_teams[pairing_index * 2]
                 team_two = match_teams[pairing_index * 2 + 1]
-                match_team_players.extend(_match_team_players(team_one, first_team))
-                match_team_players.extend(_match_team_players(team_two, second_team))
+                match_team_player_rows.extend(
+                    _match_team_player_rows(team_one, first_team)
+                )
+                match_team_player_rows.extend(
+                    _match_team_player_rows(team_two, second_team)
+                )
                 match = pairings[pairing_index][0]
                 winning_match_team = (
                     team_one if team_one.team_score > team_two.team_score else team_two
                 )
                 match.winning_team_id = winning_match_team.id
-            metric["output_count"] = len(match_team_players)
+            metric["output_count"] = len(match_team_player_rows)
 
         with _measure_runtime(
             runtime_recorder,
             "persist_match_related_rows",
-            input_count=len(match_team_players) + len(games),
+            input_count=len(match_team_player_rows) + len(game_rows),
             metadata={
-                "match_team_player_count": len(match_team_players),
-                "game_count": len(games),
+                "match_team_player_count": len(match_team_player_rows),
+                "game_count": len(game_rows),
             },
         ) as metric:
-            session.add_all(match_team_players)
-            session.add_all(games)
+            if match_team_player_rows:
+                session.execute(insert(MatchTeamPlayer), match_team_player_rows)
+            if game_rows:
+                session.execute(insert(MatchGame), game_rows)
             session.flush()
-            metric["output_count"] = len(match_team_players) + len(games)
+            metric["output_count"] = len(match_team_player_rows) + len(game_rows)
 
         with _measure_runtime(
             runtime_recorder,
@@ -854,12 +861,15 @@ class MatchGenerator:
             session.flush()
             metric["output_count"] = len(matches)
 
+        if runtime_recorder is not None:
+            runtime_recorder.flush()
+
         return MatchGenerationResult(
             batch_id=batch_id,
             match_count=len(matches),
             match_team_count=len(match_teams),
-            match_team_player_count=len(match_team_players),
-            game_count=len(games),
+            match_team_player_count=len(match_team_player_rows),
+            game_count=len(game_rows),
         )
 
     @staticmethod
@@ -1233,18 +1243,38 @@ def _noise_value(rng: random.Random, scale: Decimal) -> Decimal:
     )
 
 
-def _match_team_players(
+def _match_team_player_rows(
     match_team: MatchTeam,
     team: TeamCandidate,
-) -> list[MatchTeamPlayer]:
+) -> list[dict[str, Any]]:
     return [
-        MatchTeamPlayer(
-            match_team_id=match_team.id,
-            player_id=player_id,
-            player_position=position,
-            player_rating_at_match=rating,
-        )
+        {
+            "match_team_id": match_team.id,
+            "player_id": player_id,
+            "player_position": position,
+            "player_rating_at_match": rating,
+        }
         for player_id, position, rating in team.players
+    ]
+
+
+def _match_game_rows(games: list[MatchGame]) -> list[dict[str, Any]]:
+    return [
+        {
+            "match_id": game.match_id,
+            "game_number": game.game_number,
+            "team_one_score": game.team_one_score,
+            "team_two_score": game.team_two_score,
+            "winning_team_number": game.winning_team_number,
+            "target_score": game.target_score,
+            "win_by": game.win_by,
+            "expected_team_one_score_share": game.expected_team_one_score_share,
+            "actual_team_one_score_share": game.actual_team_one_score_share,
+            "expected_team_one_score": game.expected_team_one_score,
+            "expected_team_two_score": game.expected_team_two_score,
+            "score_noise_factor": game.score_noise_factor,
+        }
+        for game in games
     ]
 
 

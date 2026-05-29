@@ -642,6 +642,7 @@ def test_launch_generation_run_resets_generated_data_and_tracks_progress(session
     assert result.generation_run.seed_value == 77
     assert result.job_status.status == "succeeded"
     assert result.job_status.percent_complete == Decimal("100.00")
+    assert result.job_status.updated_at == result.job_status.completed_at
     assert len(result.monthly_batches) == 2
     assert {batch.processing_status for batch in result.monthly_batches} == {"succeeded"}
 

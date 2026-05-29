@@ -89,7 +89,6 @@ class RuntimeMetricRecorder:
                     metadata_json=_json_ready(mutable_metrics.get("metadata") or {}),
                 )
             )
-            self.session.flush()
             _log_runtime_metric(
                 event_type=event_type,
                 generation_run_id=self.generation_run_id,
@@ -101,6 +100,10 @@ class RuntimeMetricRecorder:
                 output_count=output_count_value,
                 attempt_count=attempt_count_value,
             )
+
+    def flush(self) -> None:
+        """Flush pending metric rows after instrumented generated rows are flushed."""
+        self.session.flush()
 
 
 def _optional_int(value: Any) -> int | None:
