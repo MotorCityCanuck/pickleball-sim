@@ -220,6 +220,7 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="players",
+                    session=session,
                     runner=lambda: self._run_players(
                         generation_run_id,
                         batch.id,
@@ -235,6 +236,7 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="club_memberships",
+                    session=session,
                     runner=lambda: self._run_club_memberships(
                         generation_run_id,
                         batch.id,
@@ -249,6 +251,7 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="teams",
+                    session=session,
                     runner=lambda: self._run_teams(
                         generation_run_id,
                         batch,
@@ -263,6 +266,7 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="matches",
+                    session=session,
                     runner=lambda: self._run_matches(
                         generation_run_id,
                         batch,
@@ -278,6 +282,7 @@ class MonthlyGenerationPipeline:
                     generation_run_id=generation_run_id,
                     batch=batch,
                     step="ratings",
+                    session=session,
                     runner=lambda: self._run_ratings(batch.id, skip_existing, session),
                     progress_listener=progress_listener,
                 )
@@ -305,6 +310,7 @@ class MonthlyGenerationPipeline:
         generation_run_id: int,
         batch: MonthlyBatch,
         step: str,
+        session: Session,
         runner: Callable[[], PipelineStepResult],
         progress_listener: Callable[[PipelineProgressEvent], None] | None,
     ) -> PipelineStepResult:
@@ -316,8 +322,28 @@ class MonthlyGenerationPipeline:
             details={},
             progress_listener=progress_listener,
         )
+        runtime_recorder = (
+            RuntimeMetricRecorder(
+                session=session,
+                generation_run_id=generation_run_id,
+                batch_id=batch.id,
+                stage_name="monthly_pipeline",
+            )
+            if self.runtime_metrics_enabled
+            else None
+        )
         try:
-            result = runner()
+            if runtime_recorder is None:
+                result = runner()
+            else:
+                with runtime_recorder.measure(
+                    step,
+                    metadata={"batch_month": batch.batch_month},
+                ) as metric:
+                    result = runner()
+                    metric["output_count"] = _pipeline_step_output_count(result)
+                    metric["metadata"]["result_status"] = result.status
+                    metric["metadata"]["details"] = result.details
         except Exception as exc:
             _emit_progress(
                 generation_run_id=generation_run_id,
@@ -654,6 +680,23 @@ def _add_months(value: date, months: int) -> date:
     year = value.year + month_index // 12
     month = month_index % 12 + 1
     return date(year, month, 1)
+
+
+def _pipeline_step_output_count(result: PipelineStepResult) -> int | None:
+    for key in (
+        "rows_loaded",
+        "membership_rows_loaded",
+        "match_count",
+        "rating_history_count",
+        "log_count",
+        "existing_matches",
+        "existing_logs",
+        "batch_team_events",
+    ):
+        value = result.details.get(key)
+        if value is not None:
+            return int(value)
+    return None
 
 
 def _count(session: Session, statement) -> int:

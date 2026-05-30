@@ -575,6 +575,27 @@ Follow-up implementation note:
   at least one post-optimization baseline run to confirm the expected runtime
   reduction
 
+The third instrumentation pass adds nested scoring and related-row persistence
+metrics. These are aggregate diagnostic rows and should not be added to parent
+match-stage totals because they are already included in `scoring` or
+`persist_match_related_rows`:
+
+- `scoring_generate_games`
+- `scoring_build_match_teams`
+- `scoring_build_game_rows`
+- `persist_match_team_players`
+- `persist_match_games`
+
+This pass also records coarse monthly pipeline stage timings in
+`generation_runtime_metrics` using:
+
+- `stage_name = monthly_pipeline`
+- `subphase_name = players`, `club_memberships`, `teams`, `matches`, or
+  `ratings`
+
+These stage-level metrics are intended to identify when optimization should
+pivot away from match generation and into another monthly stage.
+
 ### 8.1.1 Observed two-pass progress behavior in matches
 
 An important observed behavior in the current implementation is that the

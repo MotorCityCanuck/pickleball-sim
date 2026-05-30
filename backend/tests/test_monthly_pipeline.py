@@ -24,6 +24,7 @@ from app.generators import (  # noqa: E402
 )
 from app.models import (  # noqa: E402
     ClubMembership,
+    GenerationRuntimeMetric,
     GenerationRun,
     Match,
     MonthlyBatch,
@@ -195,6 +196,27 @@ def session_factory():
                 confidence_before numeric(8, 3),
                 confidence_after numeric(8, 3),
                 calculation_version varchar(50),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE generation_runtime_metrics (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                subphase_name varchar(100) not null,
+                event_type varchar(30) not null,
+                started_at datetime not null,
+                completed_at datetime not null,
+                elapsed_ms bigint not null,
+                input_count bigint,
+                output_count bigint,
+                attempt_count bigint,
+                metadata_json json,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -380,7 +402,14 @@ class FakeTeamGenerator:
 
 
 class FakeMatchGenerator:
-    def generate_for_batch(self, *, batch_id, session, progress_listener=None):
+    def generate_for_batch(
+        self,
+        *,
+        batch_id,
+        session,
+        progress_listener=None,
+        runtime_recorder=None,
+    ):
         if progress_listener is not None:
             progress_listener(
                 MatchGenerationProgress(
@@ -446,13 +475,14 @@ class FakeRatingGenerator:
         )
 
 
-def fake_pipeline():
+def fake_pipeline(*, runtime_metrics_enabled=False):
     return MonthlyGenerationPipeline(
         player_generator=FakePlayerGenerator(),
         club_membership_generator=FakeClubMembershipGenerator(),
         team_generator=FakeTeamGenerator(),
         match_generator=FakeMatchGenerator(),
         rating_update_generator=FakeRatingGenerator(),
+        runtime_metrics_enabled=runtime_metrics_enabled,
     )
 
 
@@ -535,6 +565,35 @@ def test_pipeline_forwards_match_chunk_progress(session):
     assert match_events[1].progress_unit == "match"
     assert match_events[1].message == "Planned 1/3 matches for batch 1."
     assert match_events[1].heartbeat_likely_stalled_after_seconds == 3600
+
+
+def test_pipeline_records_coarse_stage_runtime_metrics(session):
+    seed_run(session)
+
+    fake_pipeline(runtime_metrics_enabled=True).run_months(
+        generation_run_id=1,
+        months=1,
+        session=session,
+    )
+
+    metrics = (
+        session.query(GenerationRuntimeMetric)
+        .filter(GenerationRuntimeMetric.stage_name == "monthly_pipeline")
+        .order_by(GenerationRuntimeMetric.id)
+        .all()
+    )
+    assert [metric.subphase_name for metric in metrics] == [
+        "players",
+        "club_memberships",
+        "teams",
+        "matches",
+        "ratings",
+    ]
+    assert {metric.event_type for metric in metrics} == {"completed"}
+    assert all(metric.generation_run_id == 1 for metric in metrics)
+    assert all(metric.batch_id == 1 for metric in metrics)
+    assert all(metric.elapsed_ms >= 0 for metric in metrics)
+    assert all(metric.metadata_json["result_status"] == "generated" for metric in metrics)
 
 
 def test_pipeline_skips_succeeded_batch_when_skip_existing_is_enabled(session):

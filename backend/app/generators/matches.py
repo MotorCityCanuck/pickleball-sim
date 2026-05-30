@@ -806,6 +806,16 @@ class MatchGenerator:
         match_teams: list[MatchTeam] = []
         match_team_player_rows: list[dict[str, Any]] = []
         game_rows: list[dict[str, Any]] = []
+        scoring_detail_seconds = {
+            "scoring_generate_games": 0.0,
+            "scoring_build_match_teams": 0.0,
+            "scoring_build_game_rows": 0.0,
+        }
+        scoring_detail_counts = {
+            "scoring_generate_games": 0,
+            "scoring_build_match_teams": 0,
+            "scoring_build_game_rows": 0,
+        }
         with _measure_runtime(
             runtime_recorder,
             "scoring",
@@ -815,6 +825,7 @@ class MatchGenerator:
                 pairings,
                 start=1,
             ):
+                detail_start = perf_counter()
                 generated_games = generate_match_games(
                     rng,
                     match=match,
@@ -822,6 +833,11 @@ class MatchGenerator:
                     match_type=match.match_type,
                     config=config,
                 )
+                scoring_detail_seconds["scoring_generate_games"] += (
+                    perf_counter() - detail_start
+                )
+                scoring_detail_counts["scoring_generate_games"] += 1
+                detail_start = perf_counter()
                 team_one = MatchTeam(
                     match_id=match.id,
                     team_number=1,
@@ -837,10 +853,21 @@ class MatchGenerator:
                     average_team_rating=second_team.average_rating,
                 )
                 match_teams.extend([team_one, team_two])
+                scoring_detail_seconds["scoring_build_match_teams"] += (
+                    perf_counter() - detail_start
+                )
+                scoring_detail_counts["scoring_build_match_teams"] += 2
+                detail_start = perf_counter()
                 game_rows.extend(_match_game_rows(generated_games.games))
                 match.total_points_played = sum(
                     game.team_one_score + game.team_two_score
                     for game in generated_games.games
+                )
+                scoring_detail_seconds["scoring_build_game_rows"] += (
+                    perf_counter() - detail_start
+                )
+                scoring_detail_counts["scoring_build_game_rows"] += len(
+                    generated_games.games
                 )
                 if index % heartbeat_chunk_size == 0:
                     self._emit_progress(
@@ -861,6 +888,22 @@ class MatchGenerator:
             metric["output_count"] = len(game_rows)
             metric["metadata"]["match_team_count"] = len(match_teams)
             metric["metadata"]["game_count"] = len(game_rows)
+        for subphase_name, elapsed_seconds in scoring_detail_seconds.items():
+            _record_completed_runtime(
+                runtime_recorder,
+                subphase_name,
+                elapsed_ms=int(elapsed_seconds * 1000),
+                input_count=scoring_detail_counts[subphase_name],
+                output_count=len(game_rows),
+                attempt_count=len(pairings),
+                metadata={
+                    "parent_subphase": "scoring",
+                    "target_match_count": target_match_count,
+                    "match_count": len(pairings),
+                    "game_count": len(game_rows),
+                    "match_team_count": len(match_teams),
+                },
+            )
 
         with _measure_runtime(
             runtime_recorder,
@@ -916,12 +959,46 @@ class MatchGenerator:
                 "game_count": len(game_rows),
             },
         ) as metric:
+            persist_detail_seconds = {
+                "persist_match_team_players": 0.0,
+                "persist_match_games": 0.0,
+            }
             if match_team_player_rows:
+                detail_start = perf_counter()
                 session.execute(insert(MatchTeamPlayer), match_team_player_rows)
+                persist_detail_seconds["persist_match_team_players"] += (
+                    perf_counter() - detail_start
+                )
             if game_rows:
+                detail_start = perf_counter()
                 session.execute(insert(MatchGame), game_rows)
+                persist_detail_seconds["persist_match_games"] += (
+                    perf_counter() - detail_start
+                )
             session.flush()
             metric["output_count"] = len(match_team_player_rows) + len(game_rows)
+        _record_completed_runtime(
+            runtime_recorder,
+            "persist_match_team_players",
+            elapsed_ms=int(persist_detail_seconds["persist_match_team_players"] * 1000),
+            input_count=len(match_team_player_rows),
+            output_count=len(match_team_player_rows),
+            metadata={
+                "parent_subphase": "persist_match_related_rows",
+                "match_team_player_count": len(match_team_player_rows),
+            },
+        )
+        _record_completed_runtime(
+            runtime_recorder,
+            "persist_match_games",
+            elapsed_ms=int(persist_detail_seconds["persist_match_games"] * 1000),
+            input_count=len(game_rows),
+            output_count=len(game_rows),
+            metadata={
+                "parent_subphase": "persist_match_related_rows",
+                "game_count": len(game_rows),
+            },
+        )
 
         with _measure_runtime(
             runtime_recorder,

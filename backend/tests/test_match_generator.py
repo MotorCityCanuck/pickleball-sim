@@ -480,9 +480,14 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         "planning_match_object_construction",
         "persist_matches",
         "scoring",
+        "scoring_generate_games",
+        "scoring_build_match_teams",
+        "scoring_build_game_rows",
         "persist_match_teams",
         "build_match_team_players",
         "persist_match_related_rows",
+        "persist_match_team_players",
+        "persist_match_games",
         "finalize_batch",
     ]
     assert {metric.event_type for metric in metrics} == {"completed"}
@@ -519,6 +524,26 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         and "stage=matches" in record.message
         and "subphase=planning" in record.message
         for record in caplog.records
+    )
+    scoring_detail_metrics = [
+        metric
+        for metric in metrics
+        if metric.subphase_name.startswith("scoring_")
+    ]
+    assert len(scoring_detail_metrics) == 3
+    assert all(
+        metric.metadata_json["parent_subphase"] == "scoring"
+        for metric in scoring_detail_metrics
+    )
+    persistence_detail_metrics = [
+        metric
+        for metric in metrics
+        if metric.subphase_name in {"persist_match_team_players", "persist_match_games"}
+    ]
+    assert len(persistence_detail_metrics) == 2
+    assert all(
+        metric.metadata_json["parent_subphase"] == "persist_match_related_rows"
+        for metric in persistence_detail_metrics
     )
 
 
