@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import random
+from time import perf_counter
 from typing import Any, Callable, ContextManager
 
 from sqlalchemy import func, insert, or_, select
@@ -581,12 +582,34 @@ class MatchGenerator:
             )
         team_day_counts: dict[tuple[int, date], int] = {}
         team_month_counts: dict[int, int] = {}
+        remaining_team_matches = {
+            team_id: target
+            for team_id, target in team_target_matches.items()
+            if target > 0
+        }
+        under_target_ids = list(remaining_team_matches)
+        under_target_set = set(under_target_ids)
+        under_target_indexes = {
+            team_id: index for index, team_id in enumerate(under_target_ids)
+        }
         team_pool = MatchTeamPool(teams)
         matches: list[Match] = []
         pairings: list[tuple[Match, TeamCandidate, TeamCandidate, Decimal]] = []
         attempts = 0
         max_attempts = max(target_match_count * 40, 200)
         heartbeat_chunk_size = max(min(target_match_count // 20, 5_000), 500)
+        planning_detail_seconds = {
+            "planning_under_target_maintenance": 0.0,
+            "planning_first_team_selection": 0.0,
+            "planning_opponent_selection": 0.0,
+            "planning_match_object_construction": 0.0,
+        }
+        planning_detail_counts = {
+            "planning_under_target_maintenance": 0,
+            "planning_first_team_selection": 0,
+            "planning_opponent_selection": 0,
+            "planning_match_object_construction": 0,
+        }
         self._emit_progress(
             progress_listener,
             progress_current=0,
@@ -612,15 +635,17 @@ class MatchGenerator:
         ) as metric:
             while len(matches) < target_match_count and attempts < max_attempts:
                 attempts += 1
-                under_target_ids = [
-                    team.id
-                    for team in teams
-                    if team_month_counts.get(team.id, 0) < team_target_matches[team.id]
-                ]
-                if len(under_target_ids) < 2:
+                detail_start = perf_counter()
+                under_target_count = len(under_target_ids)
+                planning_detail_seconds["planning_under_target_maintenance"] += (
+                    perf_counter() - detail_start
+                )
+                planning_detail_counts["planning_under_target_maintenance"] += 1
+                if under_target_count < 2:
                     break
                 match_date = date_sampler.choose(rng)
                 match_type = str(match_type_sampler.choose(rng))
+                detail_start = perf_counter()
                 first_team = team_pool.choose_team(
                     rng,
                     source_ids=under_target_ids,
@@ -628,11 +653,16 @@ class MatchGenerator:
                     match_date=match_date,
                     config=config,
                 )
+                planning_detail_seconds["planning_first_team_selection"] += (
+                    perf_counter() - detail_start
+                )
+                planning_detail_counts["planning_first_team_selection"] += 1
                 if first_team is None:
                     continue
+                detail_start = perf_counter()
                 second_team = team_pool.choose_opponent(
                     rng,
-                    allowed_team_ids=set(under_target_ids),
+                    allowed_team_ids=under_target_set,
                     first_team=first_team,
                     match_date=match_date,
                     match_type=match_type,
@@ -640,9 +670,14 @@ class MatchGenerator:
                     team_day_counts=team_day_counts,
                     config=config,
                 )
+                planning_detail_seconds["planning_opponent_selection"] += (
+                    perf_counter() - detail_start
+                )
+                planning_detail_counts["planning_opponent_selection"] += 1
                 if second_team is None:
                     continue
 
+                detail_start = perf_counter()
                 expected_win_probability = _expected_win_probability(
                     first_team.average_rating,
                     second_team.average_rating,
@@ -667,6 +702,10 @@ class MatchGenerator:
                     ),
                     batch_id=batch_id,
                 )
+                planning_detail_seconds["planning_match_object_construction"] += (
+                    perf_counter() - detail_start
+                )
+                planning_detail_counts["planning_match_object_construction"] += 1
                 matches.append(match)
                 pairings.append((match, first_team, second_team, expected_win_probability))
                 team_day_counts[(first_team.id, match_date)] = (
@@ -680,6 +719,24 @@ class MatchGenerator:
                 )
                 team_month_counts[second_team.id] = (
                     team_month_counts.get(second_team.id, 0) + 1
+                )
+                detail_start = perf_counter()
+                _consume_remaining_team_match(
+                    first_team.id,
+                    remaining_team_matches=remaining_team_matches,
+                    under_target_ids=under_target_ids,
+                    under_target_set=under_target_set,
+                    under_target_indexes=under_target_indexes,
+                )
+                _consume_remaining_team_match(
+                    second_team.id,
+                    remaining_team_matches=remaining_team_matches,
+                    under_target_ids=under_target_ids,
+                    under_target_set=under_target_set,
+                    under_target_indexes=under_target_indexes,
+                )
+                planning_detail_seconds["planning_under_target_maintenance"] += (
+                    perf_counter() - detail_start
                 )
                 recent_pair_dates.setdefault(
                     frozenset((first_team.id, second_team.id)),
@@ -706,6 +763,20 @@ class MatchGenerator:
             metric["metadata"]["target_match_count"] = target_match_count
             metric["metadata"]["success_rate"] = (
                 round(len(matches) / attempts, 6) if attempts else None
+            )
+        for subphase_name, elapsed_seconds in planning_detail_seconds.items():
+            _record_completed_runtime(
+                runtime_recorder,
+                subphase_name,
+                elapsed_ms=int(elapsed_seconds * 1000),
+                input_count=planning_detail_counts[subphase_name],
+                output_count=len(matches),
+                attempt_count=attempts,
+                metadata={
+                    "parent_subphase": "planning",
+                    "target_match_count": target_match_count,
+                    "active_team_count": len(teams),
+                },
             )
 
         with _measure_runtime(
@@ -922,6 +993,55 @@ def _measure_runtime(
         attempt_count=attempt_count,
         metadata=metadata,
     )
+
+
+def _record_completed_runtime(
+    runtime_recorder: Any | None,
+    subphase_name: str,
+    *,
+    elapsed_ms: int,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    attempt_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if runtime_recorder is None:
+        return
+    runtime_recorder.record_completed(
+        subphase_name,
+        elapsed_ms=elapsed_ms,
+        input_count=input_count,
+        output_count=output_count,
+        attempt_count=attempt_count,
+        metadata=metadata,
+    )
+
+
+def _consume_remaining_team_match(
+    team_id: int,
+    *,
+    remaining_team_matches: dict[int, int],
+    under_target_ids: list[int],
+    under_target_set: set[int],
+    under_target_indexes: dict[int, int],
+) -> None:
+    remaining = remaining_team_matches.get(team_id, 0) - 1
+    if remaining > 0:
+        remaining_team_matches[team_id] = remaining
+        return
+
+    remaining_team_matches.pop(team_id, None)
+    if team_id not in under_target_set:
+        return
+
+    under_target_set.remove(team_id)
+    remove_index = under_target_indexes.pop(team_id)
+    last_team_id = under_target_ids.pop()
+    if remove_index == len(under_target_ids):
+        return
+
+    under_target_ids[remove_index] = last_team_id
+    under_target_indexes[last_team_id] = remove_index
 
 
 def _generation_payload(session: Session, batch: MonthlyBatch) -> dict[str, Any] | None:

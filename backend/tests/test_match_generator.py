@@ -474,6 +474,10 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         "calculate_team_targets",
         "load_recent_pair_dates",
         "planning",
+        "planning_under_target_maintenance",
+        "planning_first_team_selection",
+        "planning_opponent_selection",
+        "planning_match_object_construction",
         "persist_matches",
         "scoring",
         "persist_match_teams",
@@ -494,6 +498,22 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
     assert planning_metric.output_count == result.match_count
     assert planning_metric.attempt_count >= result.match_count
     assert planning_metric.metadata_json["target_match_count"] == result.match_count
+    planning_detail_metrics = [
+        metric
+        for metric in metrics
+        if metric.subphase_name.startswith("planning_")
+    ]
+    assert len(planning_detail_metrics) == 4
+    assert all(
+        metric.metadata_json["parent_subphase"] == "planning"
+        for metric in planning_detail_metrics
+    )
+    assert all(metric.output_count == result.match_count for metric in planning_detail_metrics)
+    assert all(
+        metric.attempt_count == planning_metric.attempt_count
+        for metric in planning_detail_metrics
+    )
+    assert all(metric.input_count >= result.match_count for metric in planning_detail_metrics)
     assert any(
         "Generation runtime phase completed" in record.message
         and "stage=matches" in record.message

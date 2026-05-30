@@ -34,6 +34,7 @@ SELECT
 FROM selected_run sr
 JOIN generation_runs gr ON gr.id = sr.generation_run_id
 JOIN generation_runtime_metrics grm ON grm.generation_run_id = gr.id
+    AND COALESCE(grm.metadata_json->>'parent_subphase', '') = ''
 LEFT JOIN monthly_batches mb ON mb.id = grm.batch_id
 GROUP BY gr.id, gr.generation_name, gr.status, gr.started_at, gr.completed_at
 ORDER BY gr.id;
@@ -78,6 +79,7 @@ batch_metrics AS (
     LEFT JOIN generation_runtime_metrics grm
         ON grm.batch_id = mb.id
         AND grm.stage_name = 'matches'
+        AND COALESCE(grm.metadata_json->>'parent_subphase', '') = ''
     GROUP BY
         mb.id,
         mb.batch_sequence,
@@ -161,6 +163,7 @@ subphase_totals AS (
     FROM selected_run sr
     JOIN generation_runtime_metrics grm ON grm.generation_run_id = sr.generation_run_id
     WHERE grm.stage_name = 'matches'
+        AND COALESCE(grm.metadata_json->>'parent_subphase', '') = ''
     GROUP BY grm.subphase_name
 ),
 total AS (
@@ -179,6 +182,58 @@ SELECT
 FROM subphase_totals st
 CROSS JOIN total t
 ORDER BY st.elapsed_ms DESC;
+
+\echo ''
+\echo '== Planning Detail Totals =='
+WITH selected_run AS (
+    SELECT COALESCE(
+        NULLIF(:'run_id', '')::bigint,
+        (
+            SELECT generation_run_id
+            FROM generation_runtime_metrics
+            GROUP BY generation_run_id
+            ORDER BY max(started_at) DESC
+            LIMIT 1
+        )
+    ) AS generation_run_id
+),
+planning_total AS (
+    SELECT sum(grm.elapsed_ms) AS elapsed_ms
+    FROM selected_run sr
+    JOIN generation_runtime_metrics grm ON grm.generation_run_id = sr.generation_run_id
+    WHERE grm.stage_name = 'matches'
+        AND grm.subphase_name = 'planning'
+        AND grm.event_type = 'completed'
+),
+planning_details AS (
+    SELECT
+        grm.subphase_name,
+        count(*) AS metric_rows,
+        sum(grm.elapsed_ms) AS elapsed_ms,
+        avg(grm.elapsed_ms) AS avg_elapsed_ms,
+        max(grm.elapsed_ms) AS max_elapsed_ms,
+        sum(grm.input_count) AS input_count,
+        sum(grm.output_count) AS output_count,
+        sum(grm.attempt_count) AS attempt_count
+    FROM selected_run sr
+    JOIN generation_runtime_metrics grm ON grm.generation_run_id = sr.generation_run_id
+    WHERE grm.stage_name = 'matches'
+        AND grm.metadata_json->>'parent_subphase' = 'planning'
+    GROUP BY grm.subphase_name
+)
+SELECT
+    pd.subphase_name,
+    pd.metric_rows,
+    round(pd.elapsed_ms::numeric / 1000, 3) AS elapsed_seconds,
+    round((pd.elapsed_ms::numeric / nullif(pt.elapsed_ms, 0)) * 100, 2) AS pct_of_planning_time,
+    round(pd.avg_elapsed_ms::numeric / 1000, 3) AS avg_seconds,
+    round(pd.max_elapsed_ms::numeric / 1000, 3) AS max_seconds,
+    pd.input_count,
+    pd.output_count,
+    pd.attempt_count
+FROM planning_details pd
+CROSS JOIN planning_total pt
+ORDER BY pd.elapsed_ms DESC;
 
 \echo ''
 \echo '== Month-over-Month Slowdown Signals =='
@@ -209,6 +264,7 @@ batch_totals AS (
     JOIN generation_runtime_metrics grm
         ON grm.batch_id = mb.id
         AND grm.stage_name = 'matches'
+        AND COALESCE(grm.metadata_json->>'parent_subphase', '') = ''
     GROUP BY mb.batch_sequence, mb.batch_month, mb.id
 )
 SELECT

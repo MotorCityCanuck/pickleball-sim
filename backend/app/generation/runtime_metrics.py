@@ -105,6 +105,47 @@ class RuntimeMetricRecorder:
         """Flush pending metric rows after instrumented generated rows are flushed."""
         self.session.flush()
 
+    def record_completed(
+        self,
+        subphase_name: str,
+        *,
+        elapsed_ms: int,
+        input_count: int | None = None,
+        output_count: int | None = None,
+        attempt_count: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Record an already-measured completed subphase."""
+        completed_at = _utc_now()
+        elapsed_ms = max(int(elapsed_ms), 0)
+        self.session.add(
+            GenerationRuntimeMetric(
+                generation_run_id=self.generation_run_id,
+                batch_id=self.batch_id,
+                stage_name=self.stage_name,
+                subphase_name=subphase_name,
+                event_type="completed",
+                started_at=completed_at,
+                completed_at=completed_at,
+                elapsed_ms=elapsed_ms,
+                input_count=_optional_int(input_count),
+                output_count=_optional_int(output_count),
+                attempt_count=_optional_int(attempt_count),
+                metadata_json=_json_ready(metadata or {}),
+            )
+        )
+        _log_runtime_metric(
+            event_type="completed",
+            generation_run_id=self.generation_run_id,
+            batch_id=self.batch_id,
+            stage_name=self.stage_name,
+            subphase_name=subphase_name,
+            elapsed_ms=elapsed_ms,
+            input_count=input_count,
+            output_count=output_count,
+            attempt_count=attempt_count,
+        )
+
 
 def _optional_int(value: Any) -> int | None:
     if value is None:

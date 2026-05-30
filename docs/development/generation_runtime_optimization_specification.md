@@ -548,11 +548,32 @@ The first implementation records these match subphases:
 - `persist_match_related_rows`
 - `finalize_batch`
 
+The second match-planning instrumentation pass adds nested planning-detail
+metrics. These are recorded as aggregate diagnostic rows and should not be
+added to total match-stage elapsed time because they are already included in
+the parent `planning` duration:
+
+- `planning_under_target_maintenance`
+- `planning_first_team_selection`
+- `planning_opponent_selection`
+- `planning_match_object_construction`
+
 Key questions this must answer:
 
 - how much time is spent planning vs persisting?
 - how quickly does the planning attempt count grow by month?
 - how much of the later-month slowdown comes from historical rematch lookup?
+- how much of planning is spent rebuilding quota eligibility vs selecting
+  first teams, selecting opponents, or constructing match objects?
+
+Follow-up implementation note:
+
+- quota eligibility for match planning now uses incremental remaining-match
+  tracking instead of rebuilding the full under-target team list for every
+  planned match
+- the `planning_under_target_maintenance` metric should remain in place for
+  at least one post-optimization baseline run to confirm the expected runtime
+  reduction
 
 ### 8.1.1 Observed two-pass progress behavior in matches
 
