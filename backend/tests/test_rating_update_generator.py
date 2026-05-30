@@ -7,7 +7,7 @@ import sys
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 
@@ -16,8 +16,10 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
+from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import RatingUpdateGenerator  # noqa: E402
 from app.models import (  # noqa: E402
+    GenerationRuntimeMetric,
     GenerationRun,
     Match,
     MatchGame,
@@ -216,6 +218,27 @@ def session_factory():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE generation_runtime_metrics (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                subphase_name varchar(100) not null,
+                event_type varchar(30) not null,
+                started_at datetime not null,
+                completed_at datetime not null,
+                elapsed_ms bigint not null,
+                input_count bigint,
+                output_count bigint,
+                attempt_count bigint,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
     return sessionmaker(bind=engine, autoflush=False, future=True)
 
 
@@ -401,6 +424,51 @@ def test_rating_updates_write_history_and_match_logs(session):
     assert team_two_log.rating_delta == Decimal("-9.000")
     session.refresh(batch)
     assert batch.rating_update_count == 4
+
+
+def test_rating_updates_record_runtime_metrics(session):
+    batch = seed_rating_match(session)
+    recorder = RuntimeMetricRecorder(
+        session=session,
+        generation_run_id=batch.generation_run_id,
+        batch_id=batch.id,
+        stage_name="ratings",
+    )
+
+    result = RatingUpdateGenerator().generate_for_batch(
+        batch_id=batch.id,
+        session=session,
+        runtime_recorder=recorder,
+    )
+
+    metrics = session.scalars(
+        select(GenerationRuntimeMetric).order_by(GenerationRuntimeMetric.id)
+    ).all()
+    assert [metric.subphase_name for metric in metrics] == [
+        "load_matches",
+        "collect_player_ids",
+        "load_initial_states",
+        "compute_rating_updates",
+        "stage_rating_history_rows",
+        "stage_rating_log_rows",
+        "flush_rating_rows",
+    ]
+    assert {metric.event_type for metric in metrics} == {"completed"}
+    assert all(metric.generation_run_id == batch.generation_run_id for metric in metrics)
+    assert all(metric.batch_id == batch.id for metric in metrics)
+    assert all(metric.stage_name == "ratings" for metric in metrics)
+    assert all(metric.elapsed_ms >= 0 for metric in metrics)
+    compute_metric = next(
+        metric for metric in metrics if metric.subphase_name == "compute_rating_updates"
+    )
+    assert compute_metric.input_count == result.match_count
+    assert compute_metric.output_count == result.log_count
+    flush_metric = next(
+        metric for metric in metrics if metric.subphase_name == "flush_rating_rows"
+    )
+    assert flush_metric.input_count == result.rating_history_count + result.log_count
+    assert flush_metric.metadata_json["rating_history_count"] == result.rating_history_count
+    assert flush_metric.metadata_json["log_count"] == result.log_count
 
 
 def test_rating_updates_aggregate_multiple_games(session):

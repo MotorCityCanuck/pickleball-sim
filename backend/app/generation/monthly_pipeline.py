@@ -283,7 +283,12 @@ class MonthlyGenerationPipeline:
                     batch=batch,
                     step="ratings",
                     session=session,
-                    runner=lambda: self._run_ratings(batch.id, skip_existing, session),
+                    runner=lambda: self._run_ratings(
+                        generation_run_id,
+                        batch.id,
+                        skip_existing,
+                        session,
+                    ),
                     progress_listener=progress_listener,
                 )
             )
@@ -588,6 +593,7 @@ class MonthlyGenerationPipeline:
 
     def _run_ratings(
         self,
+        generation_run_id: int,
         batch_id: int,
         skip_existing: bool,
         session: Session,
@@ -604,12 +610,28 @@ class MonthlyGenerationPipeline:
                     "ratings",
                     "skipped",
                     {"existing_logs": existing},
-                )
+            )
             raise ValueError(f"Monthly batch {batch_id} already has rating updates")
 
+        runtime_recorder = (
+            RuntimeMetricRecorder(
+                session=session,
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                stage_name="ratings",
+            )
+            if self.runtime_metrics_enabled
+            else None
+        )
+        rating_generator_kwargs = {
+            "batch_id": batch_id,
+            "session": session,
+        }
+        if runtime_recorder is not None:
+            rating_generator_kwargs["runtime_recorder"] = runtime_recorder
+
         result = self.rating_update_generator.generate_for_batch(
-            batch_id=batch_id,
-            session=session,
+            **rating_generator_kwargs
         )
         return PipelineStepResult(
             "ratings",

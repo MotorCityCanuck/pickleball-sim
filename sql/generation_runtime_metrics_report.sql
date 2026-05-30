@@ -228,6 +228,51 @@ CROSS JOIN total t
 ORDER BY st.elapsed_ms DESC;
 
 \echo ''
+\echo '== Ratings Detail Totals =='
+WITH selected_run AS (
+    SELECT COALESCE(
+        NULLIF(:'run_id', '')::bigint,
+        (
+            SELECT generation_run_id
+            FROM generation_runtime_metrics
+            GROUP BY generation_run_id
+            ORDER BY max(started_at) DESC
+            LIMIT 1
+        )
+    ) AS generation_run_id
+),
+ratings_totals AS (
+    SELECT
+        grm.subphase_name,
+        count(*) AS metric_rows,
+        sum(grm.elapsed_ms) AS elapsed_ms,
+        avg(grm.elapsed_ms) AS avg_elapsed_ms,
+        max(grm.elapsed_ms) AS max_elapsed_ms,
+        sum(grm.input_count) AS input_count,
+        sum(grm.output_count) AS output_count
+    FROM selected_run sr
+    JOIN generation_runtime_metrics grm ON grm.generation_run_id = sr.generation_run_id
+    WHERE grm.stage_name = 'ratings'
+        AND grm.event_type = 'completed'
+    GROUP BY grm.subphase_name
+),
+total AS (
+    SELECT sum(elapsed_ms) AS elapsed_ms FROM ratings_totals
+)
+SELECT
+    rt.subphase_name,
+    rt.metric_rows,
+    round(rt.elapsed_ms::numeric / 1000, 3) AS elapsed_seconds,
+    round((rt.elapsed_ms::numeric / nullif(t.elapsed_ms, 0)) * 100, 2) AS pct_of_ratings_time,
+    round(rt.avg_elapsed_ms::numeric / 1000, 3) AS avg_seconds,
+    round(rt.max_elapsed_ms::numeric / 1000, 3) AS max_seconds,
+    rt.input_count,
+    rt.output_count
+FROM ratings_totals rt
+CROSS JOIN total t
+ORDER BY rt.elapsed_ms DESC;
+
+\echo ''
 \echo '== Planning Detail Totals =='
 WITH selected_run AS (
     SELECT COALESCE(

@@ -440,7 +440,7 @@ class FakeMatchGenerator:
 
 
 class FakeRatingGenerator:
-    def generate_for_batch(self, *, batch_id, session):
+    def generate_for_batch(self, *, batch_id, session, runtime_recorder=None):
         session.add(
             RatingsUpdateLog(
                 generation_run_id=1,

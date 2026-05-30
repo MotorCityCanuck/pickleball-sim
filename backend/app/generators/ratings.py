@@ -1,9 +1,10 @@
 """Apply match-driven rating updates and write audit logs."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any
+from typing import Any, ContextManager
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -94,19 +95,29 @@ class RatingUpdateGenerator:
         *,
         batch_id: int,
         session: Session | None = None,
+        runtime_recorder: Any | None = None,
     ) -> RatingUpdateResult:
         """Apply rating updates for an existing monthly batch."""
         if session is not None:
-            return self._generate_for_batch(batch_id=batch_id, session=session)
+            return self._generate_for_batch(
+                batch_id=batch_id,
+                session=session,
+                runtime_recorder=runtime_recorder,
+            )
 
         with session_scope() as active_session:
-            return self._generate_for_batch(batch_id=batch_id, session=active_session)
+            return self._generate_for_batch(
+                batch_id=batch_id,
+                session=active_session,
+                runtime_recorder=runtime_recorder,
+            )
 
     def _generate_for_batch(
         self,
         *,
         batch_id: int,
         session: Session,
+        runtime_recorder: Any | None = None,
     ) -> RatingUpdateResult:
         batch = session.get(MonthlyBatch, batch_id)
         if batch is None:
@@ -124,19 +135,37 @@ class RatingUpdateGenerator:
         config = RatingUpdateConfig.from_payload(
             generation_run.parameter_snapshot if generation_run else None
         )
-        matches = _matches_for_batch(session, batch_id)
+        with _measure_runtime(
+            runtime_recorder,
+            "load_matches",
+            metadata={"batch_month": batch.batch_month},
+        ) as metric:
+            matches = _matches_for_batch(session, batch_id)
+            metric["output_count"] = len(matches)
         if not matches:
             raise ValueError(f"Monthly batch {batch_id} has no matches")
 
-        player_ids = sorted(
-            {
-                player.player_id
-                for match in matches
-                for match_team in match.match_teams
-                for player in match_team.players
-            }
-        )
-        states = _initial_rating_states(session, player_ids, batch_id)
+        with _measure_runtime(
+            runtime_recorder,
+            "collect_player_ids",
+            input_count=len(matches),
+        ) as metric:
+            player_ids = sorted(
+                {
+                    player.player_id
+                    for match in matches
+                    for match_team in match.match_teams
+                    for player in match_team.players
+                }
+            )
+            metric["output_count"] = len(player_ids)
+        with _measure_runtime(
+            runtime_recorder,
+            "load_initial_states",
+            input_count=len(player_ids),
+        ) as metric:
+            states = _initial_rating_states(session, player_ids, batch_id)
+            metric["output_count"] = len(states)
         missing_players = [player_id for player_id in player_ids if player_id not in states]
         if missing_players:
             raise ValueError(
@@ -147,85 +176,119 @@ class RatingUpdateGenerator:
         history_rows: list[PlayerRatingHistory] = []
         log_rows: list[RatingsUpdateLog] = []
         match_number = 0
-        for match in matches:
-            match_number += 1
-            game_count = len(match.games)
-            if game_count < 1:
-                raise ValueError(f"Match {match.id} has no games")
+        with _measure_runtime(
+            runtime_recorder,
+            "compute_rating_updates",
+            input_count=len(matches),
+        ) as metric:
+            for match in matches:
+                match_number += 1
+                game_count = len(match.games)
+                if game_count < 1:
+                    raise ValueError(f"Match {match.id} has no games")
 
-            team_summaries = _team_match_summaries(match)
-            for match_team in sorted(match.match_teams, key=lambda item: item.team_number):
-                summary = team_summaries[match_team.team_number]
-                for match_player in sorted(
-                    match_team.players,
-                    key=lambda item: (item.player_position or 0, item.player_id),
-                ):
-                    state = states[match_player.player_id]
-                    rating_before = state.rating
-                    confidence_before = state.confidence
-                    k_factor = _k_factor(state, config)
-                    rating_delta = (
-                        k_factor
-                        * (summary.actual_score_share - summary.expected_score_share)
-                    ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-                    rating_after = _clamp_rating(
-                        rating_before + rating_delta,
-                        config,
-                    )
-                    rating_delta = (rating_after - rating_before).quantize(
-                        Decimal("0.001"),
-                        rounding=ROUND_HALF_UP,
-                    )
-                    confidence_after = _next_confidence(confidence_before, config)
-                    state.rating = rating_after
-                    state.confidence = confidence_after
-                    state.match_count += 1
-
-                    history_rows.append(
-                        PlayerRatingHistory(
-                            player_id=match_player.player_id,
-                            rating_date=match.match_date,
-                            rating_type="match_update",
-                            rating_value=rating_after,
-                            confidence_score=confidence_after,
-                            expected_performance=summary.expected_score_share,
-                            match_count_used=state.match_count,
-                            calculation_version=CALCULATION_VERSION,
-                            batch_id=batch_id,
+                team_summaries = _team_match_summaries(match)
+                for match_team in sorted(match.match_teams, key=lambda item: item.team_number):
+                    summary = team_summaries[match_team.team_number]
+                    for match_player in sorted(
+                        match_team.players,
+                        key=lambda item: (item.player_position or 0, item.player_id),
+                    ):
+                        state = states[match_player.player_id]
+                        rating_before = state.rating
+                        confidence_before = state.confidence
+                        k_factor = _k_factor(state, config)
+                        rating_delta = (
+                            k_factor
+                            * (summary.actual_score_share - summary.expected_score_share)
+                        ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+                        rating_after = _clamp_rating(
+                            rating_before + rating_delta,
+                            config,
                         )
-                    )
-                    log_rows.append(
-                        RatingsUpdateLog(
-                            generation_run_id=batch.generation_run_id,
-                            batch_id=batch_id,
-                            match_id=match.id,
-                            match_number=match_number,
-                            match_date=match.match_date,
-                            player_id=match_player.player_id,
-                            match_team_id=match_team.id,
-                            team_number=match_team.team_number,
-                            rating_type="match_update",
-                            rating_before=rating_before,
-                            rating_after=rating_after,
-                            rating_delta=rating_delta,
-                            expected_score_share=summary.expected_score_share,
-                            actual_score_share=summary.actual_score_share,
-                            expected_raw_points=summary.expected_raw_points,
-                            actual_raw_points=summary.actual_raw_points,
-                            games_played=game_count,
-                            games_won=summary.games_won,
-                            match_won=1 if match.winning_team_id == match_team.id else 0,
-                            k_factor=k_factor,
-                            confidence_before=confidence_before,
-                            confidence_after=confidence_after,
-                            calculation_version=CALCULATION_VERSION,
+                        rating_delta = (rating_after - rating_before).quantize(
+                            Decimal("0.001"),
+                            rounding=ROUND_HALF_UP,
                         )
-                    )
+                        confidence_after = _next_confidence(confidence_before, config)
+                        state.rating = rating_after
+                        state.confidence = confidence_after
+                        state.match_count += 1
 
-        session.add_all(history_rows)
-        session.add_all(log_rows)
-        batch.rating_update_count = len(history_rows)
-        session.flush()
+                        history_rows.append(
+                            PlayerRatingHistory(
+                                player_id=match_player.player_id,
+                                rating_date=match.match_date,
+                                rating_type="match_update",
+                                rating_value=rating_after,
+                                confidence_score=confidence_after,
+                                expected_performance=summary.expected_score_share,
+                                match_count_used=state.match_count,
+                                calculation_version=CALCULATION_VERSION,
+                                batch_id=batch_id,
+                            )
+                        )
+                        log_rows.append(
+                            RatingsUpdateLog(
+                                generation_run_id=batch.generation_run_id,
+                                batch_id=batch_id,
+                                match_id=match.id,
+                                match_number=match_number,
+                                match_date=match.match_date,
+                                player_id=match_player.player_id,
+                                match_team_id=match_team.id,
+                                team_number=match_team.team_number,
+                                rating_type="match_update",
+                                rating_before=rating_before,
+                                rating_after=rating_after,
+                                rating_delta=rating_delta,
+                                expected_score_share=summary.expected_score_share,
+                                actual_score_share=summary.actual_score_share,
+                                expected_raw_points=summary.expected_raw_points,
+                                actual_raw_points=summary.actual_raw_points,
+                                games_played=game_count,
+                                games_won=summary.games_won,
+                                match_won=(
+                                    1 if match.winning_team_id == match_team.id else 0
+                                ),
+                                k_factor=k_factor,
+                                confidence_before=confidence_before,
+                                confidence_after=confidence_after,
+                                calculation_version=CALCULATION_VERSION,
+                            )
+                        )
+            metric["output_count"] = len(log_rows)
+            metric["metadata"]["rating_history_count"] = len(history_rows)
+            metric["metadata"]["log_count"] = len(log_rows)
+
+        with _measure_runtime(
+            runtime_recorder,
+            "stage_rating_history_rows",
+            input_count=len(history_rows),
+        ) as metric:
+            session.add_all(history_rows)
+            metric["output_count"] = len(history_rows)
+        with _measure_runtime(
+            runtime_recorder,
+            "stage_rating_log_rows",
+            input_count=len(log_rows),
+        ) as metric:
+            session.add_all(log_rows)
+            metric["output_count"] = len(log_rows)
+        with _measure_runtime(
+            runtime_recorder,
+            "flush_rating_rows",
+            input_count=len(history_rows) + len(log_rows),
+            metadata={
+                "rating_history_count": len(history_rows),
+                "log_count": len(log_rows),
+            },
+        ) as metric:
+            batch.rating_update_count = len(history_rows)
+            session.flush()
+            metric["output_count"] = len(history_rows) + len(log_rows)
+        if runtime_recorder is not None:
+            runtime_recorder.flush()
         return RatingUpdateResult(
             batch_id=batch_id,
             match_count=len(matches),
@@ -257,6 +320,33 @@ def _matches_for_batch(session: Session, batch_id: int) -> list[Match]:
             )
             .order_by(Match.match_date, Match.id)
         )
+    )
+
+
+def _measure_runtime(
+    runtime_recorder: Any | None,
+    subphase_name: str,
+    *,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    attempt_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ContextManager[dict[str, Any]]:
+    if runtime_recorder is None:
+        return nullcontext(
+            {
+                "input_count": input_count,
+                "output_count": output_count,
+                "attempt_count": attempt_count,
+                "metadata": dict(metadata or {}),
+            }
+        )
+    return runtime_recorder.measure(
+        subphase_name,
+        input_count=input_count,
+        output_count=output_count,
+        attempt_count=attempt_count,
+        metadata=metadata,
     )
 
 

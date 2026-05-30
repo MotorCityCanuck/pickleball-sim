@@ -596,6 +596,21 @@ This pass also records coarse monthly pipeline stage timings in
 These stage-level metrics are intended to identify when optimization should
 pivot away from match generation and into another monthly stage.
 
+The fourth instrumentation pass adds ratings-stage detail metrics because
+post-match ratings became the largest monthly stage after match-planning
+optimization:
+
+- `load_matches`
+- `collect_player_ids`
+- `load_initial_states`
+- `compute_rating_updates`
+- `stage_rating_history_rows`
+- `stage_rating_log_rows`
+- `flush_rating_rows`
+
+These metrics should distinguish ORM graph loading, prior rating-state lookup,
+CPU-side rating computation, ORM row staging, and database flush/write cost.
+
 ### 8.1.1 Observed two-pass progress behavior in matches
 
 An important observed behavior in the current implementation is that the
