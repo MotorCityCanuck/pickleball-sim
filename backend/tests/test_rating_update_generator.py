@@ -18,6 +18,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import RatingUpdateGenerator  # noqa: E402
+from app.generators.ratings import _initial_rating_states  # noqa: E402
 from app.models import (  # noqa: E402
     GenerationRuntimeMetric,
     GenerationRun,
@@ -469,6 +470,54 @@ def test_rating_updates_record_runtime_metrics(session):
     assert flush_metric.input_count == result.rating_history_count + result.log_count
     assert flush_metric.metadata_json["rating_history_count"] == result.rating_history_count
     assert flush_metric.metadata_json["log_count"] == result.log_count
+
+
+def test_initial_rating_states_use_latest_rating_and_prior_match_count(session):
+    batch = seed_rating_match(session)
+    session.add_all(
+        [
+            PlayerRatingHistory(
+                id=10,
+                player_id=1,
+                rating_date=date(2024, 1, 5),
+                rating_type="match_update",
+                rating_value=Decimal("1510.000"),
+                confidence_score=Decimal("0.220"),
+                match_count_used=1,
+                batch_id=batch.id,
+            ),
+            PlayerRatingHistory(
+                id=11,
+                player_id=1,
+                rating_date=date(2024, 1, 10),
+                rating_type="match_update",
+                rating_value=Decimal("1520.000"),
+                confidence_score=Decimal("0.240"),
+                match_count_used=2,
+                batch_id=batch.id,
+            ),
+            PlayerRatingHistory(
+                id=12,
+                player_id=2,
+                rating_date=date(2024, 1, 10),
+                rating_type="manual_adjustment",
+                rating_value=Decimal("1490.000"),
+                confidence_score=Decimal("0.300"),
+                batch_id=batch.id,
+            ),
+        ]
+    )
+    session.commit()
+
+    states = _initial_rating_states(session, [1, 2, 999], batch.id)
+
+    assert states[1].rating == Decimal("1520.000")
+    assert states[1].confidence == Decimal("0.240")
+    assert states[1].match_count == 2
+    assert states[2].rating == Decimal("1490.000")
+    assert states[2].confidence == Decimal("0.300")
+    assert states[2].match_count == 0
+    assert 999 not in states
 
 
 def test_rating_updates_aggregate_multiple_games(session):

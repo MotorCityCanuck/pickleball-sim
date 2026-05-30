@@ -22,6 +22,7 @@ from app.models import (
 
 
 CALCULATION_VERSION = "rating_update_v1"
+RATING_STATE_CHUNK_SIZE = 20_000
 
 
 @dataclass(frozen=True)
@@ -432,33 +433,67 @@ def _initial_rating_states(
     batch_id: int,
 ) -> dict[int, PlayerRatingState]:
     states: dict[int, PlayerRatingState] = {}
-    for player_id in player_ids:
-        rows = list(
-            session.scalars(
-                select(PlayerRatingHistory)
+    for player_id_chunk in _chunks(player_ids, RATING_STATE_CHUNK_SIZE):
+        match_counts = {
+            player_id: int(match_count)
+            for player_id, match_count in session.execute(
+                select(
+                    PlayerRatingHistory.player_id,
+                    func.count(PlayerRatingHistory.id),
+                )
                 .where(
-                    PlayerRatingHistory.player_id == player_id,
+                    PlayerRatingHistory.player_id.in_(player_id_chunk),
                     PlayerRatingHistory.batch_id <= batch_id,
+                    PlayerRatingHistory.rating_type == "match_update",
                 )
-                .order_by(
-                    PlayerRatingHistory.rating_date.desc(),
-                    PlayerRatingHistory.id.desc(),
-                )
+                .group_by(PlayerRatingHistory.player_id)
             )
+        }
+
+        ranked_history = (
+            select(
+                PlayerRatingHistory.player_id.label("player_id"),
+                PlayerRatingHistory.rating_value.label("rating_value"),
+                PlayerRatingHistory.confidence_score.label("confidence_score"),
+                func.row_number()
+                .over(
+                    partition_by=PlayerRatingHistory.player_id,
+                    order_by=(
+                        PlayerRatingHistory.rating_date.desc(),
+                        PlayerRatingHistory.id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .where(
+                PlayerRatingHistory.player_id.in_(player_id_chunk),
+                PlayerRatingHistory.batch_id <= batch_id,
+            )
+            .subquery()
         )
-        if not rows:
-            continue
-        latest = rows[0]
-        states[player_id] = PlayerRatingState(
-            rating=_decimal(latest.rating_value),
-            confidence=(
-                _decimal(latest.confidence_score)
-                if latest.confidence_score is not None
-                else None
-            ),
-            match_count=sum(1 for row in rows if row.rating_type == "match_update"),
+        latest_rows = session.execute(
+            select(
+                ranked_history.c.player_id,
+                ranked_history.c.rating_value,
+                ranked_history.c.confidence_score,
+            ).where(ranked_history.c.row_number == 1)
         )
+        for player_id, rating_value, confidence_score in latest_rows:
+            states[player_id] = PlayerRatingState(
+                rating=_decimal(rating_value),
+                confidence=(
+                    _decimal(confidence_score) if confidence_score is not None else None
+                ),
+                match_count=int(match_counts.get(player_id, 0)),
+            )
     return states
+
+
+def _chunks(values: list[int], chunk_size: int) -> list[list[int]]:
+    return [
+        values[index : index + chunk_size]
+        for index in range(0, len(values), chunk_size)
+    ]
 
 
 def _k_factor(state: PlayerRatingState, config: RatingUpdateConfig) -> Decimal:
