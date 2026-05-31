@@ -730,7 +730,7 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
     )
 
 
-def test_player_age_distribution_uses_batch_created_at_instead_of_registration_date(session):
+def test_player_age_distribution_uses_registration_date(session):
     seed_audit_dataset(session)
     session.execute(
         text(
@@ -749,10 +749,10 @@ def test_player_age_distribution_uses_batch_created_at_instead_of_registration_d
     assert results[0].rows == (
         {
             "age_bucket": "18_29",
-            "player_count": 2,
-            "player_pct": 25.0,
+            "player_count": 1,
+            "player_pct": 12.5,
             "configured_pct": 25.0,
-            "pct_point_drift": 0.0,
+            "pct_point_drift": -12.5,
         },
         {
             "age_bucket": "30_44",
@@ -781,6 +781,13 @@ def test_player_age_distribution_uses_batch_created_at_instead_of_registration_d
             "player_pct": 0.0,
             "configured_pct": 0.0,
             "pct_point_drift": 0.0,
+        },
+        {
+            "age_bucket": "under_18",
+            "player_count": 1,
+            "player_pct": 12.5,
+            "configured_pct": None,
+            "pct_point_drift": None,
         },
     )
 
@@ -906,15 +913,94 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
     assert result_map["zero_match_players_by_club_affiliation"] == (
         {
             "club_affiliation_status": "affiliated",
-            "active_player_count": 6,
+            "active_player_count": 5,
             "zero_match_player_count": 2,
-            "zero_match_player_pct": 33.33,
+            "zero_match_player_pct": 40.0,
         },
         {
             "club_affiliation_status": "unaffiliated",
-            "active_player_count": 1,
+            "active_player_count": 2,
             "zero_match_player_count": 1,
-            "zero_match_player_pct": 100.0,
+            "zero_match_player_pct": 50.0,
+        },
+    )
+
+
+def test_team_assignment_delay_summary_measures_time_to_first_team(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
+            ) VALUES
+                (11, 1, '2026-02-01', 2, 'historical_incremental', 'succeeded', '2026-02-15 12:00:00', '2026-02-15 12:00:00'),
+                (12, 1, '2026-03-01', 3, 'historical_incremental', 'succeeded', '2026-03-15 12:00:00', '2026-03-15 12:00:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO players (
+                id, first_name, last_name, gender, birth_date, registration_date, player_status, home_region_id, generation_run_id
+            ) VALUES
+                (9, 'Indy', 'Wilson', 'F', '1995-06-01', '2026-01-20', 'ACTIVE', 3, 1),
+                (10, 'Jordan', 'Moore', 'M', '1992-04-10', '2026-01-10', 'ACTIVE', 2, 1)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO player_registrations (
+                id, player_id, batch_id, registration_month
+            ) VALUES
+                (108, 9, 11, '2026-02-01'),
+                (109, 10, 11, '2026-02-01')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO teams (
+                id, team_status, formation_date, dissolution_date, generation_run_id
+            ) VALUES
+                (503, 'active', '2026-01-01', NULL, 1)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO team_memberships (
+                id, team_id, player_id, joined_date, left_date
+            ) VALUES
+                (2006, 503, 10, '2026-02-20', NULL)
+            """
+        )
+    )
+    session.commit()
+
+    runner = RealismAuditRunner(session)
+    params = resolve_realism_audit_parameters(session)
+    params["batch_id"] = 12
+    results = runner.run(
+        query_names=["team_assignment_delay_summary"],
+        params=params,
+    )
+
+    assert results[0].rows == (
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "player_count": 8,
+            "ever_teamed_player_count": 7,
+            "still_unteamed_player_count": 1,
+            "avg_days_to_first_team": 2.71,
+            "avg_days_unteamed_including_unresolved": 5.88,
+            "max_days_unteamed_including_unresolved": 28,
         },
     )
 

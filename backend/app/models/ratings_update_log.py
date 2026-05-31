@@ -57,9 +57,6 @@ class RatingsUpdateLog(Base, TimestampMixin):
 
     __table_args__ = (
         Index("idx_ratings_update_log_batch", "batch_id"),
-        Index("idx_ratings_update_log_match", "match_id"),
-        Index("idx_ratings_update_log_player", "player_id"),
-        Index("idx_ratings_update_log_player_date", "player_id", "match_date"),
         CheckConstraint("match_number >= 1", name="chk_rating_log_match_number"),
         CheckConstraint("team_number IN (1, 2)", name="chk_rating_log_team_number"),
         CheckConstraint("games_played >= 1", name="chk_rating_log_games_played"),

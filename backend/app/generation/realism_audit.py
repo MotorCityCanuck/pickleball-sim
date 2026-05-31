@@ -149,24 +149,18 @@ def _post_process_match_type_distribution(
 
 PLAYER_AGE_DISTRIBUTION_SQL = {
     "sqlite": """
-        WITH batch_context AS (
-            SELECT
-                COALESCE(date(b.created_at), b.batch_month) AS age_reference_date
-            FROM monthly_batches b
-            WHERE b.id = :batch_id
-        ),
-        player_ages AS (
+        WITH player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
                         THEN 'under_18'
-                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
                         THEN '18_29'
-                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
                         THEN '30_44'
-                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
                         THEN '45_59'
-                    WHEN CAST((julianday((SELECT age_reference_date FROM batch_context)) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
                         THEN '60_74'
                     ELSE '75_plus'
                 END AS age_bucket
@@ -193,24 +187,18 @@ PLAYER_AGE_DISTRIBUTION_SQL = {
             END
     """,
     "postgresql": """
-        WITH batch_context AS (
-            SELECT
-                COALESCE(CAST(b.created_at AS DATE), b.batch_month) AS age_reference_date
-            FROM monthly_batches b
-            WHERE b.id = :batch_id
-        ),
-        player_ages AS (
+        WITH player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 18
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 18
                         THEN 'under_18'
-                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 30
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 30
                         THEN '18_29'
-                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 45
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 45
                         THEN '30_44'
-                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 60
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 60
                         THEN '45_59'
-                    WHEN CAST(EXTRACT(YEAR FROM age((SELECT age_reference_date FROM batch_context), p.birth_date)) AS INTEGER) < 75
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 75
                         THEN '60_74'
                     ELSE '75_plus'
                 END AS age_bucket
@@ -1222,8 +1210,9 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         scope="batch",
         category="matches",
         description=(
-            "Zero-match active players split by whether they belong to an active "
-            "team in the batch month."
+            "Zero-match active players split by active team-roster status in the "
+            "batch month. In doubles-only simulation, unteamed players are not "
+            "match-eligible, so this is primarily a roster-readiness audit."
         ),
         sql="""
             WITH batch_context AS (
@@ -1297,6 +1286,166 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         """,
         required_params=("batch_id",),
         tags=("matches", "cadence", "players", "teams"),
+    ),
+    RealismAuditQuery(
+        name="team_assignment_delay_summary",
+        scope="batch",
+        category="teams",
+        description=(
+            "Average time from player registration to first team assignment, plus "
+            "the current unteamed inventory as of the audited batch."
+        ),
+        sql={
+            "sqlite": """
+                WITH batch_context AS (
+                    SELECT
+                        b.id AS batch_id,
+                        b.generation_run_id,
+                        b.batch_month
+                    FROM monthly_batches b
+                    WHERE b.id = :batch_id
+                ),
+                player_creation_dates AS (
+                    SELECT
+                        p.id AS player_id,
+                        COALESCE(MIN(pr.registration_month), p.registration_date) AS creation_date
+                    FROM players p
+                    JOIN batch_context bc
+                        ON bc.generation_run_id = p.generation_run_id
+                    LEFT JOIN player_registrations pr
+                        ON pr.player_id = p.id
+                    WHERE p.player_status = 'ACTIVE'
+                        AND p.registration_date <= bc.batch_month
+                    GROUP BY p.id, p.registration_date
+                ),
+                player_first_team_dates AS (
+                    SELECT
+                        pcd.player_id,
+                        pcd.creation_date,
+                        MIN(tm.joined_date) AS first_team_joined_date
+                    FROM player_creation_dates pcd
+                    JOIN batch_context bc
+                        ON 1 = 1
+                    LEFT JOIN team_memberships tm
+                        ON tm.player_id = pcd.player_id
+                        AND tm.joined_date >= pcd.creation_date
+                        AND tm.joined_date <= bc.batch_month
+                    GROUP BY pcd.player_id, pcd.creation_date
+                ),
+                player_delays AS (
+                    SELECT
+                        player_id,
+                        creation_date,
+                        first_team_joined_date,
+                        CAST(
+                            julianday(
+                                COALESCE(first_team_joined_date, (SELECT batch_month FROM batch_context))
+                            ) - julianday(creation_date) AS INTEGER
+                        ) AS days_unteamed_until_resolution_or_batch,
+                        CASE
+                            WHEN first_team_joined_date IS NULL THEN 1
+                            ELSE 0
+                        END AS still_unteamed_as_of_batch
+                    FROM player_first_team_dates
+                )
+                SELECT
+                    :batch_id AS batch_id,
+                    (SELECT batch_month FROM batch_context) AS batch_month,
+                    COUNT(*) AS player_count,
+                    SUM(CASE WHEN first_team_joined_date IS NOT NULL THEN 1 ELSE 0 END) AS ever_teamed_player_count,
+                    SUM(still_unteamed_as_of_batch) AS still_unteamed_player_count,
+                    ROUND(
+                        AVG(
+                            CASE
+                                WHEN first_team_joined_date IS NOT NULL
+                                    THEN days_unteamed_until_resolution_or_batch
+                            END
+                        ),
+                        2
+                    ) AS avg_days_to_first_team,
+                    ROUND(
+                        AVG(days_unteamed_until_resolution_or_batch),
+                        2
+                    ) AS avg_days_unteamed_including_unresolved,
+                    MAX(days_unteamed_until_resolution_or_batch) AS max_days_unteamed_including_unresolved
+                FROM player_delays
+            """,
+            "postgresql": """
+                WITH batch_context AS (
+                    SELECT
+                        b.id AS batch_id,
+                        b.generation_run_id,
+                        b.batch_month
+                    FROM monthly_batches b
+                    WHERE b.id = :batch_id
+                ),
+                player_creation_dates AS (
+                    SELECT
+                        p.id AS player_id,
+                        COALESCE(MIN(pr.registration_month), p.registration_date) AS creation_date
+                    FROM players p
+                    JOIN batch_context bc
+                        ON bc.generation_run_id = p.generation_run_id
+                    LEFT JOIN player_registrations pr
+                        ON pr.player_id = p.id
+                    WHERE p.player_status = 'ACTIVE'
+                        AND p.registration_date <= bc.batch_month
+                    GROUP BY p.id, p.registration_date
+                ),
+                player_first_team_dates AS (
+                    SELECT
+                        pcd.player_id,
+                        pcd.creation_date,
+                        MIN(tm.joined_date) AS first_team_joined_date
+                    FROM player_creation_dates pcd
+                    JOIN batch_context bc
+                        ON 1 = 1
+                    LEFT JOIN team_memberships tm
+                        ON tm.player_id = pcd.player_id
+                        AND tm.joined_date >= pcd.creation_date
+                        AND tm.joined_date <= bc.batch_month
+                    GROUP BY pcd.player_id, pcd.creation_date
+                ),
+                player_delays AS (
+                    SELECT
+                        player_id,
+                        creation_date,
+                        first_team_joined_date,
+                        CAST(
+                            COALESCE(first_team_joined_date, (SELECT batch_month FROM batch_context))
+                            - creation_date AS INTEGER
+                        ) AS days_unteamed_until_resolution_or_batch,
+                        CASE
+                            WHEN first_team_joined_date IS NULL THEN 1
+                            ELSE 0
+                        END AS still_unteamed_as_of_batch
+                    FROM player_first_team_dates
+                )
+                SELECT
+                    :batch_id AS batch_id,
+                    (SELECT batch_month FROM batch_context) AS batch_month,
+                    COUNT(*) AS player_count,
+                    SUM(CASE WHEN first_team_joined_date IS NOT NULL THEN 1 ELSE 0 END) AS ever_teamed_player_count,
+                    SUM(still_unteamed_as_of_batch) AS still_unteamed_player_count,
+                    ROUND(
+                        AVG(
+                            CASE
+                                WHEN first_team_joined_date IS NOT NULL
+                                    THEN days_unteamed_until_resolution_or_batch
+                            END
+                        )::numeric,
+                        2
+                    ) AS avg_days_to_first_team,
+                    ROUND(
+                        AVG(days_unteamed_until_resolution_or_batch)::numeric,
+                        2
+                    ) AS avg_days_unteamed_including_unresolved,
+                    MAX(days_unteamed_until_resolution_or_batch) AS max_days_unteamed_including_unresolved
+                FROM player_delays
+            """,
+        },
+        required_params=("batch_id",),
+        tags=("teams", "players", "registrations"),
     ),
     RealismAuditQuery(
         name="zero_match_players_by_club_affiliation",

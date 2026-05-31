@@ -1904,14 +1904,9 @@ WHERE lifecycle_status = 'valid';
 -- player_rating_history indexes
 CREATE INDEX idx_rating_player_date ON player_rating_history(player_id, rating_date DESC);
 CREATE INDEX idx_rating_batch ON player_rating_history(batch_id);
-CREATE INDEX idx_rating_date_type ON player_rating_history(rating_date, rating_type);
-CREATE INDEX idx_rating_value ON player_rating_history(rating_value);
 
 -- ratings_update_log indexes
 CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log(batch_id);
-CREATE INDEX idx_ratings_update_log_match ON ratings_update_log(match_id);
-CREATE INDEX idx_ratings_update_log_player ON ratings_update_log(player_id);
-CREATE INDEX idx_ratings_update_log_player_date ON ratings_update_log(player_id, match_date);
 
 -- player_assessment_history indexes
 CREATE INDEX idx_assessment_player_date ON player_assessment_history(player_id, assessment_date DESC);
