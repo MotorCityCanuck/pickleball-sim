@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, ContextManager
 
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
@@ -174,8 +174,8 @@ class RatingUpdateGenerator:
                 + ", ".join(str(player_id) for player_id in missing_players[:10])
             )
 
-        history_rows: list[PlayerRatingHistory] = []
-        log_rows: list[RatingsUpdateLog] = []
+        history_rows: list[dict[str, Any]] = []
+        log_rows: list[dict[str, Any]] = []
         match_number = 0
         with _measure_runtime(
             runtime_recorder,
@@ -217,46 +217,46 @@ class RatingUpdateGenerator:
                         state.match_count += 1
 
                         history_rows.append(
-                            PlayerRatingHistory(
-                                player_id=match_player.player_id,
-                                rating_date=match.match_date,
-                                rating_type="match_update",
-                                rating_value=rating_after,
-                                confidence_score=confidence_after,
-                                expected_performance=summary.expected_score_share,
-                                match_count_used=state.match_count,
-                                calculation_version=CALCULATION_VERSION,
-                                batch_id=batch_id,
-                            )
+                            {
+                                "player_id": match_player.player_id,
+                                "rating_date": match.match_date,
+                                "rating_type": "match_update",
+                                "rating_value": rating_after,
+                                "confidence_score": confidence_after,
+                                "expected_performance": summary.expected_score_share,
+                                "match_count_used": state.match_count,
+                                "calculation_version": CALCULATION_VERSION,
+                                "batch_id": batch_id,
+                            }
                         )
                         log_rows.append(
-                            RatingsUpdateLog(
-                                generation_run_id=batch.generation_run_id,
-                                batch_id=batch_id,
-                                match_id=match.id,
-                                match_number=match_number,
-                                match_date=match.match_date,
-                                player_id=match_player.player_id,
-                                match_team_id=match_team.id,
-                                team_number=match_team.team_number,
-                                rating_type="match_update",
-                                rating_before=rating_before,
-                                rating_after=rating_after,
-                                rating_delta=rating_delta,
-                                expected_score_share=summary.expected_score_share,
-                                actual_score_share=summary.actual_score_share,
-                                expected_raw_points=summary.expected_raw_points,
-                                actual_raw_points=summary.actual_raw_points,
-                                games_played=game_count,
-                                games_won=summary.games_won,
-                                match_won=(
+                            {
+                                "generation_run_id": batch.generation_run_id,
+                                "batch_id": batch_id,
+                                "match_id": match.id,
+                                "match_number": match_number,
+                                "match_date": match.match_date,
+                                "player_id": match_player.player_id,
+                                "match_team_id": match_team.id,
+                                "team_number": match_team.team_number,
+                                "rating_type": "match_update",
+                                "rating_before": rating_before,
+                                "rating_after": rating_after,
+                                "rating_delta": rating_delta,
+                                "expected_score_share": summary.expected_score_share,
+                                "actual_score_share": summary.actual_score_share,
+                                "expected_raw_points": summary.expected_raw_points,
+                                "actual_raw_points": summary.actual_raw_points,
+                                "games_played": game_count,
+                                "games_won": summary.games_won,
+                                "match_won": (
                                     1 if match.winning_team_id == match_team.id else 0
                                 ),
-                                k_factor=k_factor,
-                                confidence_before=confidence_before,
-                                confidence_after=confidence_after,
-                                calculation_version=CALCULATION_VERSION,
-                            )
+                                "k_factor": k_factor,
+                                "confidence_before": confidence_before,
+                                "confidence_after": confidence_after,
+                                "calculation_version": CALCULATION_VERSION,
+                            }
                         )
             metric["output_count"] = len(log_rows)
             metric["metadata"]["rating_history_count"] = len(history_rows)
@@ -267,14 +267,12 @@ class RatingUpdateGenerator:
             "stage_rating_history_rows",
             input_count=len(history_rows),
         ) as metric:
-            session.add_all(history_rows)
             metric["output_count"] = len(history_rows)
         with _measure_runtime(
             runtime_recorder,
             "stage_rating_log_rows",
             input_count=len(log_rows),
         ) as metric:
-            session.add_all(log_rows)
             metric["output_count"] = len(log_rows)
         with _measure_runtime(
             runtime_recorder,
@@ -286,6 +284,8 @@ class RatingUpdateGenerator:
             },
         ) as metric:
             batch.rating_update_count = len(history_rows)
+            session.execute(insert(PlayerRatingHistory), history_rows)
+            session.execute(insert(RatingsUpdateLog), log_rows)
             session.flush()
             metric["output_count"] = len(history_rows) + len(log_rows)
         if runtime_recorder is not None:
