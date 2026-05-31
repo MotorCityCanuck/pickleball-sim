@@ -503,10 +503,11 @@ def test_completed_generation_run_reports_total_elapsed_duration(session):
         text(
             """
             INSERT INTO monthly_batches (
-                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+                id, generation_run_id, batch_month, batch_sequence, batch_type, active_player_count_end,
+                match_count_generated, processing_status, completed_at, created_at, updated_at
             ) VALUES
-                (21, 2, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                (22, 2, '2026-02-01', 2, 'historical_initial', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (21, 2, '2026-01-01', 1, 'historical_initial', 1000, 480, 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                (22, 2, '2026-02-01', 2, 'historical_initial', 1020, 520, 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
         )
     )
@@ -543,6 +544,8 @@ def test_completed_generation_run_reports_total_elapsed_duration(session):
     ).get_control_panel_snapshot(session)
 
     assert snapshot.generation_run_summary is not None
+    assert snapshot.generation_run_summary.player_count == 1020
+    assert snapshot.generation_run_summary.match_count == 1000
     assert snapshot.generation_run_summary.completed_stage_count == 2
     assert snapshot.generation_run_summary.total_stage_count == 2
     assert snapshot.generation_run_summary.total_elapsed_label == "1:00:00"

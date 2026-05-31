@@ -424,17 +424,62 @@
     {% include "partials/control_batch_table.html" %}
     {% include "partials/control_progress_bars.html" %}
 
-    {% if generation_complete %}
-        <script>
-            (() => {
-                const runId = "{{ snapshot.generation_run_summary.generation_run_id }}";
-                const key = `generation-complete-notified:${runId}`;
-                if (window.sessionStorage.getItem(key)) {
-                    return;
-                }
-                window.sessionStorage.setItem(key, "1");
-                window.alert("All monthly batches are complete.");
-            })();
-        </script>
-    {% endif %}
+    <script>
+        (() => {
+            const popupState = window.__controlPanelGenerationPopupState || {
+                pendingRunId: null,
+                lastNotifiedCompletionKey: null,
+            };
+            const runId = {% if snapshot.generation_run_summary %}{{ snapshot.generation_run_summary.generation_run_id|tojson }}{% else %}null{% endif %};
+            const isComplete = {{ generation_complete|tojson }};
+            const completedAt = {% if snapshot.generation_run_summary and snapshot.generation_run_summary.completed_at %}{{ snapshot.generation_run_summary.completed_at.isoformat()|tojson }}{% else %}null{% endif %};
+            const runName = {% if snapshot.generation_run_summary %}{{ snapshot.generation_run_summary.generation_name|tojson }}{% else %}null{% endif %};
+            const playerCount = {% if snapshot.generation_run_summary %}{{ snapshot.generation_run_summary.player_count|tojson }}{% else %}null{% endif %};
+            const matchCount = {% if snapshot.generation_run_summary %}{{ snapshot.generation_run_summary.match_count|tojson }}{% else %}null{% endif %};
+            const startedAt = {% if snapshot.generation_run_summary and snapshot.generation_run_summary.started_at %}{{ snapshot.generation_run_summary.started_at.isoformat()|tojson }}{% else %}null{% endif %};
+            const elapsedTime = {% if snapshot.generation_run_summary %}{{ snapshot.generation_run_summary.total_elapsed_label|tojson }}{% else %}null{% endif %};
+            const completionKey = isComplete && runId !== null && completedAt
+                ? `${runId}:${completedAt}`
+                : null;
+
+            if (runId !== null && !isComplete) {
+                popupState.pendingRunId = String(runId);
+            } else if (runId === null) {
+                popupState.pendingRunId = null;
+            }
+
+            const shouldNotify = Boolean(
+                isComplete
+                && runId !== null
+                && popupState.pendingRunId === String(runId)
+                && completionKey !== popupState.lastNotifiedCompletionKey
+            );
+
+            if (shouldNotify) {
+                const formatCount = (value) => (
+                    typeof value === "number" ? new Intl.NumberFormat().format(value) : "n/a"
+                );
+                const formatTimestamp = (value) => {
+                    if (!value) {
+                        return "n/a";
+                    }
+                    return value.replace("T", " ");
+                };
+                const lines = [
+                    "Generation run finished.",
+                    `Run: ${runName || runId}`,
+                    `Players: ${formatCount(playerCount)}`,
+                    `Matches: ${formatCount(matchCount)}`,
+                    `Start time: ${formatTimestamp(startedAt)}`,
+                    `End time: ${formatTimestamp(completedAt)}`,
+                    `Elapsed time: ${elapsedTime || "n/a"}`,
+                ];
+                popupState.lastNotifiedCompletionKey = completionKey;
+                popupState.pendingRunId = null;
+                window.alert(lines.join("\n"));
+            }
+
+            window.__controlPanelGenerationPopupState = popupState;
+        })();
+    </script>
 </section>

@@ -362,10 +362,11 @@ def _seed_completed_generation_state(session_factory):
             text(
                 """
                 INSERT INTO monthly_batches (
-                    id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+                    id, generation_run_id, batch_month, batch_sequence, batch_type, active_player_count_end,
+                    match_count_generated, processing_status, completed_at, created_at, updated_at
                 ) VALUES
-                    (21, 2, '2026-01-01', 1, 'historical_initial', 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    (22, 2, '2026-02-01', 2, 'historical_initial', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (21, 2, '2026-01-01', 1, 'historical_initial', 1000, 480, 'succeeded', '2026-05-20 09:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (22, 2, '2026-02-01', 2, 'historical_initial', 1020, 520, 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -857,10 +858,14 @@ def test_completed_generation_run_renders_completion_popup_script(session_factor
 
     body = orchestration.body.decode()
     assert orchestration.status_code == 200
-    assert "All monthly batches are complete." in body
+    assert "Generation run finished." in body
+    assert 'const isComplete = true;' in body
     assert "2 of 2 stages completed - Duration 1:00:00" in body
-    assert 'const runId = "2"' in body
-    assert "generation-complete-notified:${runId}" in body
+    assert 'const runId = 2;' in body
+    assert 'const playerCount = 1020;' in body
+    assert 'const matchCount = 1000;' in body
+    assert 'popupState.pendingRunId === String(runId)' in body
+    assert '`Elapsed time: ${elapsedTime || "n/a"}`' in body
 
 
 def test_completed_generation_run_marks_student_dataset_as_coming_soon(session_factory):

@@ -143,6 +143,8 @@ class BatchSummary:
     batch_sequence: int
     batch_type: str
     processing_status: str
+    active_player_count_end: int | None
+    match_count_generated: int | None
     started_at: datetime | None
     completed_at: datetime | None
     elapsed_label: str | None
@@ -164,6 +166,8 @@ class GenerationRunSummary:
     simulation_version: str | None
     started_at: datetime | None
     completed_at: datetime | None
+    player_count: int | None
+    match_count: int | None
     batch_count: int
     pending_batch_count: int
     running_batch_count: int
@@ -666,6 +670,8 @@ class ControlPanelQueries:
                 batch_sequence=batch.batch_sequence,
                 batch_type=batch.batch_type,
                 processing_status=batch.processing_status,
+                active_player_count_end=batch.active_player_count_end,
+                match_count_generated=batch.match_count_generated,
                 started_at=batch.started_at,
                 completed_at=batch.completed_at,
                 elapsed_label=_batch_elapsed_label(
@@ -766,6 +772,8 @@ class ControlPanelQueries:
             simulation_version=generation_run.simulation_version,
             started_at=generation_run.started_at,
             completed_at=generation_run.completed_at,
+            player_count=_generation_run_player_count(batch_summaries),
+            match_count=_generation_run_match_count(batch_summaries),
             batch_count=len(batch_summaries),
             pending_batch_count=counts["pending"],
             running_batch_count=counts["running"],
@@ -1256,6 +1264,31 @@ def _count_batch_statuses(batch_summaries: tuple[BatchSummary, ...]) -> dict[str
     for batch in batch_summaries:
         counts[batch.processing_status] = counts.get(batch.processing_status, 0) + 1
     return counts
+
+
+def _generation_run_player_count(
+    batch_summaries: tuple[BatchSummary, ...],
+) -> int | None:
+    latest_player_total: int | None = None
+    latest_batch_sequence: int | None = None
+    for batch in batch_summaries:
+        if batch.active_player_count_end is None:
+            continue
+        if latest_batch_sequence is None or batch.batch_sequence >= latest_batch_sequence:
+            latest_batch_sequence = batch.batch_sequence
+            latest_player_total = batch.active_player_count_end
+    return latest_player_total
+
+
+def _generation_run_match_count(
+    batch_summaries: tuple[BatchSummary, ...],
+) -> int | None:
+    total_matches = sum(batch.match_count_generated or 0 for batch in batch_summaries)
+    if total_matches <= 0 and not any(
+        batch.match_count_generated is not None for batch in batch_summaries
+    ):
+        return None
+    return total_matches
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:
