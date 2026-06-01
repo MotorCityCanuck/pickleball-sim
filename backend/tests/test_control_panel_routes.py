@@ -965,6 +965,7 @@ def test_completed_generation_run_marks_student_dataset_export_ready(session_fac
     assert "Data Export" in body
     assert "Ready to export" in body
     assert "Open Export Configuration" in body
+    assert "Delete the expected release folder first if it already exists" in body
     assert "Generate Student Dataset (coming soon)" not in body
 
 
@@ -999,6 +1000,7 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
     assert "started in background" in body
     assert export_service.calls[0]["generation_run_id"] == 2
     assert export_service.calls[0]["release_name"] == "ui_export"
+    assert export_service.calls[0]["overwrite_existing"] is False
     assert len(background_runner.submissions) == 1
     assert background_runner.submissions[0][2]["job_status_id"] == 91
     assert background_runner.submissions[0][2]["release_name"] == "ui_export"
@@ -1036,6 +1038,36 @@ def test_student_dataset_export_start_route_can_return_orchestration_partial(ses
     assert "Start Student Dataset Export" in body
     assert "ui_export" in body
     assert "started in background" in body
+
+
+def test_student_dataset_export_start_route_passes_delete_confirmation(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    export_service = FakeStudentDatasetExportService()
+    background_runner = FakeBackgroundRunner()
+    try:
+        response = routes["/control/export/student-dataset/start"](
+            request=_request("/control/export/student-dataset/start", method="POST"),
+            generation_run_id=2,
+            initial_history_month_count=2,
+            subsequent_month_count=0,
+            output_root="data/student_dataset_exports",
+            release_name="ui_export",
+            data_quality_level="clean",
+            overwrite_existing="yes",
+            session=session,
+            queries=ControlPanelQueries(),
+            export_service=export_service,
+            background_runner=background_runner,
+        )
+    finally:
+        session.close()
+
+    assert response.status_code == 200
+    assert export_service.calls[0]["overwrite_existing"] is True
+    assert background_runner.submissions[0][2]["overwrite_existing"] is True
 
 
 def test_export_progress_shows_elapsed_time_for_completed_export(session_factory):

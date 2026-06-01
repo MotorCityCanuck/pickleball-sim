@@ -15,6 +15,7 @@ from app.exports.student_dataset import (  # noqa: E402
     ReleaseWindowValidationError,
     STUDENT_TABLE_ORDER,
     StudentDatasetBuildResult,
+    StudentDatasetExportPreflightError,
     build_student_dataset_release,
 )
 from test_student_dataset_queries import (  # noqa: E402
@@ -83,6 +84,60 @@ def test_build_student_dataset_release_rejects_invalid_preflight_before_writing(
         text("SELECT COUNT(*) FROM student_dataset_releases")
     ).scalar_one()
     assert release_count == 0
+
+
+def test_build_student_dataset_release_fails_when_final_folder_exists_without_delete_confirmation(
+    session,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    _seed_succeeded_generation_run(session)
+    final_root = tmp_path / "napa_student_release"
+    final_root.mkdir()
+    (final_root / "keep.txt").write_text("keep", encoding="utf-8")
+
+    with pytest.raises(
+        StudentDatasetExportPreflightError,
+        match="Expected release folder already exists",
+    ):
+        build_student_dataset_release(
+            session=session,
+            generation_run_id=1,
+            initial_history_month_count=2,
+            subsequent_month_count=0,
+            output_root=tmp_path,
+            release_name="napa_student_release",
+            overwrite_existing=False,
+        )
+
+    assert final_root.exists()
+    assert (final_root / "keep.txt").exists()
+
+
+def test_build_student_dataset_release_deletes_existing_final_folder_when_confirmed(
+    session,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    _seed_succeeded_generation_run(session)
+    final_root = tmp_path / "napa_student_release"
+    final_root.mkdir()
+    (final_root / "obsolete.txt").write_text("obsolete", encoding="utf-8")
+
+    result = build_student_dataset_release(
+        session=session,
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        overwrite_existing=True,
+    )
+
+    assert isinstance(result, StudentDatasetBuildResult)
+    assert result.published_family.final_root == final_root
+    assert result.published_family.final_root.exists()
+    assert not (result.published_family.final_root / "obsolete.txt").exists()
 
 
 def _seed_succeeded_generation_run(session, *, status: str = "succeeded") -> None:

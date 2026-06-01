@@ -39,6 +39,7 @@ from .queries import (
 )
 from .service import (
     StudentDatasetBuildResult,
+    StudentDatasetExportPreflightError,
     StudentDatasetExportRegistration,
     StudentDatasetExportService,
     build_student_dataset_release,
@@ -84,6 +85,7 @@ __all__ = [
     "PublishedStudentDatasetRelease",
     "StudentDatasetPublishError",
     "StudentDatasetBuildResult",
+    "StudentDatasetExportPreflightError",
     "StudentDatasetExportRegistration",
     "StudentDatasetExportService",
     "MANIFEST_FILE_NAME",

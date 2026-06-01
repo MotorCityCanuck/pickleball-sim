@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+import shutil
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -40,6 +41,10 @@ class StudentDatasetExportRegistration:
     """Pending student dataset export job created before background execution."""
 
     job_status: JobStatus
+
+
+class StudentDatasetExportPreflightError(ValueError):
+    """Raised when export preflight checks fail before file generation begins."""
 
 
 class StudentDatasetExportService:
@@ -164,11 +169,20 @@ class StudentDatasetExportService:
             )
 
         try:
+            build_parameters = StudentDatasetBuildParameters(
+                generation_run_id=generation_run_id,
+                initial_history_month_count=initial_history_month_count,
+                subsequent_month_count=subsequent_month_count,
+                output_root=output_root,
+                release_name=release_name,
+                data_quality_level=data_quality_level,
+                overwrite_existing=overwrite_existing,
+            )
             self._set_job_status(
                 job_status,
                 status="running",
                 phase="preflight",
-                message="Validating generation run and release window.",
+                message="Validating generation run, release window, and output location.",
                 percent_complete=Decimal("0.00"),
                 started=True,
             )
@@ -178,10 +192,11 @@ class StudentDatasetExportService:
                 stage_name="preflight",
                 status="running",
                 current=0,
-                message="Validating generation run and release window.",
+                message="Validating generation run, release window, and output location.",
             )
             self._checkpoint(session, checkpoint)
 
+            self._prepare_output_root(build_parameters)
             release_windows = plan_release_windows(
                 session=session,
                 generation_run_id=generation_run_id,
@@ -195,16 +210,6 @@ class StudentDatasetExportService:
                 status="succeeded",
                 current=1,
                 message=f"Planned {len(release_windows)} release window(s).",
-            )
-
-            build_parameters = StudentDatasetBuildParameters(
-                generation_run_id=generation_run_id,
-                initial_history_month_count=initial_history_month_count,
-                subsequent_month_count=subsequent_month_count,
-                output_root=output_root,
-                release_name=release_name,
-                data_quality_level=data_quality_level,
-                overwrite_existing=overwrite_existing,
             )
             self._set_job_status(
                 job_status,
@@ -314,6 +319,21 @@ class StudentDatasetExportService:
                 raise ValueError(
                     f"Student dataset export job {job.job_id} is already {job.status}."
                 )
+
+    @staticmethod
+    def _prepare_output_root(build_parameters: StudentDatasetBuildParameters) -> None:
+        final_root = build_parameters.output_root / build_parameters.release_name
+        if not final_root.exists():
+            return
+        if not build_parameters.overwrite_existing:
+            raise StudentDatasetExportPreflightError(
+                "Expected release folder already exists. Enable delete confirmation to remove it before export."
+            )
+        if not final_root.is_dir():
+            raise StudentDatasetExportPreflightError(
+                f"Expected release folder path is not a directory: {final_root}"
+            )
+        shutil.rmtree(final_root)
 
     def _mark_stage(
         self,
@@ -431,6 +451,7 @@ def build_student_dataset_release(
         data_quality_level=data_quality_level,
         overwrite_existing=overwrite_existing,
     )
+    StudentDatasetExportService._prepare_output_root(build_parameters)
     staged_family = write_staged_release_family(
         session=session,
         output_root=output_root,
