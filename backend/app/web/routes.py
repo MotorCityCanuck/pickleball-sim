@@ -7,9 +7,13 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
+from typing import Any
+import zipfile
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.background import BackgroundTask
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -37,6 +41,7 @@ from .job_recovery import clear_stalled_job, dismiss_failed_job
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_CONFIG_SCOPE = "seed"
 
@@ -457,6 +462,47 @@ def build_control_panel_router() -> APIRouter:
             )
         return JSONResponse({"ok": True})
 
+    @router.post("/control/system/open-folder", response_class=JSONResponse)
+    def control_panel_open_folder(path: str = Form(...)) -> JSONResponse:
+        try:
+            resolved_path = _resolve_control_panel_path(path)
+            _open_folder_in_host(resolved_path)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "message": f"Opened folder: {resolved_path}",
+            }
+        )
+
+    @router.post("/control/export/student-dataset/run-qc", response_class=JSONResponse)
+    def control_panel_run_student_dataset_qc(path: str = Form(...)) -> JSONResponse:
+        try:
+            resolved_path = _resolve_control_panel_path(path)
+            result = _run_student_dataset_qc(resolved_path)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        status_code = 200 if result["ok"] else 422
+        return JSONResponse(result, status_code=status_code)
+
+    @router.post("/control/export/student-dataset/download-package", response_class=FileResponse)
+    def control_panel_download_student_dataset_package(path: str = Form(...)) -> FileResponse:
+        resolved_path = _resolve_control_panel_path(path)
+        archive_path = _build_student_dataset_release_package(resolved_path)
+        return FileResponse(
+            archive_path,
+            media_type="application/zip",
+            filename=f"{resolved_path.name}.zip",
+            background=BackgroundTask(_cleanup_temp_file, archive_path),
+        )
+
     @router.post("/control/jobs/clear-stalled", response_class=HTMLResponse)
     def control_panel_clear_stalled_job(
         request: Request,
@@ -651,6 +697,139 @@ def _copy_to_windows_clipboard(value: str) -> None:
         text=True,
         check=True,
     )
+
+
+def _resolve_control_panel_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+def _open_folder_in_host(path: Path) -> None:
+    if not path.is_dir():
+        raise RuntimeError(f"Folder does not exist: {path}")
+    wslpath_exe = shutil.which("wslpath")
+    explorer_exe = shutil.which("explorer.exe")
+    if wslpath_exe is None or explorer_exe is None:
+        raise RuntimeError("wslpath or explorer.exe is not available in this environment.")
+    windows_path = subprocess.run(
+        [wslpath_exe, "-w", str(path)],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    if not windows_path:
+        raise RuntimeError(f"Could not resolve Windows path for {path}")
+    subprocess.run(
+        [explorer_exe, windows_path],
+        check=True,
+    )
+
+
+def _run_student_dataset_qc(path: Path) -> dict[str, Any]:
+    if not path.is_dir():
+        raise RuntimeError(f"Release folder does not exist: {path}")
+    manifest_path = path / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"manifest.json not found in release folder: {path}")
+
+    import duckdb
+
+    sql_script = (
+        PROJECT_ROOT / "scripts" / "student_dataset_duckdb_quality_check.sql"
+    ).read_text(encoding="utf-8")
+    connection = duckdb.connect()
+    escaped_path = str(path).replace("'", "''")
+    connection.execute(f"SET VARIABLE release_dir = '{escaped_path}'")
+    statements = [statement.strip() for statement in sql_script.split(";") if statement.strip()]
+    execution_error: Exception | None = None
+    try:
+        for statement in statements:
+            connection.execute(statement)
+    except Exception as exc:
+        execution_error = exc
+
+    summary_rows = connection.execute(
+        """
+        SELECT status, COUNT(*) AS check_count
+        FROM qc_results
+        GROUP BY status
+        ORDER BY status
+        """
+    ).fetchall()
+    failed_rows = connection.execute(
+        """
+        SELECT check_name, details
+        FROM qc_results
+        WHERE status = 'failed'
+        ORDER BY category, check_name
+        LIMIT 5
+        """
+    ).fetchall()
+    total_checks = sum(int(row[1]) for row in summary_rows)
+    failed_checks = next((int(row[1]) for row in summary_rows if row[0] == "failed"), 0)
+    if execution_error is None and failed_checks == 0:
+        return {
+            "ok": True,
+            "message": (
+                f"QC passed for {path.name}. "
+                f"Executed {total_checks} checks with 0 failures."
+            ),
+            "check_count": total_checks,
+            "failed_check_count": 0,
+        }
+
+    failed_details = [
+        {"check_name": str(row[0]), "details": str(row[1])}
+        for row in failed_rows
+    ]
+    error_message = str(execution_error) if execution_error is not None else "QC failed."
+    return {
+        "ok": False,
+        "error": error_message,
+        "message": (
+            f"QC failed for {path.name}. "
+            f"{failed_checks} of {total_checks} checks failed."
+        ),
+        "check_count": total_checks,
+        "failed_check_count": failed_checks,
+        "failed_checks": failed_details,
+    }
+
+
+def _build_student_dataset_release_package(path: Path) -> Path:
+    if not path.is_dir():
+        raise RuntimeError(f"Release folder does not exist: {path}")
+    manifest_path = path / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"manifest.json not found in release folder: {path}")
+    parquet_files = sorted(path.glob("*.parquet"))
+    if not parquet_files:
+        raise RuntimeError(f"No Parquet files found in release folder: {path}")
+
+    with tempfile.NamedTemporaryFile(
+        prefix=f"{path.name}_",
+        suffix=".zip",
+        delete=False,
+    ) as handle:
+        archive_path = Path(handle.name)
+
+    with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(manifest_path, arcname=f"{path.name}/manifest.json")
+        for parquet_path in parquet_files:
+            archive.write(
+                parquet_path,
+                arcname=f"{path.name}/{parquet_path.name}",
+            )
+    return archive_path
+
+
+def _cleanup_temp_file(path: Path | str) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _config_context(

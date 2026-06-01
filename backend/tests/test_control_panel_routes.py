@@ -1105,6 +1105,53 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
     assert "Duration 7m 30s" in body
 
 
+def test_export_progress_renders_release_actions(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO student_dataset_releases (
+                    id, release_name, release_type, release_month, generation_run_id,
+                    data_quality_level, output_path, status, created_at, updated_at, completed_at
+                ) VALUES (
+                    61, 'student_release_initial_history', 'historical_baseline', '2026-05-01', 2,
+                    'clean', 'data/student_dataset_exports/student_release/student_release_initial_history',
+                    'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO student_dataset_release_files (
+                    release_id, table_name, file_path, row_count, schema_hash, checksum, created_at
+                ) VALUES
+                    (61, 'players', 'data/student_dataset_exports/student_release/student_release_initial_history/players.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/config/export"](
+            request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Download Package" in body
+    assert "Open Folder" in body
+    assert "Run QC" in body
+    assert "Copy Path" in body
+
+
 def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):
     app = create_app()
     routes = _route_map(app)
@@ -1120,6 +1167,123 @@ def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):
     assert response.status_code == 200
     assert response.body.decode() == '{"ok":true}'
     assert captured["value"] == "C:/exports/release"
+
+
+def test_open_folder_route_uses_host_folder_helper(monkeypatch):
+    app = create_app()
+    routes = _route_map(app)
+    captured: dict[str, object] = {}
+
+    def fake_resolve(value: str):
+        captured["raw"] = value
+        return Path("/tmp/student-release")
+
+    def fake_open(path: Path) -> None:
+        captured["path"] = path
+
+    monkeypatch.setattr(routes_module, "_resolve_control_panel_path", fake_resolve)
+    monkeypatch.setattr(routes_module, "_open_folder_in_host", fake_open)
+
+    response = routes["/control/system/open-folder"](path="data/student_dataset_exports/release")
+
+    assert response.status_code == 200
+    assert captured["raw"] == "data/student_dataset_exports/release"
+    assert captured["path"] == Path("/tmp/student-release")
+    assert "Opened folder: /tmp/student-release" in response.body.decode()
+
+
+def test_run_qc_route_returns_qc_summary(monkeypatch):
+    app = create_app()
+    routes = _route_map(app)
+    captured: dict[str, object] = {}
+
+    def fake_resolve(value: str):
+        captured["raw"] = value
+        return Path("/tmp/student-release")
+
+    def fake_qc(path: Path):
+        captured["path"] = path
+        return {
+            "ok": True,
+            "message": "QC passed for student-release. Executed 88 checks with 0 failures.",
+            "check_count": 88,
+            "failed_check_count": 0,
+        }
+
+    monkeypatch.setattr(routes_module, "_resolve_control_panel_path", fake_resolve)
+    monkeypatch.setattr(routes_module, "_run_student_dataset_qc", fake_qc)
+
+    response = routes["/control/export/student-dataset/run-qc"](
+        path="data/student_dataset_exports/release"
+    )
+
+    assert response.status_code == 200
+    assert captured["raw"] == "data/student_dataset_exports/release"
+    assert captured["path"] == Path("/tmp/student-release")
+    assert "QC passed for student-release" in response.body.decode()
+
+
+def test_run_qc_route_returns_422_for_failed_qc(monkeypatch):
+    app = create_app()
+    routes = _route_map(app)
+
+    monkeypatch.setattr(
+        routes_module,
+        "_resolve_control_panel_path",
+        lambda value: Path("/tmp/student-release"),
+    )
+    monkeypatch.setattr(
+        routes_module,
+        "_run_student_dataset_qc",
+        lambda path: {
+            "ok": False,
+            "message": "QC failed for student-release. 2 of 88 checks failed.",
+            "check_count": 88,
+            "failed_check_count": 2,
+            "failed_checks": [
+                {"check_name": "row_count:players", "details": "manifest=10 actual=9"},
+            ],
+        },
+    )
+
+    response = routes["/control/export/student-dataset/run-qc"](
+        path="data/student_dataset_exports/release"
+    )
+
+    assert response.status_code == 422
+    assert "QC failed for student-release" in response.body.decode()
+
+
+def test_download_package_route_returns_zip_attachment(monkeypatch, tmp_path):
+    app = create_app()
+    routes = _route_map(app)
+    archive_path = tmp_path / "student_release_initial_history.zip"
+    archive_path.write_bytes(b"zip-bytes")
+    captured: dict[str, object] = {}
+
+    def fake_resolve(value: str):
+        captured["raw"] = value
+        return Path("/tmp/student_release_initial_history")
+
+    def fake_build(path: Path):
+        captured["path"] = path
+        return archive_path
+
+    monkeypatch.setattr(routes_module, "_resolve_control_panel_path", fake_resolve)
+    monkeypatch.setattr(routes_module, "_build_student_dataset_release_package", fake_build)
+
+    response = routes["/control/export/student-dataset/download-package"](
+        path="data/student_dataset_exports/student_release_initial_history"
+    )
+
+    assert response.status_code == 200
+    assert captured["raw"] == "data/student_dataset_exports/student_release_initial_history"
+    assert captured["path"] == Path("/tmp/student_release_initial_history")
+    assert response.media_type == "application/zip"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="student_release_initial_history.zip"'
+    )
 
 
 def test_clear_stalled_seed_job_route_marks_job_failed(session_factory):
