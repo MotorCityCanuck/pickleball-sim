@@ -711,6 +711,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert 'data-tab-url="/control/partials/config/player-match"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
     assert "window.loadControlPanelTab" in body
+    assert "window.htmx?.process?.(target)" in body
     assert "Read only config" in body
 
 
@@ -867,6 +868,7 @@ def test_completed_generation_run_renders_completion_popup_script(session_factor
     assert 'const playerCount = 1020;' in body
     assert 'const matchCount = 1000;' in body
     assert 'popupState.pendingRunId === String(runId)' in body
+    assert '`Run ID: ${runId}`' in body
     assert '`Elapsed time: ${elapsedTime || "n/a"}`' in body
 
 

@@ -1,6 +1,5 @@
-# Local raw data staging. Keep source datasets out of git.
-data/raw/
-data/realism_audit_snapshots/
+# Local data staging. Keep generated and source datasets out of git.
+/data/
 raw_data/
 
 # Python generated artifacts

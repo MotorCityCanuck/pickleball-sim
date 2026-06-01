@@ -182,6 +182,7 @@
         (() => {
             async function swapTabContent(target, html) {
                 target.innerHTML = html;
+                window.htmx?.process?.(target);
                 const scripts = Array.from(target.querySelectorAll("script"));
                 for (const originalScript of scripts) {
                     const replacement = document.createElement("script");
