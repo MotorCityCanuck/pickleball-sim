@@ -228,12 +228,12 @@ def _clubs_query(context: StudentDatasetQueryContext) -> Select:
         _select_projection(projection)
         .where(
             or_(
+                Club.founding_date.is_(None),
+                Club.founding_date < context.snapshot_end_exclusive,
+            ),
+            or_(
                 and_(
                     Club.generation_run_id == context.generation_run_id,
-                    or_(
-                        Club.founding_date.is_(None),
-                        Club.founding_date < context.snapshot_end_exclusive,
-                    ),
                 ),
                 Club.id.in_(_included_club_ids_from_memberships(context)),
             )
@@ -254,6 +254,7 @@ def _club_memberships_query(context: StudentDatasetQueryContext) -> Select:
         _select_projection(projection, overrides)
         .where(
             ClubMembership.player_id.in_(_included_player_ids(context)),
+            ClubMembership.club_id.in_(_clubs_as_of_snapshot_ids(context)),
             ClubMembership.start_date < context.snapshot_end_exclusive,
             or_(
                 ClubMembership.generation_run_id == context.generation_run_id,
@@ -334,26 +335,26 @@ def _included_club_ids_from_memberships(context: StudentDatasetQueryContext) -> 
     )
 
 
+def _clubs_as_of_snapshot_ids(context: StudentDatasetQueryContext) -> Select:
+    return select(Club.id).where(
+        or_(
+            Club.founding_date.is_(None),
+            Club.founding_date < context.snapshot_end_exclusive,
+        ),
+        or_(
+            Club.generation_run_id == context.generation_run_id,
+            Club.id.in_(_included_club_ids_from_memberships(context)),
+        ),
+    )
+
+
 def _referenced_region_ids(context: StudentDatasetQueryContext) -> Select:
     player_regions = select(Player.home_region_id.label("region_id")).where(
         _included_player_predicate(context),
         Player.home_region_id.is_not(None),
     )
     club_regions = select(Club.region_id.label("region_id")).where(
-        Club.id.in_(
-            select(Club.id).where(
-                or_(
-                    and_(
-                        Club.generation_run_id == context.generation_run_id,
-                        or_(
-                            Club.founding_date.is_(None),
-                            Club.founding_date < context.snapshot_end_exclusive,
-                        ),
-                    ),
-                    Club.id.in_(_included_club_ids_from_memberships(context)),
-                )
-            )
-        )
+        Club.id.in_(_clubs_as_of_snapshot_ids(context))
     )
     registration_regions = select(
         PlayerRegistration.assigned_region_id.label("region_id")

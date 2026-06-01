@@ -21,6 +21,7 @@ from .projection import (
 )
 from .queries import StudentDatasetQueryContext, build_student_dataset_query
 from .release_windows import StudentDatasetReleaseWindow
+from .validation import StudentDatasetValidationResult, validate_staged_release
 
 
 MANIFEST_FILE_NAME = "manifest.json"
@@ -177,6 +178,15 @@ def write_staged_release(
         for table_name in STUDENT_TABLE_ORDER
     )
     manifest_path = release_dir / MANIFEST_FILE_NAME
+    manifest_row_counts = {
+        file_manifest.table_name: file_manifest.row_count
+        for file_manifest in files
+    }
+    validation_result = validate_staged_release(
+        release_dir=release_dir,
+        release_window=release_window,
+        manifest_row_counts=manifest_row_counts,
+    )
     manifest = _release_manifest(
         release_name=concrete_release_name,
         release_window=release_window,
@@ -184,6 +194,7 @@ def write_staged_release(
         files=files,
         release_dir=release_dir,
         compression=compression,
+        validation_result=validation_result,
     )
     _write_json(manifest_path, manifest)
     return StagedStudentDatasetRelease(
@@ -237,6 +248,7 @@ def _release_manifest(
     files: tuple[StudentDatasetFileManifest, ...],
     release_dir: Path,
     compression: str,
+    validation_result: StudentDatasetValidationResult,
 ) -> dict[str, Any]:
     return {
         "release_name": release_name,
@@ -275,11 +287,8 @@ def _release_manifest(
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
-        "validation_status": "not_validated",
-        "validation_summary": {
-            "status": "not_validated",
-            "message": "DuckDB validation is performed in a later export stage.",
-        },
+        "validation_status": validation_result.status,
+        "validation_summary": validation_result.manifest_dict(),
     }
 
 

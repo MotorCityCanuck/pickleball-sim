@@ -25,12 +25,19 @@ from .release_windows import (
     plan_release_windows,
     resolve_release_request,
 )
+from .publisher import (
+    PublishedStudentDatasetFamily,
+    PublishedStudentDatasetRelease,
+    StudentDatasetPublishError,
+    promote_staged_release_family,
+)
 from .queries import (
     StudentDatasetQueryContext,
     StudentDatasetQueryError,
     build_student_dataset_queries,
     build_student_dataset_query,
 )
+from .service import StudentDatasetBuildResult, build_student_dataset_release
 from .writer import (
     MANIFEST_FILE_NAME,
     StagedStudentDatasetFamily,
@@ -41,6 +48,13 @@ from .writer import (
     create_staging_root,
     write_staged_release,
     write_staged_release_family,
+)
+from .validation import (
+    REQUIRED_NON_EMPTY_TABLES,
+    StudentDatasetValidationCheck,
+    StudentDatasetValidationError,
+    StudentDatasetValidationResult,
+    validate_staged_release,
 )
 
 __all__ = [
@@ -61,21 +75,32 @@ __all__ = [
     "StudentDatasetReleaseWindow",
     "StudentDatasetQueryContext",
     "StudentDatasetQueryError",
+    "PublishedStudentDatasetFamily",
+    "PublishedStudentDatasetRelease",
+    "StudentDatasetPublishError",
+    "StudentDatasetBuildResult",
     "MANIFEST_FILE_NAME",
     "StagedStudentDatasetFamily",
     "StagedStudentDatasetRelease",
     "StudentDatasetBuildParameters",
     "StudentDatasetFileManifest",
     "StudentDatasetWriteError",
+    "REQUIRED_NON_EMPTY_TABLES",
+    "StudentDatasetValidationCheck",
+    "StudentDatasetValidationError",
+    "StudentDatasetValidationResult",
     "build_release_windows",
     "build_student_dataset_queries",
     "build_student_dataset_query",
+    "build_student_dataset_release",
     "create_staging_root",
     "first_day_of_next_month",
     "get_projection",
     "plan_release_windows",
+    "promote_staged_release_family",
     "resolve_release_request",
     "validate_projection_contract",
+    "validate_staged_release",
     "write_staged_release",
     "write_staged_release_family",
 ]

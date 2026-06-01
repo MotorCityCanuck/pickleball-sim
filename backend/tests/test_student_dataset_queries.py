@@ -200,7 +200,7 @@ def seed_snapshot_query_data(session):
             )
             VALUES
                 (100, 10, 1, 1, 1400.0),
-                (101, 11, 2, 1, 1500.0),
+                (101, 11, 1, 1, 1400.0),
                 (200, 20, 2, 1, 1500.0)
             """
         )
@@ -265,8 +265,8 @@ def seed_snapshot_query_data(session):
             VALUES
                 (1, 'Early Club', 2, 'private_club', 'competitive', 100,
                  '2025-01-01', 2, 4, 1),
-                (2, 'Referenced Future Club', 2, 'private_club', 'competitive',
-                 100, '2025-04-01', 2, 4, 1),
+                (2, 'Referenced Club', 2, 'private_club', 'competitive',
+                 100, '2025-02-01', 2, 4, 1),
                 (3, 'Future Club', 2, 'private_club', 'competitive', 100,
                  '2025-04-01', 2, 4, 1),
                 (4, 'Other Run Club', 2, 'private_club', 'competitive', 100,
@@ -348,7 +348,8 @@ def test_player_and_match_participation_queries_do_not_export_future_players(
 
     assert [row["id"] for row in rows(session, "players", query_context)] == [1]
     assert [row["id"] for row in rows(session, "match_team_players", query_context)] == [
-        100
+        100,
+        101,
     ]
 
 
@@ -603,6 +604,34 @@ STUDENT_SOURCE_TABLES_SQL = (
         generation_run_id bigint,
         created_at datetime default current_timestamp not null,
         updated_at datetime default current_timestamp not null
+    )
+    """,
+    """
+    CREATE TABLE student_dataset_releases (
+        id integer primary key,
+        release_name varchar(255) not null,
+        release_type varchar(50) not null,
+        release_month date,
+        generation_run_id bigint not null,
+        data_quality_level varchar(50),
+        output_path text not null,
+        status varchar(30) not null default 'pending',
+        created_at datetime default current_timestamp not null,
+        updated_at datetime default current_timestamp not null,
+        completed_at datetime,
+        error_message text
+    )
+    """,
+    """
+    CREATE TABLE student_dataset_release_files (
+        id integer primary key,
+        release_id bigint not null,
+        table_name varchar(255) not null,
+        file_path text not null,
+        row_count bigint,
+        schema_hash varchar(128),
+        checksum varchar(128),
+        created_at datetime default current_timestamp not null
     )
     """,
 )
