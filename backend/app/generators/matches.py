@@ -4,13 +4,13 @@ from __future__ import annotations
 from calendar import monthrange
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import random
 from time import perf_counter
-from typing import Any, Callable, ContextManager
+from typing import Any, Callable, ContextManager, Mapping
 
-from sqlalchemy import func, insert, or_, select
+from sqlalchemy import func, insert, inspect, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
@@ -23,12 +23,124 @@ from app.models import (
     MonthlyBatch,
     Player,
     PlayerRatingHistory,
+    ClubMembership,
+    Region,
     Team,
     TeamMembership,
 )
 
 from .games import games_per_match, generate_match_games
 from .players import WeightedSampler, _decimal
+
+
+@dataclass(frozen=True)
+class AgeAdvantageBiasConfig:
+    """Hidden effective-rating settings for age-based performance effects."""
+
+    enabled: bool
+    max_rating_points: Decimal
+    points_per_year_gap: Decimal
+    close_match_multiplier: Decimal
+    close_match_competitiveness_threshold: Decimal
+
+
+@dataclass(frozen=True)
+class FatigueBiasConfig:
+    """Hidden effective-rating settings for recent workload effects."""
+
+    enabled: bool
+    window_days: int
+    points_per_recent_game: Decimal
+    max_rating_penalty: Decimal
+    recovery_days_threshold: int
+
+
+@dataclass(frozen=True)
+class RegionalStrengthBiasConfig:
+    """Hidden effective-rating settings for regional strength effects."""
+
+    enabled: bool
+    max_rating_points: Decimal
+    strength_map: dict[str, Decimal]
+
+
+@dataclass(frozen=True)
+class PartnershipAffinityBiasConfig:
+    """Hidden effective-rating settings for doubles partnership effects."""
+
+    enabled: bool
+    same_club_bonus: Decimal
+    matches_together_threshold_1: int
+    matches_together_bonus_1: Decimal
+    matches_together_threshold_2: int
+    matches_together_bonus_2: Decimal
+    recent_matches_bonus: Decimal
+    new_team_penalty: Decimal
+    max_rating_points: Decimal
+
+
+@dataclass(frozen=True)
+class ExperienceBiasConfig:
+    """Hidden effective-rating settings for prior match experience effects."""
+
+    enabled: bool
+    max_rating_points: Decimal
+    log_multiplier: Decimal
+    close_match_multiplier: Decimal
+    close_match_competitiveness_threshold: Decimal
+
+
+@dataclass(frozen=True)
+class HiddenPerformanceBiasConfig:
+    """Hidden effective-rating settings resolved from a configuration payload."""
+
+    enabled: bool
+    debug_enabled: bool
+    total_max_rating_points: Decimal
+    age_advantage: AgeAdvantageBiasConfig
+    fatigue: FatigueBiasConfig
+    regional_strength: RegionalStrengthBiasConfig
+    partnership_affinity: PartnershipAffinityBiasConfig
+    experience: ExperienceBiasConfig
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any] | None,
+    ) -> "HiddenPerformanceBiasConfig":
+        defaults = DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"]
+        section = _mapping_or_default(
+            payload,
+            defaults,
+            "hidden_performance_bias",
+        )
+
+        return cls(
+            enabled=_bool_setting(
+                section,
+                defaults,
+                "enabled",
+                "hidden_performance_bias.enabled",
+            ),
+            debug_enabled=_bool_setting(
+                section,
+                defaults,
+                "debug_enabled",
+                "hidden_performance_bias.debug_enabled",
+            ),
+            total_max_rating_points=_nonnegative_decimal(
+                section.get(
+                    "total_max_rating_points",
+                    defaults["total_max_rating_points"],
+                ),
+                "hidden_performance_bias.total_max_rating_points",
+            ),
+            age_advantage=_age_advantage_config(section, defaults),
+            fatigue=_fatigue_config(section, defaults),
+            regional_strength=_regional_strength_config(section, defaults),
+            partnership_affinity=_partnership_affinity_config(section, defaults),
+            experience=_experience_config(section, defaults),
+        )
 
 
 @dataclass(frozen=True)
@@ -55,6 +167,7 @@ class MatchGenerationConfig:
     win_by_two_extension_rate: Decimal
     score_noise_std_dev: Decimal
     upset_probability_boost: Decimal
+    hidden_performance_bias: HiddenPerformanceBiasConfig
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "MatchGenerationConfig":
@@ -191,6 +304,9 @@ class MatchGenerationConfig:
                 games.get("upset_probability_boost", 0.15),
                 "upset_probability_boost",
             ),
+            hidden_performance_bias=HiddenPerformanceBiasConfig.from_payload(
+                source.get("hidden_performance_bias")
+            ),
         )
 
 
@@ -227,6 +343,15 @@ class TeamCandidate:
     region_id: int | None
     average_rating: Decimal
     players: tuple[tuple[int, int, Decimal], ...]
+    avg_age: Decimal | None
+    player_ids: tuple[int, ...]
+    club_ids: frozenset[int]
+    primary_club_ids: frozenset[int]
+    formation_date: date
+    team_total_prior_matches: int
+    recent_game_count: int
+    recent_pair_counts: dict[tuple[int, int], int]
+    region_name: str | None
 
 
 class MatchTeamPool:
@@ -546,7 +671,12 @@ class MatchGenerator:
             "load_active_teams",
             metadata={"batch_month": batch.batch_month},
         ) as metric:
-            teams = _active_teams(session, batch.generation_run_id, batch.batch_month)
+            teams = _active_teams(
+                session,
+                batch.generation_run_id,
+                batch.batch_month,
+                config=config,
+            )
             metric["output_count"] = len(teams)
         if len(teams) < 2:
             raise ValueError("At least two active teams are required")
@@ -1132,6 +1262,7 @@ def _active_teams(
     session: Session,
     generation_run_id: int,
     batch_month: date,
+    config: MatchGenerationConfig | None = None,
 ) -> list[TeamCandidate]:
     latest_ratings = (
         select(
@@ -1160,17 +1291,21 @@ def _active_teams(
     for (
         team_id,
         team_type,
+        formation_date,
         player_id,
         player_position,
         home_region_id,
+        birth_date,
         rating_value,
     ) in session.execute(
         select(
             Team.id,
             Team.team_type,
+            Team.formation_date,
             TeamMembership.player_id,
             TeamMembership.player_position,
             Player.home_region_id,
+            Player.birth_date,
             latest_ratings.c.rating_value,
         )
         .join(TeamMembership, TeamMembership.team_id == Team.id)
@@ -1195,19 +1330,78 @@ def _active_teams(
             {
                 "team_type": team_type,
                 "region_id": home_region_id,
+                "formation_date": formation_date,
+                "birth_dates": [],
                 "players": [],
             },
         )
-        row["players"].append(
-            (player_id, player_position, _decimal(rating_value))
+        row["birth_dates"].append(birth_date)
+        row["players"].append((player_id, player_position, _decimal(rating_value)))
+
+    player_ids_by_team: dict[int, tuple[int, ...]] = {}
+    for team_id, row in team_rows.items():
+        player_ids_by_team[team_id] = tuple(
+            sorted(player_id for player_id, _, _ in row["players"])
         )
+
+    fatigue_window_days = (
+        config.hidden_performance_bias.fatigue.window_days
+        if config is not None
+        else int(
+            DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"]["fatigue"][
+                "window_days"
+            ]
+        )
+    )
+    recent_pair_window_days = (
+        config.rematch_penalty_window_days
+        if config is not None
+        else int(DEFAULT_CONFIG_PAYLOAD["matchmaking"]["rematch_penalty_window_days"])
+    )
+    all_player_ids = {
+        player_id for player_ids in player_ids_by_team.values() for player_id in player_ids
+    }
+    club_ids_by_player, primary_club_ids_by_player = _club_membership_maps(
+        session,
+        player_ids=all_player_ids,
+        batch_month=batch_month,
+    )
+    region_names = _region_name_map(
+        session,
+        region_ids={
+            row["region_id"]
+            for row in team_rows.values()
+            if row["region_id"] is not None
+        },
+    )
+    prior_match_counts, recent_match_counts, recent_game_counts = (
+        _historical_team_activity_maps(
+            session,
+            generation_run_id=generation_run_id,
+            batch_month=batch_month,
+            player_ids_by_team=player_ids_by_team,
+            fatigue_window_days=fatigue_window_days,
+            recent_pair_window_days=recent_pair_window_days,
+        )
+    )
 
     candidates: list[TeamCandidate] = []
     for team_id, row in team_rows.items():
         if len(row["players"]) != 2:
             continue
         players = tuple(sorted(row["players"], key=lambda player: player[1]))
+        player_ids = player_ids_by_team[team_id]
         average_rating = (players[0][2] + players[1][2]) / Decimal("2")
+        club_ids = frozenset(
+            club_id
+            for player_id in player_ids
+            for club_id in club_ids_by_player.get(player_id, frozenset())
+        )
+        primary_club_ids = frozenset(
+            club_id
+            for player_id in player_ids
+            for club_id in primary_club_ids_by_player.get(player_id, frozenset())
+        )
         candidates.append(
             TeamCandidate(
                 id=team_id,
@@ -1215,9 +1409,200 @@ def _active_teams(
                 region_id=row["region_id"],
                 average_rating=average_rating,
                 players=players,
+                avg_age=_average_age(row["birth_dates"], as_of=batch_month),
+                player_ids=player_ids,
+                club_ids=club_ids,
+                primary_club_ids=primary_club_ids,
+                formation_date=row["formation_date"],
+                team_total_prior_matches=prior_match_counts.get(team_id, 0),
+                recent_game_count=recent_game_counts.get(team_id, 0),
+                recent_pair_counts={
+                    player_ids: recent_match_counts.get(team_id, 0),
+                },
+                region_name=region_names.get(row["region_id"]),
             )
         )
     return candidates
+
+
+def _average_age(
+    birth_dates: list[date],
+    *,
+    as_of: date,
+) -> Decimal | None:
+    if not birth_dates:
+        return None
+    total_years = Decimal("0")
+    for birth_date in birth_dates:
+        years = as_of.year - birth_date.year
+        if (as_of.month, as_of.day) < (birth_date.month, birth_date.day):
+            years -= 1
+        total_years += Decimal(years)
+    return (total_years / Decimal(len(birth_dates))).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
+
+
+def _club_membership_maps(
+    session: Session,
+    *,
+    player_ids: set[int],
+    batch_month: date,
+) -> tuple[dict[int, frozenset[int]], dict[int, frozenset[int]]]:
+    if not player_ids or not _table_exists(session, "club_memberships"):
+        return {}, {}
+
+    club_ids_by_player: dict[int, set[int]] = {}
+    primary_club_ids_by_player: dict[int, set[int]] = {}
+    for player_id, club_id, is_primary in session.execute(
+        select(
+            ClubMembership.player_id,
+            ClubMembership.club_id,
+            ClubMembership.is_primary,
+        )
+        .where(
+            ClubMembership.player_id.in_(player_ids),
+            ClubMembership.start_date <= batch_month,
+            or_(
+                ClubMembership.end_date.is_(None),
+                ClubMembership.end_date > batch_month,
+            ),
+        )
+    ):
+        club_ids_by_player.setdefault(player_id, set()).add(club_id)
+        if is_primary:
+            primary_club_ids_by_player.setdefault(player_id, set()).add(club_id)
+
+    return (
+        {
+            player_id: frozenset(club_ids)
+            for player_id, club_ids in club_ids_by_player.items()
+        },
+        {
+            player_id: frozenset(club_ids)
+            for player_id, club_ids in primary_club_ids_by_player.items()
+        },
+    )
+
+
+def _region_name_map(
+    session: Session,
+    *,
+    region_ids: set[int],
+) -> dict[int, str]:
+    if not region_ids or not _table_exists(session, "regions"):
+        return {}
+
+    return {
+        region_id: region_name
+        for region_id, region_name in session.execute(
+            select(Region.id, Region.region_name).where(Region.id.in_(region_ids))
+        )
+    }
+
+
+def _historical_team_activity_maps(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+    player_ids_by_team: dict[int, tuple[int, ...]],
+    fatigue_window_days: int,
+    recent_pair_window_days: int,
+) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
+    if not player_ids_by_team:
+        return {}, {}, {}
+
+    if not all(
+        _table_exists(session, table_name)
+        for table_name in (
+            "monthly_batches",
+            "matches",
+            "match_teams",
+            "match_team_players",
+        )
+    ):
+        return {}, {}, {}
+
+    team_id_by_player_ids = {
+        player_ids: team_id for team_id, player_ids in player_ids_by_team.items()
+    }
+    active_player_ids = {
+        player_id
+        for player_ids in player_ids_by_team.values()
+        for player_id in player_ids
+    }
+    game_counts_by_match = _game_counts_by_match(session)
+    recent_pair_cutoff = batch_month - timedelta(days=recent_pair_window_days)
+    fatigue_cutoff = batch_month - timedelta(days=fatigue_window_days)
+    match_team_rows: dict[int, dict[str, Any]] = {}
+
+    for match_team_id, match_id, match_date, player_id in session.execute(
+        select(
+            MatchTeam.id,
+            Match.id,
+            Match.match_date,
+            MatchTeamPlayer.player_id,
+        )
+        .join(Match, Match.id == MatchTeam.match_id)
+        .join(MonthlyBatch, MonthlyBatch.id == Match.batch_id)
+        .join(MatchTeamPlayer, MatchTeamPlayer.match_team_id == MatchTeam.id)
+        .where(
+            MonthlyBatch.generation_run_id == generation_run_id,
+            Match.match_date < batch_month,
+            MatchTeamPlayer.player_id.in_(active_player_ids),
+        )
+    ):
+        row = match_team_rows.setdefault(
+            match_team_id,
+            {
+                "match_id": match_id,
+                "match_date": match_date,
+                "player_ids": [],
+            },
+        )
+        row["player_ids"].append(player_id)
+
+    prior_match_counts: dict[int, int] = {}
+    recent_match_counts: dict[int, int] = {}
+    recent_game_counts: dict[int, int] = {}
+    for row in match_team_rows.values():
+        player_ids = tuple(sorted(row["player_ids"]))
+        team_id = team_id_by_player_ids.get(player_ids)
+        if team_id is None:
+            continue
+
+        match_date = row["match_date"]
+        prior_match_counts[team_id] = prior_match_counts.get(team_id, 0) + 1
+        if match_date >= recent_pair_cutoff:
+            recent_match_counts[team_id] = recent_match_counts.get(team_id, 0) + 1
+        if match_date >= fatigue_cutoff:
+            recent_game_counts[team_id] = recent_game_counts.get(
+                team_id,
+                0,
+            ) + game_counts_by_match.get(row["match_id"], 0)
+
+    return prior_match_counts, recent_match_counts, recent_game_counts
+
+
+def _game_counts_by_match(session: Session) -> dict[int, int]:
+    if not _table_exists(session, "match_games"):
+        return {}
+
+    return {
+        match_id: game_count
+        for match_id, game_count in session.execute(
+            select(MatchGame.match_id, func.count(MatchGame.id)).group_by(
+                MatchGame.match_id
+            )
+        )
+    }
+
+
+def _table_exists(session: Session, table_name: str) -> bool:
+    bind = session.get_bind()
+    return bind is not None and inspect(bind).has_table(table_name)
 
 
 def _date_sampler(
@@ -1473,6 +1858,298 @@ def _match_game_rows(games: list[MatchGame]) -> list[dict[str, Any]]:
         }
         for game in games
     ]
+
+
+def _age_advantage_config(
+    parent: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+) -> AgeAdvantageBiasConfig:
+    factor_defaults = defaults["age_advantage"]
+    section = _mapping_or_default(
+        parent.get("age_advantage"),
+        factor_defaults,
+        "hidden_performance_bias.age_advantage",
+    )
+    return AgeAdvantageBiasConfig(
+        enabled=_bool_setting(
+            section,
+            factor_defaults,
+            "enabled",
+            "hidden_performance_bias.age_advantage.enabled",
+        ),
+        max_rating_points=_nonnegative_decimal(
+            section.get("max_rating_points", factor_defaults["max_rating_points"]),
+            "hidden_performance_bias.age_advantage.max_rating_points",
+        ),
+        points_per_year_gap=_nonnegative_decimal(
+            section.get("points_per_year_gap", factor_defaults["points_per_year_gap"]),
+            "hidden_performance_bias.age_advantage.points_per_year_gap",
+        ),
+        close_match_multiplier=_nonnegative_decimal(
+            section.get(
+                "close_match_multiplier",
+                factor_defaults["close_match_multiplier"],
+            ),
+            "hidden_performance_bias.age_advantage.close_match_multiplier",
+        ),
+        close_match_competitiveness_threshold=_probability(
+            section.get(
+                "close_match_competitiveness_threshold",
+                factor_defaults["close_match_competitiveness_threshold"],
+            ),
+            (
+                "hidden_performance_bias.age_advantage."
+                "close_match_competitiveness_threshold"
+            ),
+        ),
+    )
+
+
+def _fatigue_config(
+    parent: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+) -> FatigueBiasConfig:
+    factor_defaults = defaults["fatigue"]
+    section = _mapping_or_default(
+        parent.get("fatigue"),
+        factor_defaults,
+        "hidden_performance_bias.fatigue",
+    )
+    return FatigueBiasConfig(
+        enabled=_bool_setting(
+            section,
+            factor_defaults,
+            "enabled",
+            "hidden_performance_bias.fatigue.enabled",
+        ),
+        window_days=_nonnegative_int(
+            section.get("window_days", factor_defaults["window_days"]),
+            "hidden_performance_bias.fatigue.window_days",
+        ),
+        points_per_recent_game=_nonnegative_decimal(
+            section.get(
+                "points_per_recent_game",
+                factor_defaults["points_per_recent_game"],
+            ),
+            "hidden_performance_bias.fatigue.points_per_recent_game",
+        ),
+        max_rating_penalty=_nonnegative_decimal(
+            section.get("max_rating_penalty", factor_defaults["max_rating_penalty"]),
+            "hidden_performance_bias.fatigue.max_rating_penalty",
+        ),
+        recovery_days_threshold=_nonnegative_int(
+            section.get(
+                "recovery_days_threshold",
+                factor_defaults["recovery_days_threshold"],
+            ),
+            "hidden_performance_bias.fatigue.recovery_days_threshold",
+        ),
+    )
+
+
+def _regional_strength_config(
+    parent: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+) -> RegionalStrengthBiasConfig:
+    factor_defaults = defaults["regional_strength"]
+    section = _mapping_or_default(
+        parent.get("regional_strength"),
+        factor_defaults,
+        "hidden_performance_bias.regional_strength",
+    )
+    return RegionalStrengthBiasConfig(
+        enabled=_bool_setting(
+            section,
+            factor_defaults,
+            "enabled",
+            "hidden_performance_bias.regional_strength.enabled",
+        ),
+        max_rating_points=_nonnegative_decimal(
+            section.get("max_rating_points", factor_defaults["max_rating_points"]),
+            "hidden_performance_bias.regional_strength.max_rating_points",
+        ),
+        strength_map=_regional_strength_map(
+            section.get("map", factor_defaults["map"]),
+            "hidden_performance_bias.regional_strength.map",
+        ),
+    )
+
+
+def _partnership_affinity_config(
+    parent: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+) -> PartnershipAffinityBiasConfig:
+    factor_defaults = defaults["partnership_affinity"]
+    section = _mapping_or_default(
+        parent.get("partnership_affinity"),
+        factor_defaults,
+        "hidden_performance_bias.partnership_affinity",
+    )
+    threshold_1 = _nonnegative_int(
+        section.get(
+            "matches_together_threshold_1",
+            factor_defaults["matches_together_threshold_1"],
+        ),
+        "hidden_performance_bias.partnership_affinity.matches_together_threshold_1",
+    )
+    threshold_2 = _nonnegative_int(
+        section.get(
+            "matches_together_threshold_2",
+            factor_defaults["matches_together_threshold_2"],
+        ),
+        "hidden_performance_bias.partnership_affinity.matches_together_threshold_2",
+    )
+    if threshold_2 < threshold_1:
+        raise ValueError(
+            "hidden_performance_bias.partnership_affinity."
+            "matches_together_threshold_2 must be greater than or equal to "
+            "matches_together_threshold_1"
+        )
+
+    return PartnershipAffinityBiasConfig(
+        enabled=_bool_setting(
+            section,
+            factor_defaults,
+            "enabled",
+            "hidden_performance_bias.partnership_affinity.enabled",
+        ),
+        same_club_bonus=_decimal_setting(
+            section,
+            factor_defaults,
+            "same_club_bonus",
+            "hidden_performance_bias.partnership_affinity.same_club_bonus",
+        ),
+        matches_together_threshold_1=threshold_1,
+        matches_together_bonus_1=_decimal_setting(
+            section,
+            factor_defaults,
+            "matches_together_bonus_1",
+            "hidden_performance_bias.partnership_affinity.matches_together_bonus_1",
+        ),
+        matches_together_threshold_2=threshold_2,
+        matches_together_bonus_2=_decimal_setting(
+            section,
+            factor_defaults,
+            "matches_together_bonus_2",
+            "hidden_performance_bias.partnership_affinity.matches_together_bonus_2",
+        ),
+        recent_matches_bonus=_decimal_setting(
+            section,
+            factor_defaults,
+            "recent_matches_bonus",
+            "hidden_performance_bias.partnership_affinity.recent_matches_bonus",
+        ),
+        new_team_penalty=_decimal_setting(
+            section,
+            factor_defaults,
+            "new_team_penalty",
+            "hidden_performance_bias.partnership_affinity.new_team_penalty",
+        ),
+        max_rating_points=_nonnegative_decimal(
+            section.get("max_rating_points", factor_defaults["max_rating_points"]),
+            "hidden_performance_bias.partnership_affinity.max_rating_points",
+        ),
+    )
+
+
+def _experience_config(
+    parent: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+) -> ExperienceBiasConfig:
+    factor_defaults = defaults["experience"]
+    section = _mapping_or_default(
+        parent.get("experience"),
+        factor_defaults,
+        "hidden_performance_bias.experience",
+    )
+    return ExperienceBiasConfig(
+        enabled=_bool_setting(
+            section,
+            factor_defaults,
+            "enabled",
+            "hidden_performance_bias.experience.enabled",
+        ),
+        max_rating_points=_nonnegative_decimal(
+            section.get("max_rating_points", factor_defaults["max_rating_points"]),
+            "hidden_performance_bias.experience.max_rating_points",
+        ),
+        log_multiplier=_nonnegative_decimal(
+            section.get("log_multiplier", factor_defaults["log_multiplier"]),
+            "hidden_performance_bias.experience.log_multiplier",
+        ),
+        close_match_multiplier=_nonnegative_decimal(
+            section.get(
+                "close_match_multiplier",
+                factor_defaults["close_match_multiplier"],
+            ),
+            "hidden_performance_bias.experience.close_match_multiplier",
+        ),
+        close_match_competitiveness_threshold=_probability(
+            section.get(
+                "close_match_competitiveness_threshold",
+                factor_defaults["close_match_competitiveness_threshold"],
+            ),
+            (
+                "hidden_performance_bias.experience."
+                "close_match_competitiveness_threshold"
+            ),
+        ),
+    )
+
+
+def _mapping_or_default(
+    value: Any,
+    default: Mapping[str, Any],
+    name: str,
+) -> Mapping[str, Any]:
+    if value is None:
+        return default
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    return value
+
+
+def _bool_setting(
+    section: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    key: str,
+    name: str,
+) -> bool:
+    value = section.get(key, defaults[key])
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
+def _decimal_setting(
+    section: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    key: str,
+    name: str,
+) -> Decimal:
+    value = section.get(key, defaults[key])
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a number")
+    return _decimal(value)
+
+
+def _regional_strength_map(value: Any, name: str) -> dict[str, Decimal]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+
+    parsed: dict[str, Decimal] = {}
+    for region_name, rating_points in value.items():
+        if not isinstance(region_name, str):
+            raise ValueError(f"{name} must use string region names")
+        if isinstance(rating_points, bool):
+            raise ValueError(f"{name} must contain only numeric rating-point values")
+        try:
+            parsed[region_name] = _decimal(rating_points)
+        except ArithmeticError as exc:
+            raise ValueError(
+                f"{name} must contain only numeric rating-point values"
+            ) from exc
+    return parsed
 
 
 def _weighted_probabilities(

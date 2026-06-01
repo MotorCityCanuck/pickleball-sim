@@ -62,6 +62,8 @@ def test_build_config_editor_sections_attaches_current_values():
     payload["player_generation"]["initial_skill_seed"]["mean"] = 1650
     payload["ratings"]["k_factor_new_player"] = 52.0
     payload["games_and_scores"]["win_by_two_extension_rate"] = 0.2
+    payload["hidden_performance_bias"]["enabled"] = True
+    payload["hidden_performance_bias"]["age_advantage"]["max_rating_points"] = 42
 
     sections = build_config_editor_sections(payload)
     field_states = {
@@ -124,6 +126,18 @@ def test_build_config_editor_sections_attaches_current_values():
         field_states["games_and_scores.win_by_two_extension_rate"].is_default_value
         is False
     )
+    assert field_states["hidden_performance_bias.enabled"].value is True
+    assert field_states["hidden_performance_bias.enabled"].is_default_value is False
+    assert (
+        field_states["hidden_performance_bias.age_advantage.max_rating_points"].value
+        == 42
+    )
+    assert (
+        field_states[
+            "hidden_performance_bias.age_advantage.max_rating_points"
+        ].is_default_value
+        is False
+    )
     assert field_states["club_generation.multi_club_membership_rate"].value == 0.12
     assert (
         field_states["club_generation.multi_club_membership_rate"].is_default_value
@@ -143,3 +157,29 @@ def test_get_payload_value_returns_none_for_missing_path():
 
     assert get_payload_value(payload, "simulation.not_real") is None
     assert get_payload_value(payload, "not_real") is None
+
+
+def test_hidden_performance_bias_defaults_are_editor_scaffolded():
+    payload = default_config_payload()
+    hidden_bias = payload["hidden_performance_bias"]
+
+    assert hidden_bias["enabled"] is False
+    assert hidden_bias["debug_enabled"] is False
+    assert hidden_bias["total_max_rating_points"] == 50
+    assert hidden_bias["age_advantage"]["enabled"] is True
+    assert hidden_bias["fatigue"]["enabled"] is True
+    assert hidden_bias["regional_strength"]["enabled"] is True
+    assert hidden_bias["partnership_affinity"]["enabled"] is True
+    assert hidden_bias["experience"]["enabled"] is True
+
+    sections = build_config_editor_sections(payload)
+    hidden_section = next(
+        section
+        for section in sections
+        if section.definition.id == "synthetic_hidden_performance_bias"
+    )
+    paths = {field.definition.path for field in hidden_section.fields}
+
+    assert "hidden_performance_bias.enabled" in paths
+    assert "hidden_performance_bias.regional_strength.map" in paths
+    assert "hidden_performance_bias.experience.close_match_multiplier" in paths

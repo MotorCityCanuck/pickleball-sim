@@ -19,6 +19,7 @@ from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
 from app.generators.games import expected_scores, game_score  # noqa: E402
+from app.generators.matches import _active_teams  # noqa: E402
 from app.models import (  # noqa: E402
     GenerationRuntimeMetric,
     GenerationRun,
@@ -364,6 +365,7 @@ def add_historical_match(
     match_date,
     first_team_player_ids,
     second_team_player_ids,
+    add_game=False,
 ):
     prior_batch = MonthlyBatch(
         generation_run_id=generation_run_id,
@@ -415,6 +417,18 @@ def add_historical_match(
             for player_id in second_team_player_ids
         ]
     )
+    if add_game:
+        session.add(
+            MatchGame(
+                match_id=match.id,
+                game_number=1,
+                team_one_score=11,
+                team_two_score=8,
+                winning_team_number=1,
+                target_score=11,
+                win_by=2,
+            )
+        )
     session.commit()
 
 
@@ -448,6 +462,44 @@ def test_generate_for_batch_creates_matches_teams_players_and_games(session):
     assert {team.team_number for team in session.query(MatchTeam)} == {1, 2}
     session.refresh(batch)
     assert batch.match_count_generated == 4
+
+
+def test_active_teams_include_hidden_bias_context_fields(session):
+    payload = test_payload()
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=4)
+    batch.batch_month = date(2024, 2, 1)
+    session.commit()
+    add_historical_match(
+        session,
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 1, 1),
+        match_date=date(2024, 1, 25),
+        first_team_player_ids=(1, 2),
+        second_team_player_ids=(3, 4),
+        add_game=True,
+    )
+    config = MatchGenerationConfig.from_payload(payload)
+
+    teams = _active_teams(
+        session,
+        generation_run.id,
+        batch.batch_month,
+        config=config,
+    )
+    first_team = next(team for team in teams if team.player_ids == (1, 2))
+    second_team = next(team for team in teams if team.player_ids == (3, 4))
+
+    assert first_team.avg_age == Decimal("44.00")
+    assert first_team.formation_date == date(2024, 1, 1)
+    assert first_team.club_ids == frozenset()
+    assert first_team.primary_club_ids == frozenset()
+    assert first_team.region_name is None
+    assert first_team.team_total_prior_matches == 1
+    assert first_team.recent_game_count == 1
+    assert first_team.recent_pair_counts == {(1, 2): 1}
+    assert second_team.team_total_prior_matches == 1
+    assert second_team.recent_game_count == 1
+    assert second_team.recent_pair_counts == {(3, 4): 1}
 
 
 def test_generate_for_batch_records_runtime_metrics(session, caplog):
@@ -735,6 +787,125 @@ def test_config_derives_team_match_mean_from_player_mean():
     assert config.monthly_matches_per_active_player_mean == Decimal("7")
     assert config.matches_per_team_per_month == Decimal("3.5")
     assert config.match_volume_noise_factor == Decimal("0")
+
+
+def test_config_parses_hidden_performance_bias_defaults():
+    config = MatchGenerationConfig.from_payload(test_payload())
+    hidden_bias = config.hidden_performance_bias
+
+    assert hidden_bias.enabled is False
+    assert hidden_bias.debug_enabled is False
+    assert hidden_bias.total_max_rating_points == Decimal("50")
+    assert hidden_bias.age_advantage.enabled is True
+    assert hidden_bias.age_advantage.max_rating_points == Decimal("35")
+    assert hidden_bias.fatigue.window_days == 14
+    assert hidden_bias.regional_strength.max_rating_points == Decimal("20")
+    assert hidden_bias.regional_strength.strength_map["Florida"] == Decimal("15")
+    assert hidden_bias.partnership_affinity.new_team_penalty == Decimal("-10")
+    assert hidden_bias.experience.log_multiplier == Decimal("2")
+
+
+def test_config_parses_hidden_performance_bias_overrides():
+    payload = test_payload()
+    payload["hidden_performance_bias"] = {
+        "enabled": True,
+        "debug_enabled": True,
+        "total_max_rating_points": 40,
+        "age_advantage": {
+            "enabled": False,
+            "max_rating_points": 22,
+        },
+        "fatigue": {
+            "enabled": False,
+            "window_days": 7,
+        },
+        "regional_strength": {
+            "enabled": True,
+            "map": {
+                "Napa, CA": 11.5,
+                "Rural": -4,
+            },
+        },
+        "partnership_affinity": {
+            "enabled": False,
+            "matches_together_threshold_1": 5,
+            "matches_together_threshold_2": 12,
+            "new_team_penalty": -6,
+        },
+        "experience": {
+            "enabled": False,
+            "close_match_multiplier": 1.75,
+        },
+    }
+
+    hidden_bias = MatchGenerationConfig.from_payload(payload).hidden_performance_bias
+
+    assert hidden_bias.enabled is True
+    assert hidden_bias.debug_enabled is True
+    assert hidden_bias.total_max_rating_points == Decimal("40")
+    assert hidden_bias.age_advantage.enabled is False
+    assert hidden_bias.age_advantage.max_rating_points == Decimal("22")
+    assert hidden_bias.age_advantage.points_per_year_gap == Decimal("1.25")
+    assert hidden_bias.fatigue.enabled is False
+    assert hidden_bias.fatigue.window_days == 7
+    assert hidden_bias.regional_strength.strength_map == {
+        "Napa, CA": Decimal("11.5"),
+        "Rural": Decimal("-4"),
+    }
+    assert hidden_bias.partnership_affinity.enabled is False
+    assert hidden_bias.partnership_affinity.matches_together_threshold_1 == 5
+    assert hidden_bias.partnership_affinity.matches_together_threshold_2 == 12
+    assert hidden_bias.partnership_affinity.new_team_penalty == Decimal("-6")
+    assert hidden_bias.experience.enabled is False
+    assert hidden_bias.experience.close_match_multiplier == Decimal("1.75")
+
+
+def test_config_validates_hidden_performance_bias_boolean_flags():
+    payload = test_payload()
+    payload["hidden_performance_bias"]["enabled"] = "yes"
+
+    with pytest.raises(ValueError, match="hidden_performance_bias.enabled"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_hidden_performance_bias_caps():
+    payload = test_payload()
+    payload["hidden_performance_bias"]["fatigue"]["max_rating_penalty"] = -1
+
+    with pytest.raises(
+        ValueError,
+        match="hidden_performance_bias.fatigue.max_rating_penalty",
+    ):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_hidden_performance_bias_regional_map():
+    payload = test_payload()
+    payload["hidden_performance_bias"]["regional_strength"]["map"] = {
+        "Florida": True,
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="hidden_performance_bias.regional_strength.map",
+    ):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_hidden_performance_bias_partnership_threshold_order():
+    payload = test_payload()
+    payload["hidden_performance_bias"]["partnership_affinity"][
+        "matches_together_threshold_1"
+    ] = 25
+    payload["hidden_performance_bias"]["partnership_affinity"][
+        "matches_together_threshold_2"
+    ] = 10
+
+    with pytest.raises(
+        ValueError,
+        match="matches_together_threshold_2",
+    ):
+        MatchGenerationConfig.from_payload(payload)
 
 
 def test_config_validates_game_target_score():

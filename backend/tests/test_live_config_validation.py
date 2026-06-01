@@ -49,3 +49,65 @@ def test_validate_live_config_payload_maps_rematch_penalty_window_errors():
     assert len(issues) == 1
     assert issues[0].path == "matchmaking.rematch_penalty_window_days"
     assert issues[0].message == "rematch_penalty_window_days must be a non-negative integer"
+
+
+def test_validate_live_config_payload_accepts_default_hidden_performance_bias():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+
+    issues = validate_live_config_payload(payload)
+
+    assert [
+        issue
+        for issue in issues
+        if issue.path and issue.path.startswith("hidden_performance_bias")
+    ] == []
+
+
+def test_validate_live_config_payload_rejects_invalid_hidden_bias_range():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["hidden_performance_bias"]["age_advantage"][
+        "close_match_competitiveness_threshold"
+    ] = 1.2
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert (
+        issues[0].path
+        == "hidden_performance_bias.age_advantage.close_match_competitiveness_threshold"
+    )
+    assert issues[0].message == "must be between 0 and 1."
+
+
+def test_validate_live_config_payload_rejects_invalid_regional_strength_map():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["hidden_performance_bias"]["regional_strength"]["map"] = {
+        "Florida": "strong",
+    }
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "hidden_performance_bias.regional_strength.map"
+    assert issues[0].message == "must contain only numeric rating-point values."
+
+
+def test_validate_live_config_payload_rejects_descending_partnership_thresholds():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["hidden_performance_bias"]["partnership_affinity"][
+        "matches_together_threshold_1"
+    ] = 20
+    payload["hidden_performance_bias"]["partnership_affinity"][
+        "matches_together_threshold_2"
+    ] = 10
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert (
+        issues[0].path
+        == "hidden_performance_bias.partnership_affinity.matches_together_threshold_2"
+    )
+    assert issues[0].message == (
+        "must be greater than or equal to matches_together_threshold_1."
+    )

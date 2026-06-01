@@ -45,6 +45,7 @@ def validate_live_config_payload(
     issues.extend(_validate_supported_datasets(payload))
     issues.extend(_validate_first_batch_month(payload))
     issues.extend(_validate_historical_batch_count(payload))
+    issues.extend(_validate_hidden_performance_bias(payload))
 
     module_validators = (
         ("club_generation", ClubGenerationConfig.from_payload),
@@ -58,7 +59,10 @@ def validate_live_config_payload(
         try:
             validator(dict(payload))
         except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
-            issues.append(_issue_from_module_error(label, str(exc)))
+            issue = _issue_from_module_error(label, str(exc))
+            if _is_duplicate_hidden_bias_match_issue(label, issue, issues):
+                continue
+            issues.append(issue)
 
     return tuple(issues)
 
@@ -166,9 +170,297 @@ def _validate_historical_batch_count(
     return []
 
 
+def _validate_hidden_performance_bias(
+    payload: Mapping[str, Any],
+) -> list[ConfigValidationIssue]:
+    section = payload.get("hidden_performance_bias")
+    if section is None:
+        return []
+    if not isinstance(section, Mapping):
+        return [
+            ConfigValidationIssue(
+                path="hidden_performance_bias",
+                message="must be an object.",
+            )
+        ]
+
+    issues: list[ConfigValidationIssue] = []
+    issues.extend(_validate_bool(section, "enabled", "hidden_performance_bias.enabled"))
+    issues.extend(
+        _validate_bool(
+            section,
+            "debug_enabled",
+            "hidden_performance_bias.debug_enabled",
+        )
+    )
+    issues.extend(
+        _validate_nonnegative_number(
+            section,
+            "total_max_rating_points",
+            "hidden_performance_bias.total_max_rating_points",
+        )
+    )
+
+    issues.extend(
+        _validate_hidden_factor(
+            section,
+            "age_advantage",
+            numeric_fields=(
+                "max_rating_points",
+                "points_per_year_gap",
+                "close_match_multiplier",
+            ),
+            probability_fields=("close_match_competitiveness_threshold",),
+        )
+    )
+    issues.extend(
+        _validate_hidden_factor(
+            section,
+            "fatigue",
+            numeric_fields=("points_per_recent_game", "max_rating_penalty"),
+            integer_fields=("window_days", "recovery_days_threshold"),
+        )
+    )
+    issues.extend(
+        _validate_hidden_factor(
+            section,
+            "regional_strength",
+            numeric_fields=("max_rating_points",),
+        )
+    )
+    issues.extend(_validate_regional_strength_map(section))
+    issues.extend(
+        _validate_hidden_factor(
+            section,
+            "partnership_affinity",
+            numeric_fields=(
+                "same_club_bonus",
+                "matches_together_bonus_1",
+                "matches_together_bonus_2",
+                "recent_matches_bonus",
+                "new_team_penalty",
+                "max_rating_points",
+            ),
+            integer_fields=(
+                "matches_together_threshold_1",
+                "matches_together_threshold_2",
+            ),
+            signed_numeric_fields=(
+                "same_club_bonus",
+                "matches_together_bonus_1",
+                "matches_together_bonus_2",
+                "recent_matches_bonus",
+                "new_team_penalty",
+            ),
+        )
+    )
+    issues.extend(_validate_partnership_threshold_order(section))
+    issues.extend(
+        _validate_hidden_factor(
+            section,
+            "experience",
+            numeric_fields=(
+                "max_rating_points",
+                "log_multiplier",
+                "close_match_multiplier",
+            ),
+            probability_fields=("close_match_competitiveness_threshold",),
+        )
+    )
+
+    return issues
+
+
+def _validate_hidden_factor(
+    parent: Mapping[str, Any],
+    factor_name: str,
+    *,
+    numeric_fields: tuple[str, ...] = (),
+    integer_fields: tuple[str, ...] = (),
+    probability_fields: tuple[str, ...] = (),
+    signed_numeric_fields: tuple[str, ...] = (),
+) -> list[ConfigValidationIssue]:
+    value = parent.get(factor_name)
+    path_prefix = f"hidden_performance_bias.{factor_name}"
+    if value is None:
+        return []
+    if not isinstance(value, Mapping):
+        return [
+            ConfigValidationIssue(
+                path=path_prefix,
+                message="must be an object.",
+            )
+        ]
+
+    issues: list[ConfigValidationIssue] = []
+    issues.extend(_validate_bool(value, "enabled", f"{path_prefix}.enabled"))
+    signed_fields = set(signed_numeric_fields)
+    for field in numeric_fields:
+        if field in signed_fields:
+            issues.extend(_validate_number(value, field, f"{path_prefix}.{field}"))
+        else:
+            issues.extend(
+                _validate_nonnegative_number(value, field, f"{path_prefix}.{field}")
+            )
+    for field in integer_fields:
+        issues.extend(
+            _validate_nonnegative_integer(value, field, f"{path_prefix}.{field}")
+        )
+    for field in probability_fields:
+        issues.extend(_validate_probability(value, field, f"{path_prefix}.{field}"))
+    return issues
+
+
+def _validate_regional_strength_map(
+    section: Mapping[str, Any],
+) -> list[ConfigValidationIssue]:
+    regional_strength = section.get("regional_strength")
+    if not isinstance(regional_strength, Mapping) or "map" not in regional_strength:
+        return []
+
+    strength_map = regional_strength.get("map")
+    path = "hidden_performance_bias.regional_strength.map"
+    if not isinstance(strength_map, Mapping):
+        return [ConfigValidationIssue(path=path, message="must be an object.")]
+
+    invalid_keys = [key for key in strength_map if not isinstance(key, str)]
+    if invalid_keys:
+        return [
+            ConfigValidationIssue(
+                path=path,
+                message="must use string region names.",
+            )
+        ]
+
+    invalid_values = [
+        key
+        for key, value in strength_map.items()
+        if isinstance(value, bool) or not isinstance(value, (int, float))
+    ]
+    if invalid_values:
+        return [
+            ConfigValidationIssue(
+                path=path,
+                message="must contain only numeric rating-point values.",
+            )
+        ]
+    return []
+
+
+def _validate_partnership_threshold_order(
+    section: Mapping[str, Any],
+) -> list[ConfigValidationIssue]:
+    partnership = section.get("partnership_affinity")
+    if not isinstance(partnership, Mapping):
+        return []
+
+    threshold_1 = partnership.get("matches_together_threshold_1")
+    threshold_2 = partnership.get("matches_together_threshold_2")
+    if (
+        isinstance(threshold_1, int)
+        and not isinstance(threshold_1, bool)
+        and isinstance(threshold_2, int)
+        and not isinstance(threshold_2, bool)
+        and threshold_2 < threshold_1
+    ):
+        return [
+            ConfigValidationIssue(
+                path=(
+                    "hidden_performance_bias.partnership_affinity."
+                    "matches_together_threshold_2"
+                ),
+                message="must be greater than or equal to matches_together_threshold_1.",
+            )
+        ]
+    return []
+
+
+def _validate_bool(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    if key not in mapping or isinstance(mapping.get(key), bool):
+        return []
+    return [ConfigValidationIssue(path=path, message="must be a boolean.")]
+
+
+def _validate_number(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    value = mapping.get(key)
+    if key not in mapping or (
+        not isinstance(value, bool) and isinstance(value, (int, float))
+    ):
+        return []
+    return [ConfigValidationIssue(path=path, message="must be a number.")]
+
+
+def _validate_nonnegative_number(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    issues = _validate_number(mapping, key, path)
+    if issues or key not in mapping:
+        return issues
+    if mapping[key] < 0:
+        return [ConfigValidationIssue(path=path, message="must be non-negative.")]
+    return []
+
+
+def _validate_nonnegative_integer(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    value = mapping.get(key)
+    if key not in mapping:
+        return []
+    if isinstance(value, bool) or not isinstance(value, int):
+        return [ConfigValidationIssue(path=path, message="must be an integer.")]
+    if value < 0:
+        return [ConfigValidationIssue(path=path, message="must be non-negative.")]
+    return []
+
+
+def _validate_probability(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    value = mapping.get(key)
+    if key not in mapping:
+        return []
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return [ConfigValidationIssue(path=path, message="must be a number.")]
+    if value < 0 or value > 1:
+        return [ConfigValidationIssue(path=path, message="must be between 0 and 1.")]
+    return []
+
+
 def _issue_from_module_error(label: str, message: str) -> ConfigValidationIssue:
     path = _field_path_for_module_error(label, message)
     return ConfigValidationIssue(path=path, message=message)
+
+
+def _is_duplicate_hidden_bias_match_issue(
+    label: str,
+    issue: ConfigValidationIssue,
+    existing_issues: list[ConfigValidationIssue],
+) -> bool:
+    if label != "matches":
+        return False
+    has_hidden_issue = any(
+        existing.path is not None
+        and existing.path.startswith("hidden_performance_bias")
+        for existing in existing_issues
+    )
+    if not has_hidden_issue:
+        return False
+    return issue.path is None or issue.path.startswith("hidden_performance_bias")
 
 
 def _field_path_for_module_error(label: str, message: str) -> str | None:
