@@ -27,6 +27,8 @@ from app.models import (
     MonthlyBatch,
     RawSeedLoadRun,
     Region,
+    StudentDatasetRelease,
+    StudentDatasetReleaseFile,
 )
 
 
@@ -92,6 +94,7 @@ class JobSummary:
     current_message: str | None
     started_at: datetime | None
     completed_at: datetime | None
+    elapsed_label: str | None
     error_message: str | None
     created_at: datetime | None
 
@@ -181,6 +184,33 @@ class GenerationRunSummary:
 
 
 @dataclass(frozen=True)
+class StudentDatasetReleaseSummary:
+    """UI-ready student dataset release summary."""
+
+    release_id: int
+    release_name: str
+    release_type: str
+    release_month: date | None
+    generation_run_id: int
+    data_quality_level: str | None
+    output_path: str
+    status: str
+    completed_at: datetime | None
+    file_count: int
+    total_row_count: int
+
+
+@dataclass(frozen=True)
+class StudentDatasetExportSummary:
+    """UI-ready student dataset export state."""
+
+    latest_export_job: JobSummary | None
+    latest_export_job_is_active: bool
+    latest_export_stage_progress: tuple[StageProgressSummary, ...]
+    latest_releases: tuple[StudentDatasetReleaseSummary, ...]
+
+
+@dataclass(frozen=True)
 class AllowedActions:
     """Current operator actions and the blockers that disable them."""
 
@@ -218,6 +248,7 @@ class ControlPanelSnapshot:
     seed_data_summary: SeedDataSummary
     generation_run_summary: GenerationRunSummary | None
     batch_summaries: tuple[BatchSummary, ...]
+    student_dataset_export_summary: StudentDatasetExportSummary
     active_job_summary: JobSummary | None
     active_job_stage_progress: tuple[StageProgressSummary, ...]
     allowed_actions: AllowedActions
@@ -239,6 +270,7 @@ class ControlPanelQueries:
     def get_control_panel_snapshot(self, session: Session) -> ControlPanelSnapshot:
         config_summary, config_warning = self._get_current_valid_config_summary(session)
         seed_summary = self.get_seed_data_summary(session)
+        export_summary = self.get_student_dataset_export_summary(session)
         generation_run = self.get_active_generation_run(session)
         run_summary = None
         batch_summaries: tuple[BatchSummary, ...] = ()
@@ -332,6 +364,7 @@ class ControlPanelQueries:
         allowed_actions = self._build_allowed_actions(
             config_summary=config_summary,
             seed_summary=seed_summary,
+            export_summary=export_summary,
             generation_run=generation_run,
             batch_summaries=batch_summaries,
             active_job=active_job,
@@ -344,6 +377,7 @@ class ControlPanelQueries:
             batch_summaries=batch_summaries,
             active_job_summary=active_job,
             active_job_stage_progress=active_job_stage_progress,
+            student_dataset_export_summary=export_summary,
             allowed_actions=allowed_actions,
             warnings=tuple(dict.fromkeys(warnings)),
         )
@@ -415,6 +449,26 @@ class ControlPanelQueries:
             )
         )
 
+    def get_student_dataset_export_job(self, session: Session) -> JobSummary | None:
+        job_sort_timestamp = func.coalesce(
+            JobStatus.started_at,
+            JobStatus.completed_at,
+            JobStatus.created_at,
+        )
+        return _job_summary(
+            session.scalar(
+                select(JobStatus)
+                .where(JobStatus.job_type == "student_dataset_export")
+                .order_by(
+                    case((JobStatus.status == "running", 0), else_=1),
+                    case((JobStatus.status == "pending", 1), else_=2),
+                    job_sort_timestamp.desc(),
+                    JobStatus.id.desc(),
+                )
+                .limit(1)
+            )
+        )
+
     def get_seed_job_progress(
         self,
         session: Session,
@@ -471,6 +525,18 @@ class ControlPanelQueries:
             for row in rows
         )
 
+    def get_student_dataset_export_progress(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+    ) -> tuple[StageProgressSummary, ...]:
+        return self._job_stage_progress(
+            session,
+            job_status_id=job_status_id,
+            generation_run_id=None,
+        )
+
     def get_generation_job_stage_progress(
         self,
         session: Session,
@@ -478,14 +544,33 @@ class ControlPanelQueries:
         job_status_id: int,
         generation_run_id: int,
     ) -> tuple[StageProgressSummary, ...]:
+        return self._job_stage_progress(
+            session,
+            job_status_id=job_status_id,
+            generation_run_id=generation_run_id,
+        )
+
+    def _job_stage_progress(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        generation_run_id: int | None,
+    ) -> tuple[StageProgressSummary, ...]:
+        filters = [JobStageProgress.job_status_id == job_status_id]
+        if generation_run_id is None:
+            filters.append(JobStageProgress.batch_id.is_(None))
+        else:
+            filters.extend(
+                [
+                    JobStageProgress.generation_run_id == generation_run_id,
+                    JobStageProgress.batch_id.is_(None),
+                ]
+            )
         rows = list(
             session.scalars(
                 select(JobStageProgress)
-                .where(
-                    JobStageProgress.job_status_id == job_status_id,
-                    JobStageProgress.generation_run_id == generation_run_id,
-                    JobStageProgress.batch_id.is_(None),
-                )
+                .where(*filters)
                 .order_by(
                     JobStageProgress.stage_sequence.asc(),
                     JobStageProgress.id.asc(),
@@ -527,6 +612,56 @@ class ControlPanelQueries:
                 ),
             )
             for row in rows
+        )
+
+    def get_student_dataset_export_summary(
+        self,
+        session: Session,
+    ) -> StudentDatasetExportSummary:
+        latest_job = self.get_student_dataset_export_job(session)
+        stage_progress = (
+            self.get_student_dataset_export_progress(
+                session,
+                job_status_id=latest_job.job_status_id,
+            )
+            if latest_job is not None
+            else ()
+        )
+        latest_job_is_active = self._job_is_actively_processing(
+            latest_job,
+            stage_progress=stage_progress,
+        )
+        release_rows = list(
+            session.scalars(
+                select(StudentDatasetRelease)
+                .order_by(
+                    StudentDatasetRelease.created_at.desc(),
+                    StudentDatasetRelease.id.desc(),
+                )
+                .limit(5)
+            )
+        )
+        file_counts = _student_release_file_counts(session, release_rows)
+        return StudentDatasetExportSummary(
+            latest_export_job=latest_job,
+            latest_export_job_is_active=latest_job_is_active,
+            latest_export_stage_progress=stage_progress,
+            latest_releases=tuple(
+                StudentDatasetReleaseSummary(
+                    release_id=release.id,
+                    release_name=release.release_name,
+                    release_type=release.release_type,
+                    release_month=release.release_month,
+                    generation_run_id=release.generation_run_id,
+                    data_quality_level=release.data_quality_level,
+                    output_path=release.output_path,
+                    status=release.status,
+                    completed_at=release.completed_at,
+                    file_count=file_counts.get(release.id, (0, 0))[0],
+                    total_row_count=file_counts.get(release.id, (0, 0))[1],
+                )
+                for release in release_rows
+            ),
         )
 
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
@@ -804,6 +939,7 @@ class ControlPanelQueries:
         *,
         config_summary: ConfigSummary | None,
         seed_summary: SeedDataSummary,
+        export_summary: StudentDatasetExportSummary,
         generation_run: GenerationRun | None,
         batch_summaries: tuple[BatchSummary, ...],
         active_job: JobSummary | None,
@@ -824,6 +960,8 @@ class ControlPanelQueries:
             seed_blockers.append("Another write-heavy generation job is still running.")
         if seed_summary.latest_seed_job_is_active:
             seed_blockers.append("A seed preparation job is already running.")
+        if export_summary.latest_export_job_is_active:
+            seed_blockers.append("Student dataset export must finish before seed preparation can start.")
 
         start_blockers: list[str] = []
         if config_summary is None:
@@ -836,6 +974,8 @@ class ControlPanelQueries:
             start_blockers.append("A generation job is still running.")
         if seed_summary.latest_seed_job_is_active:
             start_blockers.append("Seed preparation must finish before synthetic generation can start.")
+        if export_summary.latest_export_job_is_active:
+            start_blockers.append("Student dataset export must finish before synthetic generation can start.")
 
         student_blockers: list[str] = []
         if generation_run is None:
@@ -850,6 +990,8 @@ class ControlPanelQueries:
             student_blockers.append("No write-heavy job can be active during student dataset generation.")
         if seed_summary.latest_seed_job_is_active:
             student_blockers.append("No seed preparation job can be active during student dataset generation.")
+        if export_summary.latest_export_job_is_active:
+            student_blockers.append("A student dataset export job is already running.")
 
         can_edit_config = (
             not generation_run_active
@@ -1069,6 +1211,10 @@ def _job_summary(job: JobStatus | None) -> JobSummary | None:
         current_message=job.current_message,
         started_at=job.started_at,
         completed_at=job.completed_at,
+        elapsed_label=_format_elapsed_duration(
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        ),
         error_message=job.error_message,
         created_at=job.created_at,
     )
@@ -1289,6 +1435,28 @@ def _generation_run_match_count(
     ):
         return None
     return total_matches
+
+
+def _student_release_file_counts(
+    session: Session,
+    releases: list[StudentDatasetRelease],
+) -> dict[int, tuple[int, int]]:
+    if not releases:
+        return {}
+    release_ids = [release.id for release in releases]
+    rows = session.execute(
+        select(
+            StudentDatasetReleaseFile.release_id,
+            func.count(StudentDatasetReleaseFile.id),
+            func.coalesce(func.sum(StudentDatasetReleaseFile.row_count), 0),
+        )
+        .where(StudentDatasetReleaseFile.release_id.in_(release_ids))
+        .group_by(StudentDatasetReleaseFile.release_id)
+    ).all()
+    return {
+        int(release_id): (int(file_count or 0), int(row_count or 0))
+        for release_id, file_count, row_count in rows
+    }
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:

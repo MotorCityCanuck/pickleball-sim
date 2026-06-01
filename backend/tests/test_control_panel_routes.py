@@ -18,6 +18,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.core import ConfigurationLifecycleService  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.web.routes import get_configuration_lifecycle  # noqa: E402
+import app.web.routes as routes_module  # noqa: E402
 from app.web.control_panel_queries import ControlPanelQueries  # noqa: E402
 
 
@@ -243,6 +244,40 @@ def session_factory():
                 foreign key(job_status_id) references job_status(id),
                 foreign key(generation_run_id) references generation_runs(id),
                 foreign key(batch_id) references monthly_batches(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_releases (
+                id integer primary key autoincrement,
+                release_name varchar(255) not null,
+                release_type varchar(50) not null,
+                release_month date,
+                generation_run_id bigint not null,
+                data_quality_level varchar(50),
+                output_path text not null,
+                status varchar(30) not null default 'pending',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                completed_at datetime,
+                error_message text,
+                foreign key(generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_release_files (
+                id integer primary key autoincrement,
+                release_id bigint not null,
+                table_name varchar(255) not null,
+                file_path text not null,
+                row_count bigint,
+                schema_hash varchar(128),
+                checksum varchar(128),
+                created_at datetime default current_timestamp not null,
+                foreign key(release_id) references student_dataset_releases(id)
             )
             """
         )
@@ -673,6 +708,25 @@ class FakeSeedRefreshService:
         return kwargs
 
 
+class FakeStudentDatasetExportService:
+    def __init__(self, *, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    def register_export_job(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise ValueError(self.error)
+        return type(
+            "Registration",
+            (),
+            {"job_status": type("JobStatus", (), {"id": 91})()},
+        )()
+
+    def execute_registered_export_in_background(self, **kwargs):
+        return kwargs
+
+
 class FakeBackgroundRunner:
     def __init__(self) -> None:
         self.submissions: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
@@ -702,13 +756,16 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config" in routes
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
+    assert "/control/partials/config/export" in routes
     assert "/control/partials/overall-progress" in routes
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
+    assert "Export Configuration" in body
     assert "Orchestration" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
+    assert 'data-tab-url="/control/partials/config/export"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
     assert "window.loadControlPanelTab" in body
     assert "window.htmx?.process?.(target)" in body
@@ -746,6 +803,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
             session=session,
             queries=ControlPanelQueries(),
         )
+        export_config = routes["/control/partials/config/export"](
+            request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
     finally:
         session.close()
 
@@ -773,8 +835,13 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "matches" in progress.body.decode()
 
     assert orchestration.status_code == 200
+    assert "Raw Ingest &amp; Normalization" in orchestration.body.decode()
+    assert "Player &amp; Match Generation" in orchestration.body.decode()
+    assert "Data Export" in orchestration.body.decode()
+    assert "<details open" not in orchestration.body.decode()
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
+    assert "Start Student Dataset Export" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
     assert "Estimated Dataset Size" in orchestration.body.decode()
     assert "Estimated Players" in orchestration.body.decode()
@@ -794,6 +861,13 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
     assert 'hx-trigger="every 10s"' in orchestration.body.decode()
+
+    assert export_config.status_code == 200
+    assert "Export Configuration" in export_config.body.decode()
+    assert "Student dataset export" in export_config.body.decode()
+    assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
+    assert "Start Student Dataset Export" in export_config.body.decode()
+    assert "copyControlPanelText" in export_config.body.decode()
 
 
 def test_orchestration_partial_renders_raw_load_duration_column(session_factory):
@@ -872,7 +946,7 @@ def test_completed_generation_run_renders_completion_popup_script(session_factor
     assert '`Elapsed time: ${elapsedTime || "n/a"}`' in body
 
 
-def test_completed_generation_run_marks_student_dataset_as_coming_soon(session_factory):
+def test_completed_generation_run_marks_student_dataset_export_ready(session_factory):
     _seed_completed_generation_state(session_factory)
     app = create_app()
     routes = _route_map(app)
@@ -888,10 +962,132 @@ def test_completed_generation_run_marks_student_dataset_as_coming_soon(session_f
 
     body = orchestration.body.decode()
     assert orchestration.status_code == 200
-    assert "Student Dataset Release" in body
-    assert "Prereqs met" in body
-    assert "Generation export is not wired into the control panel yet." in body
-    assert "Generate Student Dataset (coming soon)" in body
+    assert "Data Export" in body
+    assert "Ready to export" in body
+    assert "Open Export Configuration" in body
+    assert "Generate Student Dataset (coming soon)" not in body
+
+
+def test_student_dataset_export_start_route_queues_background_job(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    export_service = FakeStudentDatasetExportService()
+    background_runner = FakeBackgroundRunner()
+    try:
+        response = routes["/control/export/student-dataset/start"](
+            request=_request("/control/export/student-dataset/start", method="POST"),
+            generation_run_id=2,
+            initial_history_month_count=2,
+            subsequent_month_count=0,
+            output_root="data/student_dataset_exports",
+            release_name="ui_export",
+            data_quality_level="clean",
+            overwrite_existing=None,
+            session=session,
+            queries=ControlPanelQueries(),
+            export_service=export_service,
+            background_runner=background_runner,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "ui_export" in body
+    assert "started in background" in body
+    assert export_service.calls[0]["generation_run_id"] == 2
+    assert export_service.calls[0]["release_name"] == "ui_export"
+    assert len(background_runner.submissions) == 1
+    assert background_runner.submissions[0][2]["job_status_id"] == 91
+    assert background_runner.submissions[0][2]["release_name"] == "ui_export"
+
+
+def test_student_dataset_export_start_route_can_return_orchestration_partial(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    export_service = FakeStudentDatasetExportService()
+    background_runner = FakeBackgroundRunner()
+    try:
+        response = routes["/control/export/student-dataset/start"](
+            request=_request("/control/export/student-dataset/start", method="POST"),
+            generation_run_id=2,
+            initial_history_month_count=2,
+            subsequent_month_count=0,
+            output_root="data/student_dataset_exports",
+            release_name="ui_export",
+            data_quality_level="clean",
+            overwrite_existing=None,
+            return_target="orchestration",
+            session=session,
+            queries=ControlPanelQueries(),
+            export_service=export_service,
+            background_runner=background_runner,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Data Export" in body
+    assert "Start Student Dataset Export" in body
+    assert "ui_export" in body
+    assert "started in background" in body
+
+
+def test_export_progress_shows_elapsed_time_for_completed_export(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    81, 'student_dataset_export', 'student-dataset-export-81', 'succeeded', 'completed', 100.00,
+                    'Student dataset export completed successfully.',
+                    '2026-05-20 10:00:00', '2026-05-20 10:07:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/config/export"](
+            request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Student dataset export completed successfully." in body
+    assert "Duration 7m 30s" in body
+
+
+def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):
+    app = create_app()
+    routes = _route_map(app)
+    captured: dict[str, str] = {}
+
+    def fake_copy(value: str) -> None:
+        captured["value"] = value
+
+    monkeypatch.setattr(routes_module, "_copy_to_windows_clipboard", fake_copy)
+
+    response = routes["/control/system/copy-path"](path="C:/exports/release")
+
+    assert response.status_code == 200
+    assert response.body.decode() == '{"ok":true}'
+    assert captured["value"] == "C:/exports/release"
 
 
 def test_clear_stalled_seed_job_route_marks_job_failed(session_factory):

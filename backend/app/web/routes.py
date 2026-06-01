@@ -5,9 +5,11 @@ from functools import lru_cache
 import logging
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,7 @@ from app.core import (
     diff_config_payloads,
 )
 from app.db.session import get_session
+from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
 
 from .control_panel_queries import (
@@ -62,6 +65,11 @@ def get_generation_run_service() -> GenerationRunService:
 def get_seed_refresh_service() -> SeedRefreshService:
     """Return the seed refresh service."""
     return SeedRefreshService()
+
+
+def get_student_dataset_export_service() -> StudentDatasetExportService:
+    """Return the student dataset export service."""
+    return StudentDatasetExportService()
 
 
 def get_background_job_runner() -> BackgroundJobRunner:
@@ -127,6 +135,24 @@ def build_control_panel_router() -> APIRouter:
             queries=queries,
             templates=templates,
             active_config_scope="synthetic",
+        )
+
+    @router.get("/control/partials/config/export", response_class=HTMLResponse)
+    def control_panel_export_config_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_export_config_tab.html",
+            {
+                "snapshot": snapshot,
+                "export_config": _default_export_config(snapshot),
+                "export_launch_message": None,
+                "export_launch_error": None,
+            },
         )
 
     @router.post("/control/config/validate", response_class=HTMLResponse)
@@ -207,13 +233,7 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_orchestration_tab.html",
-            {
-                "snapshot": snapshot,
-                "seed_launch_message": None,
-                "seed_launch_error": None,
-                "launch_message": None,
-                "launch_error": None,
-            },
+            _build_orchestration_template_context(snapshot),
         )
 
     @router.post("/control/seed/load", response_class=HTMLResponse)
@@ -329,14 +349,113 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_orchestration_tab.html",
+            _build_orchestration_template_context(
+                snapshot,
+                launch_message=launch_message,
+                launch_error=launch_error,
+            ),
+        )
+
+    @router.post("/control/export/student-dataset/start", response_class=HTMLResponse)
+    def control_panel_student_dataset_export_start(
+        request: Request,
+        generation_run_id: int = Form(...),
+        initial_history_month_count: int = Form(...),
+        subsequent_month_count: int = Form(...),
+        output_root: str = Form(...),
+        release_name: str = Form(...),
+        data_quality_level: str = Form("clean"),
+        overwrite_existing: str | None = Form(None),
+        return_target: str = Form("export_config"),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        export_service: StudentDatasetExportService = Depends(get_student_dataset_export_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        export_launch_message = None
+        export_launch_error = None
+        export_config = {
+            "generation_run_id": generation_run_id,
+            "initial_history_month_count": initial_history_month_count,
+            "subsequent_month_count": subsequent_month_count,
+            "output_root": output_root,
+            "release_name": release_name,
+            "data_quality_level": data_quality_level,
+            "overwrite_existing": overwrite_existing == "yes",
+        }
+
+        if not snapshot.allowed_actions.can_generate_student_dataset:
+            export_launch_error = (
+                snapshot.allowed_actions.student_dataset_blockers[0]
+                if snapshot.allowed_actions.student_dataset_blockers
+                else "Student dataset export cannot be started."
+            )
+        else:
+            try:
+                registration = export_service.register_export_job(
+                    session=session,
+                    generation_run_id=generation_run_id,
+                    initial_history_month_count=initial_history_month_count,
+                    subsequent_month_count=subsequent_month_count,
+                    output_root=Path(output_root),
+                    release_name=release_name.strip(),
+                    data_quality_level=data_quality_level.strip() or "clean",
+                    overwrite_existing=overwrite_existing == "yes",
+                )
+                session.commit()
+                background_runner.submit(
+                    export_service.execute_registered_export_in_background,
+                    job_status_id=registration.job_status.id,
+                    generation_run_id=generation_run_id,
+                    initial_history_month_count=initial_history_month_count,
+                    subsequent_month_count=subsequent_month_count,
+                    output_root=output_root,
+                    release_name=release_name.strip(),
+                    data_quality_level=data_quality_level.strip() or "clean",
+                    overwrite_existing=overwrite_existing == "yes",
+                )
+                snapshot = queries.get_control_panel_snapshot(session)
+                export_launch_message = (
+                    f"Student dataset export '{release_name.strip()}' started in background."
+                )
+            except Exception as exc:
+                session.rollback()
+                snapshot = queries.get_control_panel_snapshot(session)
+                export_launch_error = str(exc)
+
+        if return_target == "orchestration":
+            return templates.TemplateResponse(
+                request,
+                "partials/control_orchestration_tab.html",
+                _build_orchestration_template_context(
+                    snapshot,
+                    export_launch_message=export_launch_message,
+                    export_launch_error=export_launch_error,
+                    export_config=export_config,
+                ),
+            )
+        return templates.TemplateResponse(
+            request,
+            "partials/control_export_config_tab.html",
             {
                 "snapshot": snapshot,
-                "seed_launch_message": None,
-                "seed_launch_error": None,
-                "launch_message": launch_message,
-                "launch_error": launch_error,
+                "export_config": export_config,
+                "export_launch_message": export_launch_message,
+                "export_launch_error": export_launch_error,
             },
         )
+
+    @router.post("/control/system/copy-path", response_class=JSONResponse)
+    def control_panel_copy_path(path: str = Form(...)) -> JSONResponse:
+        try:
+            _copy_to_windows_clipboard(path)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse({"ok": True})
 
     @router.post("/control/jobs/clear-stalled", response_class=HTMLResponse)
     def control_panel_clear_stalled_job(
@@ -360,15 +479,11 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_orchestration_tab.html",
-            {
-                "snapshot": snapshot,
-                "seed_launch_message": None,
-                "seed_launch_error": None,
-                "launch_message": None,
-                "launch_error": None,
-                "status_recovery_message": status_recovery_message,
-                "status_recovery_error": status_recovery_error,
-            },
+            _build_orchestration_template_context(
+                snapshot,
+                status_recovery_message=status_recovery_message,
+                status_recovery_error=status_recovery_error,
+            ),
         )
 
     @router.post("/control/jobs/dismiss-failed", response_class=HTMLResponse)
@@ -393,15 +508,11 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/control_orchestration_tab.html",
-            {
-                "snapshot": snapshot,
-                "seed_launch_message": None,
-                "seed_launch_error": None,
-                "launch_message": None,
-                "launch_error": None,
-                "status_recovery_message": status_recovery_message,
-                "status_recovery_error": status_recovery_error,
-            },
+            _build_orchestration_template_context(
+                snapshot,
+                status_recovery_message=status_recovery_message,
+                status_recovery_error=status_recovery_error,
+            ),
         )
 
     @router.get("/control/partials/run-status", response_class=HTMLResponse)
@@ -465,6 +576,81 @@ def build_control_panel_router() -> APIRouter:
         )
 
     return router
+
+
+def _default_export_config(snapshot: ControlPanelSnapshot) -> dict[str, object]:
+    run = snapshot.generation_run_summary
+    config = snapshot.config_summary
+    generation_run_id = run.generation_run_id if run else ""
+    batch_count = run.succeeded_batch_count if run else 0
+    initial_history_month_count = (
+        config.historical_batch_count
+        if config and config.historical_batch_count
+        else batch_count
+    )
+    if batch_count and initial_history_month_count > batch_count:
+        initial_history_month_count = batch_count
+    subsequent_month_count = max(batch_count - (initial_history_month_count or 0), 0)
+    release_base = "student_dataset_release"
+    if run and run.generation_name:
+        release_base = _safe_release_name(run.generation_name)
+    return {
+        "generation_run_id": generation_run_id,
+        "initial_history_month_count": initial_history_month_count or "",
+        "subsequent_month_count": subsequent_month_count,
+        "output_root": "data/student_dataset_exports",
+        "release_name": release_base,
+        "data_quality_level": "clean",
+        "overwrite_existing": False,
+    }
+
+
+def _build_orchestration_template_context(
+    snapshot: ControlPanelSnapshot,
+    *,
+    seed_launch_message: str | None = None,
+    seed_launch_error: str | None = None,
+    launch_message: str | None = None,
+    launch_error: str | None = None,
+    status_recovery_message: str | None = None,
+    status_recovery_error: str | None = None,
+    export_launch_message: str | None = None,
+    export_launch_error: str | None = None,
+    export_config: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "snapshot": snapshot,
+        "seed_launch_message": seed_launch_message,
+        "seed_launch_error": seed_launch_error,
+        "launch_message": launch_message,
+        "launch_error": launch_error,
+        "status_recovery_message": status_recovery_message,
+        "status_recovery_error": status_recovery_error,
+        "export_launch_message": export_launch_message,
+        "export_launch_error": export_launch_error,
+        "export_config": export_config or _default_export_config(snapshot),
+    }
+
+
+def _safe_release_name(value: str) -> str:
+    cleaned = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in value.strip()
+    )
+    parts = [part for part in cleaned.split("_") if part]
+    return "_".join(parts) or "student_dataset_release"
+
+
+def _copy_to_windows_clipboard(value: str) -> None:
+    clip_exe = shutil.which("clip.exe")
+    if clip_exe is None:
+        raise RuntimeError("clip.exe is not available in this environment.")
+    subprocess.run(
+        [clip_exe],
+        input=value,
+        text=True,
+        check=True,
+    )
 
 
 def _config_context(
@@ -708,13 +894,11 @@ def _run_seed_action(
     return templates.TemplateResponse(
         request,
         "partials/control_orchestration_tab.html",
-        {
-            "snapshot": snapshot,
-            "seed_launch_message": seed_launch_message,
-            "seed_launch_error": seed_launch_error,
-            "launch_message": None,
-            "launch_error": None,
-        },
+        _build_orchestration_template_context(
+            snapshot,
+            seed_launch_message=seed_launch_message,
+            seed_launch_error=seed_launch_error,
+        ),
     )
 
 

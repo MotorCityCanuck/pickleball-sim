@@ -9,7 +9,7 @@
 
 <section
     style="display:grid; gap:16px;"
-    {% if snapshot.seed_data_summary.latest_seed_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
         hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
         hx-swap="outerHTML"
@@ -27,7 +27,9 @@
         </div>
     {% endif %}
 
-    <section class="panel-section {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}">
+    <details class="panel-section {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}">
+        <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Raw Ingest &amp; Normalization</summary>
+    <section style="margin-top:14px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 1</div>
@@ -250,8 +252,11 @@
             </div>
         {% endif %}
     </section>
+    </details>
 
-    <section class="panel-section {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}">
+    <details class="panel-section {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}">
+        <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Player &amp; Match Generation</summary>
+    <section style="margin-top:14px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 2</div>
@@ -312,27 +317,6 @@
                 {% if snapshot.allowed_actions.start_generation_blockers %}
                     <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
                         {% for blocker in snapshot.allowed_actions.start_generation_blockers %}
-                            <li>{{ blocker }}</li>
-                        {% endfor %}
-                    </ul>
-                {% endif %}
-            </div>
-            <div class="info-card {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}">
-                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Dataset Release</div>
-                <div style="margin-top:8px; font-size:18px;">
-                    {% if snapshot.allowed_actions.can_generate_student_dataset %}
-                        Prereqs met
-                    {% else %}
-                        Blocked
-                    {% endif %}
-                </div>
-                {% if snapshot.allowed_actions.can_generate_student_dataset %}
-                    <div style="margin-top:8px; color:#5a6477;">
-                        Generation export is not wired into the control panel yet.
-                    </div>
-                {% elif snapshot.allowed_actions.student_dataset_blockers %}
-                    <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
-                        {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
                             <li>{{ blocker }}</li>
                         {% endfor %}
                     </ul>
@@ -407,22 +391,109 @@
                         Clear stalled job
                     </button>
                 {% endif %}
-                <button
-                    type="button"
-                    disabled
-                    title="{% if snapshot.allowed_actions.can_generate_student_dataset %}Student dataset generation is not wired into the control panel yet.{% else %}Student dataset generation is unavailable until the listed blockers are cleared.{% endif %}"
-                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; opacity:0.45; cursor:not-allowed;"
-                >
-                    Generate Student Dataset (coming soon)
-                </button>
             </div>
         </form>
-    </section>
 
-    {% include "partials/control_run_status.html" %}
-    {% include "partials/control_overall_progress.html" %}
-    {% include "partials/control_batch_table.html" %}
-    {% include "partials/control_progress_bars.html" %}
+        {% include "partials/control_run_status.html" %}
+        {% include "partials/control_overall_progress.html" %}
+        {% include "partials/control_batch_table.html" %}
+        {% include "partials/control_progress_bars.html" %}
+    </section>
+    </details>
+
+    <details class="panel-section {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}">
+        <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Data Export</summary>
+        <section style="margin-top:14px; display:grid; gap:16px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 3</div>
+                    <div style="margin-top:6px; font-size:18px;">Generate student dataset</div>
+                    <div style="margin-top:6px; color:#5a6477;">
+                        Build validated Parquet release folders and persist export metadata after generation completes.
+                    </div>
+                </div>
+                {% if snapshot.allowed_actions.can_generate_student_dataset %}
+                    <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                        Ready to export
+                    </div>
+                {% else %}
+                    <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                        Blocked
+                    </div>
+                {% endif %}
+            </div>
+
+            {% if export_launch_message %}
+                <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                    {{ export_launch_message }}
+                </div>
+            {% endif %}
+            {% if export_launch_error %}
+                <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                    {{ export_launch_error }}
+                </div>
+            {% endif %}
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <div class="info-card {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Preconditions</div>
+                    <div style="margin-top:8px; font-size:18px;">
+                        {% if snapshot.allowed_actions.can_generate_student_dataset %}Ready{% else %}Blocked{% endif %}
+                    </div>
+                    {% if snapshot.allowed_actions.student_dataset_blockers %}
+                        <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                            {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
+                                <li>{{ blocker }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </div>
+                <div class="info-card">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Source Run</div>
+                    {% if snapshot.generation_run_summary %}
+                        <div style="margin-top:8px; font-size:18px;">Run ID {{ snapshot.generation_run_summary.generation_run_id }}</div>
+                        <div style="margin-top:6px; color:#5a6477;">{{ snapshot.generation_run_summary.generation_name }}</div>
+                    {% else %}
+                        <div style="margin-top:8px; font-size:18px;">No run selected</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <form
+                style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;"
+                hx-post="/control/export/student-dataset/start"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+            >
+                <input type="hidden" name="return_target" value="orchestration">
+                <input type="hidden" name="generation_run_id" value="{{ export_config.generation_run_id }}">
+                <input type="hidden" name="initial_history_month_count" value="{{ export_config.initial_history_month_count }}">
+                <input type="hidden" name="subsequent_month_count" value="{{ export_config.subsequent_month_count }}">
+                <input type="hidden" name="output_root" value="{{ export_config.output_root }}">
+                <input type="hidden" name="release_name" value="{{ export_config.release_name }}">
+                <input type="hidden" name="data_quality_level" value="{{ export_config.data_quality_level }}">
+                {% if export_config.overwrite_existing %}
+                    <input type="hidden" name="overwrite_existing" value="yes">
+                {% endif %}
+                <button
+                    type="submit"
+                    {% if not snapshot.allowed_actions.can_generate_student_dataset %}disabled{% endif %}
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_generate_student_dataset %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                >
+                    Start Student Dataset Export
+                </button>
+                <button
+                    type="button"
+                    onclick="window.loadControlPanelTab(document.getElementById('control-tab-button-export'))"
+                    style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                >
+                    Open Export Configuration
+                </button>
+            </form>
+
+            {% include "partials/control_export_progress.html" %}
+        </section>
+    </details>
 
     <script>
         (() => {

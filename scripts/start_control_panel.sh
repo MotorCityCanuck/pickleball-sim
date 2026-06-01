@@ -4,7 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
-VENV_PYTHON="$BACKEND_DIR/venv/bin/python"
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+else
+    VENV_PYTHON="$BACKEND_DIR/venv/bin/python"
+fi
 HOST="0.0.0.0"
 PORT="8000"
 OPEN_BROWSER="true"
@@ -16,7 +20,7 @@ usage() {
 Usage: ./scripts/start_control_panel.sh [options]
 
 Starts the local Postgres container, runs the FastAPI control panel with the
-backend virtualenv, waits for the page to respond, and opens /control.
+project virtualenv, waits for the page to respond, and opens /control.
 
 Options:
   --host <host>       Bind host for uvicorn. Default: 0.0.0.0
@@ -226,7 +230,7 @@ log "Starting Postgres container..."
 wait_for_postgres
 
 log "Checking backend dependencies in the virtualenv..."
-"$VENV_PYTHON" -c "import fastapi, uvicorn, starlette, jinja2, multipart"
+"$VENV_PYTHON" -c "import duckdb, fastapi, jinja2, multipart, pyarrow, starlette, uvicorn"
 
 if port_in_use; then
     if url_responds "$APP_URL"; then

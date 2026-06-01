@@ -1,0 +1,127 @@
+<section
+    class="info-card"
+    style="display:grid; gap:12px;"
+    {% if snapshot.student_dataset_export_summary.latest_export_job_is_active %}
+        hx-get="/control/partials/config/export"
+        hx-trigger="every 10s"
+        hx-target="#control-tab-content"
+        hx-swap="innerHTML"
+    {% endif %}
+>
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+        <div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Progress</div>
+            {% if snapshot.student_dataset_export_summary.latest_export_job %}
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.student_dataset_export_summary.latest_export_job.status }}</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    {{ snapshot.student_dataset_export_summary.latest_export_job.current_message or "No message" }}
+                    {% if snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' and snapshot.student_dataset_export_summary.latest_export_job.elapsed_label %}
+                        - Duration {{ snapshot.student_dataset_export_summary.latest_export_job.elapsed_label }}
+                    {% endif %}
+                </div>
+            {% else %}
+                <div style="margin-top:8px; font-size:18px;">No export job yet</div>
+            {% endif %}
+        </div>
+        {% if snapshot.student_dataset_export_summary.latest_export_job and snapshot.student_dataset_export_summary.latest_export_job.percent_complete is not none %}
+            <div style="font-size:18px; color:#1857c2;">{{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%</div>
+        {% endif %}
+    </div>
+
+    {% if snapshot.student_dataset_export_summary.latest_export_stage_progress %}
+        <div style="display:grid; gap:10px;">
+            {% for stage in snapshot.student_dataset_export_summary.latest_export_stage_progress %}
+                <div>
+                    <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+                        <span>{{ stage.stage_name }}</span>
+                        <span>
+                            {{ stage.status }}
+                            {% if stage.progress_percent is not none %}
+                                | {{ stage.progress_percent }}%
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                        <div
+                            style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
+                        ></div>
+                    </div>
+                    {% if stage.completion_message or stage.progress_message or stage.error_message %}
+                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">
+                            {{ stage.error_message or stage.completion_message or stage.progress_message }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if snapshot.student_dataset_export_summary.latest_releases %}
+        <div style="overflow:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                <thead>
+                    <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
+                        <th style="padding:8px 10px;">Release</th>
+                        <th style="padding:8px 10px;">Type</th>
+                        <th style="padding:8px 10px;">Month</th>
+                        <th style="padding:8px 10px;">Files</th>
+                        <th style="padding:8px 10px;">Rows</th>
+                        <th style="padding:8px 10px;">Copy</th>
+                        <th style="padding:8px 10px;">Path</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for release in snapshot.student_dataset_export_summary.latest_releases %}
+                        <tr style="border-bottom:1px solid #eef1f5;">
+                            <td style="padding:8px 10px;">{{ release.release_name }}</td>
+                            <td style="padding:8px 10px;">{{ release.release_type }}</td>
+                            <td style="padding:8px 10px;">{{ release.release_month or "n/a" }}</td>
+                            <td style="padding:8px 10px;">{{ release.file_count }}</td>
+                            <td style="padding:8px 10px;">{{ "{:,}".format(release.total_row_count) }}</td>
+                            <td style="padding:8px 10px;">
+                                <button
+                                    type="button"
+                                    onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
+                                    style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
+                                    title="Copy release path"
+                                >
+                                    Copy Path
+                                </button>
+                            </td>
+                            <td style="padding:8px 10px;"><code>{{ release.output_path }}</code></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</section>
+<script>
+    (() => {
+        window.copyControlPanelText = async function copyControlPanelText(value) {
+            try {
+                const response = await window.fetch("/control/system/copy-path", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                    },
+                    body: new URLSearchParams({ path: value }),
+                });
+                if (response.ok) {
+                    return;
+                }
+            } catch (error) {
+                console.error(error);
+            }
+            try {
+                if (window.navigator?.clipboard?.writeText) {
+                    await window.navigator.clipboard.writeText(value);
+                    return;
+                }
+            } catch (error) {
+                console.error(error);
+            }
+            window.prompt("Copy path:", value);
+        };
+    })();
+</script>

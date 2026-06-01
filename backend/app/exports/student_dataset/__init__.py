@@ -37,7 +37,12 @@ from .queries import (
     build_student_dataset_queries,
     build_student_dataset_query,
 )
-from .service import StudentDatasetBuildResult, build_student_dataset_release
+from .service import (
+    StudentDatasetBuildResult,
+    StudentDatasetExportRegistration,
+    StudentDatasetExportService,
+    build_student_dataset_release,
+)
 from .writer import (
     MANIFEST_FILE_NAME,
     StagedStudentDatasetFamily,
@@ -79,6 +84,8 @@ __all__ = [
     "PublishedStudentDatasetRelease",
     "StudentDatasetPublishError",
     "StudentDatasetBuildResult",
+    "StudentDatasetExportRegistration",
+    "StudentDatasetExportService",
     "MANIFEST_FILE_NAME",
     "StagedStudentDatasetFamily",
     "StagedStudentDatasetRelease",
