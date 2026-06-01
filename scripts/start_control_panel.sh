@@ -122,6 +122,42 @@ open_browser() {
     log "No supported browser opener found. Open $url manually."
 }
 
+find_existing_server_pids() {
+    pgrep -f "uvicorn app.main:app.*--port ${PORT}" || true
+}
+
+stop_existing_server() {
+    local pids
+    pids="$(find_existing_server_pids)"
+    if [[ -z "$pids" ]]; then
+        return 1
+    fi
+
+    log "Stopping existing control panel server on port ${PORT}..."
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        kill "$pid" >/dev/null 2>&1 || true
+    done <<< "$pids"
+
+    for _ in {1..10}; do
+        if ! port_in_use; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        kill -9 "$pid" >/dev/null 2>&1 || true
+    done <<< "$pids"
+    sleep 1
+
+    if port_in_use; then
+        fail "Port ${PORT} is still in use after stopping the existing control panel server."
+    fi
+    return 0
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)
@@ -161,6 +197,30 @@ APP_URL="http://127.0.0.1:${PORT}/control"
 
 trap cleanup EXIT INT TERM
 
+url_responds() {
+    local url
+    url="$1"
+    "$VENV_PYTHON" - <<PY >/dev/null 2>&1
+from urllib.request import urlopen
+urlopen("$url", timeout=1)
+PY
+}
+
+port_in_use() {
+    "$VENV_PYTHON" - <<PY >/dev/null 2>&1
+import socket
+
+sock = socket.socket()
+sock.settimeout(1)
+try:
+    sock.connect(("127.0.0.1", int("$PORT")))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+}
+
 log "Starting Postgres container..."
 (cd "$ROOT_DIR" && $COMPOSE_CMD up -d postgres)
 wait_for_postgres
@@ -168,8 +228,15 @@ wait_for_postgres
 log "Checking backend dependencies in the virtualenv..."
 "$VENV_PYTHON" -c "import fastapi, uvicorn, starlette, jinja2, multipart"
 
+if port_in_use; then
+    if url_responds "$APP_URL"; then
+        stop_existing_server || fail "A control panel is responding at $APP_URL, but its process could not be identified for restart."
+    fi
+    fail "Port ${PORT} is already in use by another process. Stop it or rerun with --port <port>."
+fi
+
 if [[ "$RELOAD" == "true" ]]; then
-    RELOAD_ARGS=(--reload)
+    RELOAD_ARGS=(--reload --reload-dir "$BACKEND_DIR")
 else
     RELOAD_ARGS=()
 fi

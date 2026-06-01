@@ -144,10 +144,8 @@
                 id="control-tab-button-seed"
                 class="tab-button active"
                 type="button"
-                hx-get="/control/partials/config/seed"
-                hx-target="#control-tab-content"
-                hx-swap="innerHTML"
-                onclick="window.setControlPanelTab(this)"
+                data-tab-url="/control/partials/config/seed"
+                onclick="window.loadControlPanelTab(this)"
             >
                 Seed Data Config
             </button>
@@ -155,10 +153,8 @@
                 id="control-tab-button-player-match"
                 class="tab-button"
                 type="button"
-                hx-get="/control/partials/config/player-match"
-                hx-target="#control-tab-content"
-                hx-swap="innerHTML"
-                onclick="window.setControlPanelTab(this)"
+                data-tab-url="/control/partials/config/player-match"
+                onclick="window.loadControlPanelTab(this)"
             >
                 Player and Match Config
             </button>
@@ -166,10 +162,8 @@
                 id="control-tab-button-orchestration"
                 class="tab-button"
                 type="button"
-                hx-get="/control/partials/orchestration"
-                hx-target="#control-tab-content"
-                hx-swap="innerHTML"
-                onclick="window.setControlPanelTab(this)"
+                data-tab-url="/control/partials/orchestration"
+                onclick="window.loadControlPanelTab(this)"
             >
                 Orchestration
             </button>
@@ -179,9 +173,6 @@
             <div
                 id="control-tab-content"
                 class="tab-content"
-                hx-get="/control/partials/config/seed"
-                hx-trigger="load"
-                hx-swap="innerHTML"
             >
                 {% include "partials/control_config_tab.html" %}
             </div>
@@ -189,10 +180,55 @@
     </div>
     <script>
         (() => {
+            async function swapTabContent(target, html) {
+                target.innerHTML = html;
+                const scripts = Array.from(target.querySelectorAll("script"));
+                for (const originalScript of scripts) {
+                    const replacement = document.createElement("script");
+                    for (const attribute of originalScript.attributes) {
+                        replacement.setAttribute(attribute.name, attribute.value);
+                    }
+                    replacement.textContent = originalScript.textContent;
+                    originalScript.replaceWith(replacement);
+                }
+            }
+
             window.setControlPanelTab = function setControlPanelTab(activeButton) {
                 document.querySelectorAll(".tab-button").forEach((button) => {
                     button.classList.toggle("active", button === activeButton);
                 });
+            };
+
+            window.loadControlPanelTab = async function loadControlPanelTab(button) {
+                const url = button?.dataset?.tabUrl;
+                const target = document.getElementById("control-tab-content");
+                if (!url || !target) {
+                    return;
+                }
+
+                window.setControlPanelTab(button);
+                target.setAttribute("aria-busy", "true");
+                try {
+                    const response = await window.fetch(url, {
+                        headers: {
+                            "X-Requested-With": "XMLHttpRequest",
+                        },
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Tab request failed with status ${response.status}`);
+                    }
+                    const html = await response.text();
+                    await swapTabContent(target, html);
+                } catch (error) {
+                    target.innerHTML = `
+                        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                            Failed to load tab content.
+                        </div>
+                    `;
+                    console.error(error);
+                } finally {
+                    target.removeAttribute("aria-busy");
+                }
             };
         })();
     </script>

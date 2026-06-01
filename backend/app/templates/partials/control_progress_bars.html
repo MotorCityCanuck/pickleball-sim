@@ -43,7 +43,7 @@
                 </div>
             {% endif %}
             {% for batch in snapshot.batch_summaries %}
-                <div>
+                <div {% if not loop.last %}style="padding-bottom:14px; border-bottom:2px solid #c9d2df;"{% endif %}>
                     <div style="font-size:18px; margin-bottom:8px;">
                         {% set batch_status = (batch.processing_status or '')|lower %}
                         <strong>{{ batch.batch_month }}</strong>

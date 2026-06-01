@@ -4,6 +4,12 @@
 
 Draft implementation specification.
 
+Canonical document path:
+
+```text
+docs/development/student_facing_dataset_build_specification.md
+```
+
 ## Purpose
 
 This document defines the student-facing analytical dataset that will be exported
@@ -66,8 +72,17 @@ implementation must support these required parameters:
 | `subsequent_month_count` | integer | yes | Number of later monthly snapshot releases to export after the initial history release. |
 | `output_root` | path/string | yes | Directory where release folders are written. |
 | `release_name` | string | yes | Base release name used to derive release folder names and metadata. |
-| `data_quality_profile` | string | no | Optional profile for future data quality injection. The default is `clean`. |
+| `data_quality_level` | string | no | Optional level for future data quality injection. The default is `clean`. |
 | `overwrite_existing` | boolean | no | Whether an existing release folder may be replaced. Default must be `false`. |
+
+`data_quality_level` is the canonical export parameter name because the
+operator-facing tracking table stores `student_dataset_releases.data_quality_level`.
+The initial clean export implementation must support `clean`. Future data
+quality injection levels should use the same level vocabulary as the data
+quality injection module, such as `low`, `medium`, `high`, and `very_high`.
+If existing configuration payloads contain a legacy or broader value such as
+`standard`, the exporter must either normalize it to `clean` for a non-injected
+release or fail with a clear validation error.
 
 When the build is launched from the control panel or another UI, `output_root`
 must be selectable with a folder picker. The selected folder path becomes the
@@ -101,6 +116,39 @@ The folder picker requirement applies only to interactive UI launches. Command
 line, scheduled, or test builds may provide `output_root` and `release_name`
 directly as arguments.
 
+## Control Panel Orchestration Tab Requirements
+
+The control panel orchestration tab should be organized into three high-level
+sections that match the end-to-end data production workflow:
+
+1. Seed data ingest and normalization
+2. Player and match data generation
+3. Student dataset generation
+
+Each section must be collapsible so an operator can focus on the current stage
+without losing access to earlier or later workflow controls. The existing
+orchestration tab content should be reorganized into these sections rather than
+duplicated elsewhere.
+
+The student dataset generation section should contain the interactive controls
+for this exporter, including:
+
+- selected `generation_run_id`
+- `initial_history_month_count`
+- `subsequent_month_count`
+- `output_root` folder picker
+- base `release_name` picker or text input
+- `data_quality_level`
+- `overwrite_existing`
+- generated release-family preview
+- preflight validation status
+- build/validation progress
+- links or paths to completed release folders and manifests
+
+The student dataset generation section must remain disabled or clearly blocked
+until the selected generation run and requested monthly batch window satisfy the
+preflight checks in this specification.
+
 The monthly source window is determined by `monthly_batches.batch_sequence` for
 the selected `generation_run_id`.
 
@@ -126,6 +174,18 @@ student release.
 
 The student dataset build produces a release family composed of one initial
 history release and zero or more subsequent monthly snapshot releases.
+
+The database release type values must match the existing
+`student_dataset_releases.release_type` constraint:
+
+| Student release kind | Folder suffix | Manifest `release_type` | Database `release_type` |
+| --- | --- | --- | --- |
+| Initial history | `_initial_history` | `historical_baseline` | `historical_baseline` |
+| Monthly snapshot | `_snapshot_YYYY_MM` | `monthly_incremental` | `monthly_incremental` |
+
+The friendly terms "initial history" and "monthly snapshot" may be used in UI
+copy and documentation, but persisted release metadata must use
+`historical_baseline` and `monthly_incremental`.
 
 Recommended layout:
 
@@ -164,6 +224,20 @@ folder, or compare multiple snapshot folders manually.
 Monthly releases are complete snapshots, not deltas. Each monthly snapshot must
 contain the initial history rows plus all rows through the snapshot month.
 
+The exporter should create one `student_dataset_releases` row per concrete
+release folder, not one row for the whole family. The `release_name` stored in
+that row should be the derived release folder name, such as
+`napa_student_release_initial_history` or `napa_student_release_snapshot_2025_01`.
+The `output_path` should point to that release folder. If a top-level family
+manifest is emitted, it is a filesystem artifact only in the first
+implementation unless the database schema later adds explicit release-family
+tracking.
+
+After a release folder is validated and promoted, the exporter should create one
+`student_dataset_release_files` row per Parquet table in that release. Each row
+should reference the corresponding `student_dataset_releases.id` and store the
+final file path, row count, schema hash, and checksum.
+
 ## DuckDB Access
 
 The release must be usable from DuckDB without loading a Postgres database.
@@ -184,9 +258,15 @@ SELECT * FROM read_parquet('student_release/matches.parquet');
 Bulk discovery should also work:
 
 ```sql
-SELECT *
-FROM read_parquet('student_release/*.parquet', filename = true);
+SELECT file
+FROM glob('student_release/*.parquet')
+ORDER BY file;
 ```
+
+Do not rely on `read_parquet('student_release/*.parquet')` to combine all
+tables into one relation, because the release contains multiple Parquet schemas.
+Bulk discovery means the files are listable and each table file can be opened
+independently.
 
 Column names in Parquet must match the names in this specification. File names
 must match table names exactly.
@@ -434,7 +514,7 @@ student-facing decision.
 | `confidence_score` | Include | Public confidence score. |
 | `volatility_score` | Include | Public volatility score. |
 | `expected_performance` | Exclude | Model-derived expectation; reserve for instructor/internal analysis. |
-| `regional_adjustment_factor` | Include | Public contextual adjustment. |
+| `regional_adjustment_factor` | Include | Public contextual adjustment that supports regional rating analysis without exposing hidden generator seeds or row-level rating update mechanics. |
 | `global_percentile` | Include | Public ranking metric. |
 | `match_count_used` | Include | Public rating sample-size indicator. |
 | `calculation_version` | Exclude | Internal calculation implementation metadata. |
@@ -553,6 +633,18 @@ validated when present.
 The export should select one completed generation run at a time. The source run
 must have all requested monthly batches completed before release.
 
+Before writing any release files, the exporter must run these preflight checks:
+
+- `generation_runs.id = :generation_run_id` exists.
+- `generation_runs.status = 'succeeded'`.
+- All requested `monthly_batches` rows for the run exist.
+- All requested `monthly_batches.processing_status` values are `succeeded`.
+- Requested batch sequences are contiguous from `1` through the maximum requested
+  sequence.
+- No duplicate `batch_sequence` values exist for the selected generation run.
+- `initial_history_month_count` is greater than zero.
+- `subsequent_month_count` is zero or greater.
+
 The release windows are:
 
 | Release type | Included batch sequences |
@@ -584,15 +676,28 @@ For each included table:
 - Do not export orphaned rows.
 - Preserve source primary keys; do not remap keys in the first implementation.
 
+For any release window, define:
+
+```text
+snapshot_batch_sequence = maximum included monthly_batches.batch_sequence
+snapshot_month = monthly_batches.batch_month for snapshot_batch_sequence
+snapshot_end_exclusive = first day of the month after snapshot_month
+```
+
+Because `monthly_batches.batch_month` represents the first day of the reporting
+month, batch-tied facts should be filtered by included batch ids, while
+non-batch interval/event records should use `date < snapshot_end_exclusive`.
+This avoids excluding records that occur later within the same reporting month.
+
 Recommended lineage filters:
 
 | Table | Source filter |
 | --- | --- |
 | `monthly_batches` | `monthly_batches.generation_run_id = :generation_run_id` and `batch_sequence` is in the release window. |
-| `players` | Include players registered on or before the last batch month in the release window and belonging to the selected generation run. |
-| `clubs` | Include clubs for the selected run plus any referenced by included memberships. |
-| `teams` | `teams.generation_run_id = :generation_run_id` |
-| `club_memberships` | `club_memberships.generation_run_id = :generation_run_id` or `player_id` in included players. |
+| `players` | Include players where `generation_run_id = :generation_run_id` and `registration_date < snapshot_end_exclusive`. |
+| `clubs` | Include clubs where `generation_run_id = :generation_run_id` and `founding_date IS NULL OR founding_date < snapshot_end_exclusive`, plus any referenced by included memberships. |
+| `teams` | Include teams where `generation_run_id = :generation_run_id` and `formation_date < snapshot_end_exclusive`. Suppress or transform future-dated lifecycle values as described below. |
+| `club_memberships` | Include memberships where (`generation_run_id = :generation_run_id` or `player_id` is in included players) and `start_date < snapshot_end_exclusive`. Suppress future-dated `end_date` values as described below. |
 | `matches` | `batch_id` in included monthly batches. |
 | `match_teams` | `match_id` in included matches. |
 | `match_team_players` | `match_team_id` in included match teams. |
@@ -601,13 +706,37 @@ Recommended lineage filters:
 | `player_assessment_history` | `batch_id` in included monthly batches and `player_id` in included players. |
 | `player_registrations` | `batch_id` in included monthly batches and `player_id` in included players. |
 | `regions` | Include regions referenced by included players, clubs, registrations, or matches. |
-| `team_memberships` | `team_id` in included teams and `player_id` in included players. |
+| `team_memberships` | `team_id` in included teams and `player_id` in included players, with `joined_date < snapshot_end_exclusive`. Suppress future-dated `left_date` values as described below. |
 
 For subsequent monthly releases, dimension-like tables such as `players`,
 `clubs`, `teams`, and `regions` should include the records needed to make that
 monthly release independently queryable. Because monthly releases are complete
 snapshots, they should include all rows in the selected generation run that are
 reachable through the snapshot's included batch sequence range.
+
+### As-Of Snapshot Field Rules
+
+Some dimension-like rows are mutable in the source database. For example, a team
+can be active in an early month and later receive a `dissolution_date` and a
+new `team_status`. Earlier snapshot releases must not expose future lifecycle
+events.
+
+For a release ending at `snapshot_end_exclusive`:
+
+- If `teams.dissolution_date >= snapshot_end_exclusive`, export
+  `dissolution_date` as `NULL`.
+- If `teams.dissolution_date >= snapshot_end_exclusive` and the stored
+  `team_status` represents the later dissolved state, export `team_status` as
+  `active`.
+- If `team_memberships.left_date >= snapshot_end_exclusive`, export `left_date`
+  as `NULL`.
+- If `club_memberships.end_date >= snapshot_end_exclusive`, export `end_date`
+  as `NULL`.
+- Records whose start/formation/registration dates are on or after
+  `snapshot_end_exclusive` must not appear in that release.
+
+These transformations apply only to the Parquet projection. They must not
+mutate the authoritative database.
 
 ## Monthly Snapshot Semantics
 
@@ -623,7 +752,8 @@ For a snapshot ending at batch sequence `N`:
 - dimension-like tables such as `players`, `clubs`, `teams`, `regions`,
   `club_memberships`, and `team_memberships` include records needed to interpret
   the included facts through the snapshot month.
-- records created after the snapshot month must not appear.
+- records with simulated business dates after the snapshot month must not appear.
+- future-dated lifecycle values after the snapshot month must not appear.
 
 This lets a student open any one monthly snapshot folder and analyze the full
 state of the simulated world as of that month.
@@ -664,6 +794,49 @@ FROM missing;
 ```
 
 Every referential integrity check must return zero missing rows.
+
+Required relationship validation checks:
+
+- Every non-null `clubs.region_id` exists in `regions.id`.
+- Every `club_memberships.player_id` exists in `players.id`.
+- Every `club_memberships.club_id` exists in `clubs.id`.
+- Every non-null `players.home_region_id` exists in `regions.id`.
+- Every non-null `matches.region_id` exists in `regions.id`.
+- Every `matches.batch_id` exists in `monthly_batches.id`.
+- Every non-null `matches.winning_team_id` exists in `match_teams.id`.
+- Every non-null `matches.winning_team_id` belongs to the same match as the
+  referencing `matches.id`.
+- Every included match has exactly two `match_teams` rows unless the generator
+  configuration explicitly permits another match format.
+- Every included `match_team` has at least one `match_team_players` row.
+- Every `match_games.match_id` exists in `matches.id`.
+- Every `match_teams.match_id` exists in `matches.id`.
+- Every `match_team_players.match_team_id` exists in `match_teams.id`.
+- Every `match_team_players.player_id` exists in `players.id`.
+- Every `player_rating_history.player_id` exists in `players.id`.
+- Every `player_rating_history.batch_id` exists in `monthly_batches.id`.
+- Every `player_assessment_history.player_id` exists in `players.id`.
+- Every `player_assessment_history.batch_id` exists in `monthly_batches.id`.
+- Every `player_registrations.player_id` exists in `players.id`.
+- Every `player_registrations.batch_id` exists in `monthly_batches.id`.
+- Every non-null `player_registrations.assigned_region_id` exists in
+  `regions.id`.
+- Every `team_memberships.team_id` exists in `teams.id`.
+- Every `team_memberships.player_id` exists in `players.id`.
+
+Required temporal validation checks:
+
+- `monthly_batches.batch_sequence` exactly matches the expected release window.
+- `monthly_batches.batch_month` values are unique within the release.
+- `players.registration_date < snapshot_end_exclusive`.
+- `clubs.founding_date IS NULL OR clubs.founding_date < snapshot_end_exclusive`.
+- `teams.formation_date < snapshot_end_exclusive`.
+- `teams.dissolution_date IS NULL OR teams.dissolution_date < snapshot_end_exclusive`.
+- `club_memberships.start_date < snapshot_end_exclusive`.
+- `club_memberships.end_date IS NULL OR club_memberships.end_date < snapshot_end_exclusive`.
+- `team_memberships.joined_date < snapshot_end_exclusive`.
+- `team_memberships.left_date IS NULL OR team_memberships.left_date < snapshot_end_exclusive`.
+- All batch-tied fact rows reference included `monthly_batches.id` values.
 
 ## Acceptance Criteria
 
@@ -740,6 +913,7 @@ Required non-empty tables for a valid release:
 - `monthly_batches`
 - `players`
 - `regions`
+- `player_registrations`
 
 Tables expected to be non-empty after match generation:
 
@@ -757,7 +931,6 @@ generation outcomes:
 - `teams`
 - `team_memberships`
 - `player_assessment_history`
-- `player_registrations`
 
 Column nullability must follow the data dictionary. Nullable fields may contain
 nulls where business semantics permit missing or not-yet-ended values, such as
@@ -802,6 +975,14 @@ Do not infer included columns by exporting all ORM columns and removing a small
 blocklist. The blocklist approach is too risky for student-facing data because
 new privileged columns could leak by default.
 
+The implementation should add explicit runtime dependencies for:
+
+- writing Parquet files, such as `pyarrow`
+- validating releases with DuckDB, such as the `duckdb` Python package
+
+These dependencies are part of the exporter contract. The build must fail with a
+clear message if Parquet writing or DuckDB validation support is unavailable.
+
 The projection map should contain:
 
 - source table name
@@ -823,11 +1004,16 @@ The export should fail closed:
 
 - Define the explicit projection map for every included table.
 - Define excluded table assertions.
+- Add Parquet writer and DuckDB validator dependencies.
 - Implement release parameter parsing and validation.
+- Implement generation-run and monthly-batch preflight checks.
+- Reorganize the control panel orchestration tab into three collapsible
+  workflow sections.
 - Add folder picker support for `output_root` in the control panel.
 - Add base release name picker support for interactive builds.
 - Generate deterministic suffixed release folder names.
 - Implement complete snapshot batch-window selection.
+- Implement as-of snapshot lifecycle transformations.
 - Write Parquet files to a staging folder.
 - Generate per-release `manifest.json` files.
 - Validate Parquet readability with DuckDB.
@@ -851,19 +1037,19 @@ student data. The file should be written beside each release folder as:
 manifest.json
 ```
 
-For a release family with `initial_history/` and monthly subfolders, each folder
-should have its own manifest. A top-level family manifest may also be emitted to
-summarize all child releases.
+For a release family with one initial-history folder and monthly snapshot
+subfolders, each folder should have its own manifest. A top-level family
+manifest may also be emitted to summarize all child releases.
 
 Each manifest should include:
 
 - release name
-- release type: `initial_history` or `monthly`
+- release type: `historical_baseline` or `monthly_incremental`
 - source `generation_run_id`
 - included `batch_sequence` values
 - included `batch_month` values
 - build parameters used for the release
-- data quality profile
+- data quality level
 - output files written
 - row count by output table
 - ordered column list by output table

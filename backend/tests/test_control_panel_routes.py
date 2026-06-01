@@ -707,8 +707,10 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
     assert "Orchestration" in body
-    assert 'hx-get="/control/partials/config/seed"' in body
-    assert 'hx-get="/control/partials/config/player-match"' in body
+    assert 'data-tab-url="/control/partials/config/seed"' in body
+    assert 'data-tab-url="/control/partials/config/player-match"' in body
+    assert 'data-tab-url="/control/partials/orchestration"' in body
+    assert "window.loadControlPanelTab" in body
     assert "Read only config" in body
 
 

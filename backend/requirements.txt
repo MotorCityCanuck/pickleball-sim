@@ -28,7 +28,8 @@ httpx>=0.27.0
 # Data Generation (requires compilation on some systems)
 # Faker>=20.1.0
 # pandas>=2.1.3
-# pyarrow>=14.0.1
+pyarrow>=14.0.1
+duckdb>=1.1.3
 # numpy>=1.26.2
 
 # Configuration (requires Rust compiler on Python 3.14)
