@@ -183,3 +183,45 @@ def test_hidden_performance_bias_defaults_are_editor_scaffolded():
     assert "hidden_performance_bias.enabled" in paths
     assert "hidden_performance_bias.regional_strength.map" in paths
     assert "hidden_performance_bias.experience.close_match_multiplier" in paths
+
+
+def test_hidden_performance_bias_bounded_tuning_fields_render_as_sliders():
+    fields = {field.path: field for field in CONFIG_EDITOR_FIELDS}
+    slider_paths = {
+        "hidden_performance_bias.total_max_rating_points",
+        "hidden_performance_bias.age_advantage.max_rating_points",
+        "hidden_performance_bias.age_advantage.points_per_year_gap",
+        "hidden_performance_bias.age_advantage.close_match_multiplier",
+        "hidden_performance_bias.age_advantage.close_match_competitiveness_threshold",
+        "hidden_performance_bias.fatigue.points_per_recent_game",
+        "hidden_performance_bias.fatigue.max_rating_penalty",
+        "hidden_performance_bias.regional_strength.max_rating_points",
+        "hidden_performance_bias.partnership_affinity.same_club_bonus",
+        "hidden_performance_bias.partnership_affinity.matches_together_bonus_1",
+        "hidden_performance_bias.partnership_affinity.matches_together_bonus_2",
+        "hidden_performance_bias.partnership_affinity.recent_matches_bonus",
+        "hidden_performance_bias.partnership_affinity.max_rating_points",
+        "hidden_performance_bias.experience.max_rating_points",
+        "hidden_performance_bias.experience.log_multiplier",
+        "hidden_performance_bias.experience.close_match_multiplier",
+        "hidden_performance_bias.experience.close_match_competitiveness_threshold",
+    }
+
+    for path in slider_paths:
+        assert fields[path].control_type == "slider"
+        assert fields[path].min_value is not None
+        assert fields[path].max_value is not None
+        assert fields[path].step is not None
+
+    assert fields["hidden_performance_bias.fatigue.window_days"].control_type == "integer"
+    assert (
+        fields["hidden_performance_bias.fatigue.recovery_days_threshold"].control_type
+        == "integer"
+    )
+    assert (
+        fields[
+            "hidden_performance_bias.partnership_affinity.matches_together_threshold_1"
+        ].control_type
+        == "integer"
+    )
+    assert fields["hidden_performance_bias.regional_strength.map"].control_type == "json"

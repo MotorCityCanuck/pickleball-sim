@@ -17,6 +17,7 @@ from app.generators.hidden_performance_bias import (  # noqa: E402
     compute_experience_adjustment,
     compute_fatigue_adjustment,
     compute_hidden_team_adjustment,
+    compute_hidden_team_adjustment_breakdown,
     compute_partnership_affinity_adjustment,
     compute_region_strength_adjustment,
 )
@@ -85,6 +86,29 @@ def test_total_adjustment_respects_cap():
     )
 
     assert adjustment == Decimal("10")
+
+
+def test_hidden_team_adjustment_breakdown_exposes_factor_totals():
+    config = hidden_config({"enabled": True})
+
+    breakdown = compute_hidden_team_adjustment_breakdown(
+        BiasTeam(
+            avg_age=Decimal("40"),
+            region_name="Florida",
+            team_total_prior_matches=10,
+            recent_pair_counts={(1, 2): 2},
+            primary_club_ids=frozenset({101}),
+        ),
+        BiasTeam(avg_age=Decimal("50"), region_name="Unknown"),
+        {"expected_competitiveness": Decimal("0.80")},
+        config,
+    )
+
+    assert breakdown.factor_adjustments["age"] == Decimal("18.750")
+    assert breakdown.factor_adjustments["regional_strength"] == Decimal("15")
+    assert breakdown.factor_adjustments["partnership_affinity"] == Decimal("18")
+    assert breakdown.total_before_cap > Decimal("50")
+    assert breakdown.total == Decimal("50")
 
 
 def test_age_advantage_favors_younger_team_and_close_match_multiplier():

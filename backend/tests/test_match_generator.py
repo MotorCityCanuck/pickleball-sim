@@ -19,7 +19,7 @@ from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
 from app.generators.games import expected_scores, game_score  # noqa: E402
-from app.generators.matches import _active_teams  # noqa: E402
+from app.generators.matches import _active_teams, _expected_win_probability  # noqa: E402
 from app.models import (  # noqa: E402
     GenerationRuntimeMetric,
     GenerationRun,
@@ -500,6 +500,145 @@ def test_active_teams_include_hidden_bias_context_fields(session):
     assert second_team.team_total_prior_matches == 1
     assert second_team.recent_game_count == 1
     assert second_team.recent_pair_counts == {(3, 4): 1}
+
+
+def test_generate_for_batch_uses_visible_probability_when_hidden_bias_disabled(session):
+    payload = test_payload()
+    _, batch = seed_match_data(session, payload=payload, team_count=2)
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    match_teams = session.query(MatchTeam).order_by(MatchTeam.team_number).all()
+    team_one, team_two = match_teams
+    expected_probability = _expected_win_probability(
+        team_one.average_team_rating,
+        team_two.average_team_rating,
+    )
+    assert team_one.expected_win_probability == expected_probability
+    assert team_two.expected_win_probability == Decimal("1") - expected_probability
+    match = session.query(Match).one()
+    expected_winner = 1 if expected_probability >= Decimal("0.5") else 2
+    assert match.predicted_winning_team_number == expected_winner
+
+
+def test_generate_for_batch_applies_hidden_bias_to_prediction_only(session):
+    payload = test_payload()
+    payload["hidden_performance_bias"] = {
+        **DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"],
+        "enabled": True,
+        "total_max_rating_points": 250,
+        "age_advantage": {
+            **DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"]["age_advantage"],
+            "max_rating_points": 250,
+            "points_per_year_gap": 5,
+            "close_match_multiplier": 1,
+        },
+    }
+    _, batch = seed_match_data(session, payload=payload, team_count=2)
+    players = {player.id: player for player in session.query(Player)}
+    players[1].birth_date = date(1990, 1, 1)
+    players[2].birth_date = date(1990, 1, 1)
+    players[3].birth_date = date(1950, 1, 1)
+    players[4].birth_date = date(1950, 1, 1)
+    session.commit()
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    match = session.query(Match).one()
+    match_teams = session.query(MatchTeam).order_by(MatchTeam.team_number).all()
+    team_numbers_by_players = {
+        frozenset(
+            player.player_id for player in match_team.players
+        ): match_team.team_number
+        for match_team in match_teams
+    }
+    younger_team_number = team_numbers_by_players[frozenset((1, 2))]
+    older_team_number = team_numbers_by_players[frozenset((3, 4))]
+    team_one, team_two = match_teams
+    visible_probability = _expected_win_probability(
+        team_one.average_team_rating,
+        team_two.average_team_rating,
+    )
+
+    assert match.predicted_winning_team_number == younger_team_number
+    winning_team = next(
+        match_team
+        for match_team in match_teams
+        if match_team.team_number == younger_team_number
+    )
+    assert match.predicted_win_probability == winning_team.expected_win_probability
+    assert winning_team.expected_win_probability > Decimal("0.5")
+    assert team_one.expected_win_probability != visible_probability
+
+    visible_ratings = {
+        frozenset(
+            player.player_id for player in match_team.players
+        ): match_team.average_team_rating
+        for match_team in match_teams
+    }
+    assert visible_ratings == {
+        frozenset((1, 2)): Decimal("1410.000"),
+        frozenset((3, 4)): Decimal("1450.000"),
+    }
+    assert {younger_team_number, older_team_number} == {1, 2}
+
+
+def test_generate_for_batch_does_not_log_hidden_bias_when_debug_disabled(
+    session,
+    caplog,
+):
+    payload = test_payload()
+    payload["hidden_performance_bias"] = {
+        **DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"],
+        "enabled": True,
+        "debug_enabled": False,
+    }
+    _, batch = seed_match_data(session, payload=payload, team_count=2)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    assert not [
+        record
+        for record in caplog.records
+        if hasattr(record, "hidden_performance_bias_debug")
+    ]
+
+
+def test_generate_for_batch_logs_hidden_bias_debug_payload(session, caplog):
+    payload = test_payload()
+    payload["hidden_performance_bias"] = {
+        **DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"],
+        "enabled": True,
+        "debug_enabled": True,
+        "age_advantage": {
+            **DEFAULT_CONFIG_PAYLOAD["hidden_performance_bias"]["age_advantage"],
+            "points_per_year_gap": 5,
+        },
+    }
+    _, batch = seed_match_data(session, payload=payload, team_count=2)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    debug_records = [
+        record
+        for record in caplog.records
+        if hasattr(record, "hidden_performance_bias_debug")
+    ]
+    assert len(debug_records) == 1
+    payload = debug_records[0].hidden_performance_bias_debug
+    assert payload["visible_team_ratings"].keys() == {"team_one", "team_two"}
+    assert payload["factor_adjustments"].keys() == {"team_one", "team_two"}
+    assert payload["total_adjustments"].keys() == {
+        "team_one_before_cap",
+        "team_two_before_cap",
+        "team_one",
+        "team_two",
+    }
+    assert payload["effective_team_ratings"].keys() == {"team_one", "team_two"}
+    assert "visible_probability" in payload
+    assert "final_probability" in payload
 
 
 def test_generate_for_batch_records_runtime_metrics(session, caplog):

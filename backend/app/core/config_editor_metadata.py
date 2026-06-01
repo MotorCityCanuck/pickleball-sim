@@ -814,12 +814,13 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.total_max_rating_points",
         label="Hidden bias total cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum absolute total effective-rating adjustment per team.",
         default_value=_path_default("hidden_performance_bias.total_max_rating_points"),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=200.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -834,7 +835,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.age_advantage.max_rating_points",
         label="Age advantage cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum absolute effective-rating adjustment from age advantage.",
         default_value=_path_default(
@@ -842,12 +843,13 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=100.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.age_advantage.points_per_year_gap",
         label="Age points per year gap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating points applied for each year of average-age gap.",
         default_value=_path_default(
@@ -855,12 +857,13 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=5.0,
         step=0.05,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.age_advantage.close_match_multiplier",
         label="Age close-match multiplier",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Multiplier applied to age advantage when visible competitiveness is high.",
         default_value=_path_default(
@@ -868,6 +871,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=3.0,
         step=0.05,
     ),
     ConfigEditorFieldDefinition(
@@ -907,7 +911,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.fatigue.points_per_recent_game",
         label="Fatigue points per recent game",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating penalty points per recent game in the fatigue window.",
         default_value=_path_default(
@@ -915,17 +919,19 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=10.0,
         step=0.5,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.fatigue.max_rating_penalty",
         label="Fatigue penalty cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum absolute fatigue penalty in effective-rating points.",
         default_value=_path_default("hidden_performance_bias.fatigue.max_rating_penalty"),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=100.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -953,7 +959,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.regional_strength.max_rating_points",
         label="Regional strength cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum absolute effective-rating adjustment from regional strength.",
         default_value=_path_default(
@@ -961,6 +967,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=100.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -986,13 +993,15 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.partnership_affinity.same_club_bonus",
         label="Partnership same-club bonus",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating bonus for partners from the same club.",
         default_value=_path_default(
             "hidden_performance_bias.partnership_affinity.same_club_bonus"
         ),
         basic_or_advanced="advanced",
+        min_value=0.0,
+        max_value=25.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -1011,13 +1020,15 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.partnership_affinity.matches_together_bonus_1",
         label="Partnership bonus 1",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating bonus once partnership threshold 1 is met.",
         default_value=_path_default(
             "hidden_performance_bias.partnership_affinity.matches_together_bonus_1"
         ),
         basic_or_advanced="advanced",
+        min_value=0.0,
+        max_value=25.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -1036,25 +1047,29 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.partnership_affinity.matches_together_bonus_2",
         label="Partnership bonus 2",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating bonus once partnership threshold 2 is met.",
         default_value=_path_default(
             "hidden_performance_bias.partnership_affinity.matches_together_bonus_2"
         ),
         basic_or_advanced="advanced",
+        min_value=0.0,
+        max_value=25.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.partnership_affinity.recent_matches_bonus",
         label="Partnership recent-match bonus",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Effective-rating bonus for recent partnership repetition.",
         default_value=_path_default(
             "hidden_performance_bias.partnership_affinity.recent_matches_bonus"
         ),
         basic_or_advanced="advanced",
+        min_value=0.0,
+        max_value=25.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -1072,7 +1087,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.partnership_affinity.max_rating_points",
         label="Partnership affinity cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum absolute effective-rating adjustment from partnership affinity.",
         default_value=_path_default(
@@ -1080,6 +1095,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=100.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
@@ -1094,7 +1110,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.experience.max_rating_points",
         label="Experience cap",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Maximum effective-rating bonus from experience.",
         default_value=_path_default(
@@ -1102,23 +1118,25 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=75.0,
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.experience.log_multiplier",
         label="Experience log multiplier",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Multiplier applied to log-scaled prior game volume.",
         default_value=_path_default("hidden_performance_bias.experience.log_multiplier"),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=10.0,
         step=0.1,
     ),
     ConfigEditorFieldDefinition(
         path="hidden_performance_bias.experience.close_match_multiplier",
         label="Experience close-match multiplier",
-        control_type="decimal",
+        control_type="slider",
         scope="synthetic",
         description="Multiplier applied to experience adjustment when visible competitiveness is high.",
         default_value=_path_default(
@@ -1126,6 +1144,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         ),
         basic_or_advanced="advanced",
         min_value=0.0,
+        max_value=3.0,
         step=0.05,
     ),
     ConfigEditorFieldDefinition(

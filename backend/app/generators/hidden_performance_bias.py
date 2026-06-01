@@ -1,6 +1,7 @@
 """Hidden effective-rating adjustment helpers for match generation."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 import math
@@ -9,6 +10,30 @@ from typing import Any, Mapping
 
 
 ZERO = Decimal("0")
+
+
+@dataclass(frozen=True)
+class HiddenTeamAdjustmentBreakdown:
+    """Factor-level hidden adjustment details for one team."""
+
+    age: Decimal
+    fatigue: Decimal
+    regional_strength: Decimal
+    partnership_affinity: Decimal
+    experience: Decimal
+    total_before_cap: Decimal
+    total: Decimal
+
+    @property
+    def factor_adjustments(self) -> dict[str, Decimal]:
+        """Return factor adjustments by stable debug key."""
+        return {
+            "age": self.age,
+            "fatigue": self.fatigue,
+            "regional_strength": self.regional_strength,
+            "partnership_affinity": self.partnership_affinity,
+            "experience": self.experience,
+        }
 
 
 def clamp(value: Decimal, min_value: Decimal, max_value: Decimal) -> Decimal:
@@ -24,39 +49,73 @@ def compute_hidden_team_adjustment(
     rng: random.Random | None = None,
 ) -> Decimal:
     """Return the total hidden rating-point adjustment for one team."""
+    return compute_hidden_team_adjustment_breakdown(
+        team,
+        opponent,
+        match_context,
+        config,
+        rng,
+    ).total
+
+
+def compute_hidden_team_adjustment_breakdown(
+    team: Any,
+    opponent: Any,
+    match_context: Mapping[str, Any],
+    config: Any,
+    rng: random.Random | None = None,
+) -> HiddenTeamAdjustmentBreakdown:
+    """Return factor-level hidden rating-point adjustments for one team."""
     del rng
     if not config.enabled:
-        return ZERO
+        return HiddenTeamAdjustmentBreakdown(
+            age=ZERO,
+            fatigue=ZERO,
+            regional_strength=ZERO,
+            partnership_affinity=ZERO,
+            experience=ZERO,
+            total_before_cap=ZERO,
+            total=ZERO,
+        )
 
     expected_competitiveness = _expected_competitiveness(match_context)
-    adjustment = (
-        compute_age_adjustment(
-            team,
-            opponent,
-            config.age_advantage,
-            expected_competitiveness=expected_competitiveness,
-        )
-        + compute_fatigue_adjustment(team, match_context, config.fatigue)
-        + compute_region_strength_adjustment(
-            team,
-            opponent,
-            config.regional_strength,
-        )
-        + compute_partnership_affinity_adjustment(
-            team,
-            match_context,
-            config.partnership_affinity,
-        )
-        + compute_experience_adjustment(
-            team,
-            opponent,
-            match_context,
-            config.experience,
-            expected_competitiveness=expected_competitiveness,
-        )
+    age = compute_age_adjustment(
+        team,
+        opponent,
+        config.age_advantage,
+        expected_competitiveness=expected_competitiveness,
+    )
+    fatigue = compute_fatigue_adjustment(team, match_context, config.fatigue)
+    regional_strength = compute_region_strength_adjustment(
+        team,
+        opponent,
+        config.regional_strength,
+    )
+    partnership_affinity = compute_partnership_affinity_adjustment(
+        team,
+        match_context,
+        config.partnership_affinity,
+    )
+    experience = compute_experience_adjustment(
+        team,
+        opponent,
+        match_context,
+        config.experience,
+        expected_competitiveness=expected_competitiveness,
+    )
+    total_before_cap = (
+        age + fatigue + regional_strength + partnership_affinity + experience
     )
     cap = _decimal(config.total_max_rating_points)
-    return clamp(adjustment, -cap, cap)
+    return HiddenTeamAdjustmentBreakdown(
+        age=age,
+        fatigue=fatigue,
+        regional_strength=regional_strength,
+        partnership_affinity=partnership_affinity,
+        experience=experience,
+        total_before_cap=total_before_cap,
+        total=clamp(total_before_cap, -cap, cap),
+    )
 
 
 def compute_age_adjustment(

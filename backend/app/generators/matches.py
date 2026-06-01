@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import logging
 import random
 from time import perf_counter
 from typing import Any, Callable, ContextManager, Mapping
@@ -30,7 +31,11 @@ from app.models import (
 )
 
 from .games import games_per_match, generate_match_games
+from .hidden_performance_bias import compute_hidden_team_adjustment_breakdown
 from .players import WeightedSampler, _decimal
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -808,9 +813,12 @@ class MatchGenerator:
                     continue
 
                 detail_start = perf_counter()
-                expected_win_probability = _expected_win_probability(
-                    first_team.average_rating,
-                    second_team.average_rating,
+                expected_win_probability = _hidden_adjusted_win_probability(
+                    first_team,
+                    second_team,
+                    match_date=match_date,
+                    config=config,
+                    rng=rng,
                 )
                 match = Match(
                     match_date=match_date,
@@ -1805,6 +1813,116 @@ def _rating_band(match_type: str, config: MatchGenerationConfig) -> Decimal:
 def _match_format(match_type: str, config: MatchGenerationConfig) -> str:
     games = games_per_match(match_type, config)
     return "single_game" if games == 1 else f"best_of_{games}"
+
+
+def _hidden_adjusted_win_probability(
+    first_team: TeamCandidate,
+    second_team: TeamCandidate,
+    *,
+    match_date: date,
+    config: MatchGenerationConfig,
+    rng: random.Random,
+) -> Decimal:
+    visible_probability = _expected_win_probability(
+        first_team.average_rating,
+        second_team.average_rating,
+    )
+    if not config.hidden_performance_bias.enabled:
+        return visible_probability
+
+    visible_competitiveness = _competitiveness(visible_probability)
+    match_context = {
+        "match_date": match_date,
+        "visible_team_one_rating": first_team.average_rating,
+        "visible_team_two_rating": second_team.average_rating,
+        "visible_probability": visible_probability,
+        "expected_competitiveness": visible_competitiveness,
+    }
+    first_breakdown = compute_hidden_team_adjustment_breakdown(
+        first_team,
+        second_team,
+        match_context,
+        config.hidden_performance_bias,
+        rng,
+    )
+    second_breakdown = compute_hidden_team_adjustment_breakdown(
+        second_team,
+        first_team,
+        match_context,
+        config.hidden_performance_bias,
+        rng,
+    )
+    team_one_effective_rating = first_team.average_rating + first_breakdown.total
+    team_two_effective_rating = second_team.average_rating + second_breakdown.total
+    adjusted_probability = _expected_win_probability(
+        team_one_effective_rating,
+        team_two_effective_rating,
+    )
+    if config.hidden_performance_bias.debug_enabled:
+        _log_hidden_performance_bias_debug(
+            first_team=first_team,
+            second_team=second_team,
+            match_date=match_date,
+            visible_probability=visible_probability,
+            final_probability=adjusted_probability,
+            team_one_effective_rating=team_one_effective_rating,
+            team_two_effective_rating=team_two_effective_rating,
+            team_one_breakdown=first_breakdown,
+            team_two_breakdown=second_breakdown,
+        )
+    return adjusted_probability
+
+
+def _log_hidden_performance_bias_debug(
+    *,
+    first_team: TeamCandidate,
+    second_team: TeamCandidate,
+    match_date: date,
+    visible_probability: Decimal,
+    final_probability: Decimal,
+    team_one_effective_rating: Decimal,
+    team_two_effective_rating: Decimal,
+    team_one_breakdown: Any,
+    team_two_breakdown: Any,
+) -> None:
+    payload = {
+        "match_date": match_date.isoformat(),
+        "team_one_id": first_team.id,
+        "team_two_id": second_team.id,
+        "visible_team_ratings": {
+            "team_one": _debug_decimal(first_team.average_rating),
+            "team_two": _debug_decimal(second_team.average_rating),
+        },
+        "factor_adjustments": {
+            "team_one": _debug_decimal_map(team_one_breakdown.factor_adjustments),
+            "team_two": _debug_decimal_map(team_two_breakdown.factor_adjustments),
+        },
+        "total_adjustments": {
+            "team_one_before_cap": _debug_decimal(team_one_breakdown.total_before_cap),
+            "team_two_before_cap": _debug_decimal(team_two_breakdown.total_before_cap),
+            "team_one": _debug_decimal(team_one_breakdown.total),
+            "team_two": _debug_decimal(team_two_breakdown.total),
+        },
+        "effective_team_ratings": {
+            "team_one": _debug_decimal(team_one_effective_rating),
+            "team_two": _debug_decimal(team_two_effective_rating),
+        },
+        "visible_probability": _debug_decimal(visible_probability),
+        "final_probability": _debug_decimal(final_probability),
+    }
+    logger.info(
+        "Hidden performance bias adjustment computed %s",
+        payload,
+        extra={"hidden_performance_bias_debug": payload},
+    )
+
+
+def _debug_decimal_map(values: Mapping[str, Decimal]) -> dict[str, str]:
+    return {key: _debug_decimal(value) for key, value in values.items()}
+
+
+def _debug_decimal(value: Decimal) -> str:
+    return format(value, "f")
 
 
 def _expected_win_probability(rating_one: Decimal, rating_two: Decimal) -> Decimal:
