@@ -4,11 +4,11 @@
     "generation_run_id": 32,
     "initial_history_month_count": 6,
     "output_root": "data/student_dataset_exports",
-    "overwrite_existing": false,
+    "overwrite_existing": true,
     "release_name": "napa_olympic_analytics_v1_run",
     "subsequent_month_count": 0
   },
-  "build_timestamp": "2026-06-01T17:20:24Z",
+  "build_timestamp": "2026-06-01T20:48:35Z",
   "data_quality_level": "clean",
   "file_checksums": {
     "club_memberships": "1b4e9bf7197f1d0b6b14ce58852c40299c65625846798186ba58e9269b96ea8a",
