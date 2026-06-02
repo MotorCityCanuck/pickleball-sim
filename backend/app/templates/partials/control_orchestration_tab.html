@@ -27,7 +27,10 @@
         </div>
     {% endif %}
 
-    <details class="panel-section {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}">
+    <details
+        class="panel-section {% if snapshot.allowed_actions.can_start_seed_refresh %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-orchestration-section="raw-ingest"
+    >
         <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Raw Ingest &amp; Normalization</summary>
     <section style="margin-top:14px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
@@ -254,7 +257,10 @@
     </section>
     </details>
 
-    <details class="panel-section {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}">
+    <details
+        class="panel-section {% if snapshot.allowed_actions.can_start_generation_run %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-orchestration-section="player-match-generation"
+    >
         <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Player &amp; Match Generation</summary>
     <section style="margin-top:14px;">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
@@ -401,7 +407,10 @@
     </section>
     </details>
 
-    <details class="panel-section {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}">
+    <details
+        class="panel-section {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-orchestration-section="data-export"
+    >
         <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Data Export</summary>
         <section style="margin-top:14px; display:grid; gap:16px;">
             <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
@@ -508,6 +517,19 @@
 
     <script>
         (() => {
+            document.querySelectorAll("[data-orchestration-section]").forEach((section) => {
+                const storageKey = `control-panel-orchestration-section:${section.dataset.orchestrationSection}`;
+                const savedState = window.localStorage.getItem(storageKey);
+                if (savedState === "open") {
+                    section.open = true;
+                } else if (savedState === "closed") {
+                    section.open = false;
+                }
+                section.addEventListener("toggle", () => {
+                    window.localStorage.setItem(storageKey, section.open ? "open" : "closed");
+                });
+            });
+
             const popupState = window.__controlPanelGenerationPopupState || {
                 pendingRunId: null,
                 lastNotifiedCompletionKey: null,

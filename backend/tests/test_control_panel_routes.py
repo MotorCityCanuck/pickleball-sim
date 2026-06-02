@@ -861,6 +861,13 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
     assert 'hx-trigger="every 10s"' in orchestration.body.decode()
+    assert 'data-orchestration-section="raw-ingest"' in orchestration.body.decode()
+    assert (
+        'data-orchestration-section="player-match-generation"'
+        in orchestration.body.decode()
+    )
+    assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
+    assert "control-panel-orchestration-section:" in orchestration.body.decode()
 
     assert export_config.status_code == 200
     assert "Export Configuration" in export_config.body.decode()
