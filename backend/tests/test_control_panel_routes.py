@@ -347,10 +347,10 @@ def _seed_snapshot_state(session_factory):
                 INSERT INTO job_stage_progress (
                     id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence, status,
                     progress_current, progress_total, progress_unit, progress_percent, progress_message,
-                    created_at, updated_at
+                    metadata_json, started_at, completed_at, created_at, updated_at
                 ) VALUES
-                    (1, 1, 1, 1, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, 'players succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    (2, 1, 1, 2, 'matches', 4, 'running', 0, 1, 'stage', 0.00, 'matches running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (1, 1, 1, 1, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, 'players succeeded', '{"rows_loaded": 1250}', '2026-05-20 11:00:00', '2026-05-20 11:01:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (2, 1, 1, 2, 'matches', 4, 'running', 0, 1, 'stage', 0.00, 'matches running', NULL, '2026-05-20 11:15:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -833,6 +833,7 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert progress.status_code == 200
     assert "Stage Progress" in progress.body.decode()
     assert "matches" in progress.body.decode()
+    assert "Rows created: 1,250 | Duration 1m 00s" in progress.body.decode()
 
     assert orchestration.status_code == 200
     assert "Raw Ingest &amp; Normalization" in orchestration.body.decode()
@@ -867,6 +868,8 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         in orchestration.body.decode()
     )
     assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
+    assert 'id="generation-run-name"' in orchestration.body.decode()
+    assert "hx-preserve" in orchestration.body.decode()
     assert "control-panel-orchestration-section:" in orchestration.body.decode()
 
     assert export_config.status_code == 200

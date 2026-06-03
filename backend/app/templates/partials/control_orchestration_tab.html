@@ -214,9 +214,9 @@
                                 style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
                             ></div>
                         </div>
-                        {% if stage.completion_message or stage.progress_message %}
+                        {% if stage.completion_message or stage.progress_message or stage.elapsed_label %}
                             <div style="margin-top:4px; color:#5a6477; font-size:12px;">
-                                {{ stage.completion_message or stage.progress_message }}
+                                {{ stage.completion_message or stage.progress_message }}{% if stage.elapsed_label %} | Duration {{ stage.elapsed_label }}{% endif %}
                             </div>
                         {% endif %}
                     </div>
@@ -365,8 +365,10 @@
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:13px; color:#5a6477;">Generation run name</span>
                     <input
+                        id="generation-run-name"
                         type="text"
                         name="generation_name"
+                        hx-preserve
                         value="{% if snapshot.config_summary and snapshot.config_summary.simulation_name %}{{ snapshot.config_summary.simulation_name }} run{% else %}Generation run{% endif %}"
                         style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
                     >

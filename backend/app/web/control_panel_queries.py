@@ -129,6 +129,7 @@ class StageProgressSummary:
     progress_unit: str | None
     progress_message: str | None
     completion_message: str | None
+    elapsed_label: str | None
     last_heartbeat_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -503,6 +504,10 @@ class ControlPanelQueries:
                     row.status,
                     _coerce_mapping(row.metadata_json),
                 ),
+                elapsed_label=_format_elapsed_duration(
+                    started_at=row.started_at,
+                    completed_at=row.completed_at,
+                ),
                 last_heartbeat_at=row.last_heartbeat_at,
                 started_at=row.started_at,
                 completed_at=row.completed_at,
@@ -591,6 +596,10 @@ class ControlPanelQueries:
                 completion_message=_completion_message(
                     row.status,
                     _coerce_mapping(row.metadata_json),
+                ),
+                elapsed_label=_format_elapsed_duration(
+                    started_at=row.started_at,
+                    completed_at=row.completed_at,
                 ),
                 last_heartbeat_at=row.last_heartbeat_at,
                 started_at=row.started_at,
@@ -776,6 +785,10 @@ class ControlPanelQueries:
                     completion_message=_completion_message(
                         row.status,
                         _coerce_mapping(row.metadata_json),
+                    ),
+                    elapsed_label=_format_elapsed_duration(
+                        started_at=row.started_at,
+                        completed_at=row.completed_at,
                     ),
                     last_heartbeat_at=row.last_heartbeat_at,
                     started_at=row.started_at,

@@ -236,6 +236,40 @@ def session():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_releases (
+                id integer primary key autoincrement,
+                release_name varchar(255) not null,
+                release_type varchar(50) not null,
+                release_month date,
+                generation_run_id bigint not null,
+                data_quality_level varchar(50),
+                output_path text not null,
+                status varchar(30) not null default 'pending',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                completed_at datetime,
+                error_message text,
+                foreign key(generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_release_files (
+                id integer primary key autoincrement,
+                release_id bigint not null,
+                table_name varchar(255) not null,
+                file_path text not null,
+                row_count bigint,
+                schema_hash varchar(128),
+                checksum varchar(128),
+                created_at datetime default current_timestamp not null,
+                foreign key(release_id) references student_dataset_releases(id)
+            )
+            """
+        )
     session_factory = sessionmaker(bind=engine, autoflush=False, future=True)
     db_session = session_factory()
     try:
@@ -455,6 +489,8 @@ def test_get_control_panel_snapshot_returns_ui_ready_state(session):
     assert len(second_batch.stage_progress) == 2
     assert snapshot.batch_summaries[0].stage_progress[0].completion_message == "Rows created: 1,250"
     assert snapshot.batch_summaries[0].stage_progress[1].completion_message == "Ratings updated: 2,500"
+    assert snapshot.batch_summaries[0].stage_progress[0].elapsed_label == "1m 00s"
+    assert snapshot.batch_summaries[0].stage_progress[1].elapsed_label == "1m 00s"
     assert snapshot.batch_summaries[0].elapsed_label == "3m 00s"
     assert snapshot.batch_summaries[1].elapsed_label is None
     assert second_batch.stage_progress[1].stage_name == "matches"
@@ -710,6 +746,7 @@ def test_get_control_panel_snapshot_includes_seed_job_stage_progress(session):
     assert len(snapshot.seed_data_summary.latest_seed_stage_progress) == 2
     assert snapshot.seed_data_summary.latest_seed_stage_progress[0].stage_name == "raw_seed_ingest"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[0].completion_message == "Datasets completed: 6"
+    assert snapshot.seed_data_summary.latest_seed_stage_progress[0].elapsed_label == "10m 00s"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[1].stage_name == "seed_normalization"
     assert snapshot.seed_data_summary.latest_seed_stage_progress[1].progress_percent == 50
 
