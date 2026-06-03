@@ -33,6 +33,13 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
             "destructive_rerun_enabled": False,
         },
     },
+    "instrumentation": {
+        "players_enabled": True,
+        "club_memberships_enabled": True,
+        "teams_enabled": True,
+        "matches_enabled": True,
+        "ratings_enabled": True,
+    },
     "raw_seed_data": {
         "raw_data_root": "data/raw",
         "supported_datasets": [

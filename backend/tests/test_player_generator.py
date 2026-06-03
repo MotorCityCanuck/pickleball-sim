@@ -14,11 +14,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import PlayerGenerator  # noqa: E402
 from app.models import (  # noqa: E402
     Club,
     FirstName,
     GenerationRun,
+    GenerationRuntimeMetric,
     LastName,
     MonthlyBatch,
     Player,
@@ -259,6 +261,27 @@ def session_factory():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE generation_runtime_metrics (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                subphase_name varchar(100) not null,
+                event_type varchar(30) not null,
+                started_at datetime not null,
+                completed_at datetime not null,
+                elapsed_ms bigint not null,
+                input_count bigint,
+                output_count bigint,
+                attempt_count bigint,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
     return sessionmaker(bind=engine, autoflush=False, future=True)
 
 
@@ -417,6 +440,56 @@ def test_generate_initial_population_creates_players_and_registrations(session):
     assert monthly_batch.active_player_count_start == 0
     assert monthly_batch.new_player_count == 8
     assert monthly_batch.active_player_count_end == 8
+
+
+def test_generate_initial_population_records_runtime_subphases(session):
+    generation_run, monthly_batch = seed_reference_data(session)
+    recorder = RuntimeMetricRecorder(
+        session=session,
+        generation_run_id=generation_run.id,
+        batch_id=monthly_batch.id,
+        stage_name="players",
+    )
+
+    PlayerGenerator().generate_initial_population(
+        generation_run_id=generation_run.id,
+        batch_id=monthly_batch.id,
+        session=session,
+        runtime_recorder=recorder,
+    )
+
+    metrics = (
+        session.query(GenerationRuntimeMetric)
+        .filter(GenerationRuntimeMetric.stage_name == "players")
+        .order_by(GenerationRuntimeMetric.id)
+        .all()
+    )
+    subphases = [metric.subphase_name for metric in metrics]
+    assert subphases == [
+        "load_generation_context",
+        "check_existing_rows",
+        "load_regions",
+        "synthesize_player_rows",
+        "flush_players",
+        "flush_registrations",
+        "flush_initial_ratings",
+        "finalize_batch",
+        "name_lookup_queries",
+        "club_lookup_queries",
+    ]
+    assert {metric.event_type for metric in metrics} == {"completed"}
+    assert all(metric.generation_run_id == generation_run.id for metric in metrics)
+    assert all(metric.batch_id == monthly_batch.id for metric in metrics)
+    assert all(metric.elapsed_ms >= 0 for metric in metrics)
+
+    by_subphase = {metric.subphase_name: metric for metric in metrics}
+    assert by_subphase["synthesize_player_rows"].input_count == 8
+    assert by_subphase["synthesize_player_rows"].output_count == 8
+    assert by_subphase["flush_players"].output_count == 8
+    assert by_subphase["flush_registrations"].output_count == 8
+    assert by_subphase["flush_initial_ratings"].output_count == 8
+    assert by_subphase["name_lookup_queries"].output_count > 0
+    assert by_subphase["club_lookup_queries"].output_count > 0
 
 
 def test_generate_initial_population_is_deterministic(session_factory):

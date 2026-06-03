@@ -185,6 +185,44 @@ def test_hidden_performance_bias_defaults_are_editor_scaffolded():
     assert "hidden_performance_bias.experience.close_match_multiplier" in paths
 
 
+def test_runtime_instrumentation_fields_are_checkbox_scaffolded():
+    payload = default_config_payload()
+    sections = build_config_editor_sections(payload)
+    instrumentation_section = next(
+        section
+        for section in sections
+        if section.definition.id == "synthetic_runtime_instrumentation"
+    )
+
+    fields = {field.definition.path: field for field in instrumentation_section.fields}
+    assert set(fields) == {
+        "instrumentation.players_enabled",
+        "instrumentation.club_memberships_enabled",
+        "instrumentation.teams_enabled",
+        "instrumentation.matches_enabled",
+        "instrumentation.ratings_enabled",
+    }
+    assert all(field.definition.control_type == "checkbox" for field in fields.values())
+    assert all(field.value is True for field in fields.values())
+
+
+def test_missing_runtime_instrumentation_checkboxes_display_defaults():
+    payload = default_config_payload()
+    payload.pop("instrumentation")
+
+    sections = build_config_editor_sections(payload)
+    instrumentation_section = next(
+        section
+        for section in sections
+        if section.definition.id == "synthetic_runtime_instrumentation"
+    )
+
+    for field in instrumentation_section.fields:
+        assert field.value is True
+        assert field.is_present_in_payload is False
+        assert field.is_default_value is True
+
+
 def test_hidden_performance_bias_bounded_tuning_fields_render_as_sliders():
     fields = {field.path: field for field in CONFIG_EDITOR_FIELDS}
     slider_paths = {

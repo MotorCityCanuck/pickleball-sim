@@ -63,6 +63,17 @@ def test_validate_live_config_payload_accepts_default_hidden_performance_bias():
     ] == []
 
 
+def test_validate_live_config_payload_rejects_invalid_instrumentation_flag():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["instrumentation"]["players_enabled"] = "yes"
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "instrumentation.players_enabled"
+    assert issues[0].message == "must be a boolean."
+
+
 def test_validate_live_config_payload_rejects_invalid_hidden_bias_range():
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
     payload["hidden_performance_bias"]["age_advantage"][

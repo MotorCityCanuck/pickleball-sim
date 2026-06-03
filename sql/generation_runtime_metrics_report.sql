@@ -228,6 +228,110 @@ CROSS JOIN total t
 ORDER BY st.elapsed_ms DESC;
 
 \echo ''
+\echo '== Batch-Level Player Runtime Summary =='
+WITH selected_run AS (
+    SELECT COALESCE(
+        NULLIF(:'run_id', '')::bigint,
+        (
+            SELECT generation_run_id
+            FROM generation_runtime_metrics
+            GROUP BY generation_run_id
+            ORDER BY max(started_at) DESC
+            LIMIT 1
+        )
+    ) AS generation_run_id
+),
+batch_metrics AS (
+    SELECT
+        mb.id AS batch_id,
+        mb.batch_sequence,
+        mb.batch_month,
+        mb.processing_status,
+        mb.new_player_count,
+        sum(grm.elapsed_ms) AS measured_elapsed_ms,
+        max(grm.completed_at) - min(grm.started_at) AS wall_clock_span,
+        sum(grm.elapsed_ms) FILTER (WHERE grm.subphase_name = 'synthesize_player_rows') AS synthesize_ms,
+        sum(grm.elapsed_ms) FILTER (WHERE grm.subphase_name = 'flush_players') AS player_flush_ms,
+        sum(grm.elapsed_ms) FILTER (WHERE grm.subphase_name = 'flush_registrations') AS registration_flush_ms,
+        sum(grm.elapsed_ms) FILTER (WHERE grm.subphase_name = 'flush_initial_ratings') AS initial_rating_flush_ms,
+        max(grm.output_count) FILTER (WHERE grm.subphase_name = 'name_lookup_queries') AS name_lookup_queries,
+        max(grm.output_count) FILTER (WHERE grm.subphase_name = 'club_lookup_queries') AS club_lookup_queries
+    FROM selected_run sr
+    JOIN monthly_batches mb ON mb.generation_run_id = sr.generation_run_id
+    LEFT JOIN generation_runtime_metrics grm
+        ON grm.batch_id = mb.id
+        AND grm.stage_name = 'players'
+        AND grm.event_type = 'completed'
+    GROUP BY
+        mb.id,
+        mb.batch_sequence,
+        mb.batch_month,
+        mb.processing_status,
+        mb.new_player_count
+)
+SELECT
+    batch_sequence,
+    batch_month,
+    batch_id,
+    processing_status,
+    new_player_count,
+    round(measured_elapsed_ms::numeric / 1000, 3) AS measured_seconds,
+    wall_clock_span,
+    round(synthesize_ms::numeric / 1000, 3) AS synthesize_seconds,
+    round(player_flush_ms::numeric / 1000, 3) AS player_flush_seconds,
+    round(registration_flush_ms::numeric / 1000, 3) AS registration_flush_seconds,
+    round(initial_rating_flush_ms::numeric / 1000, 3) AS initial_rating_flush_seconds,
+    name_lookup_queries,
+    club_lookup_queries
+FROM batch_metrics
+ORDER BY batch_sequence;
+
+\echo ''
+\echo '== Player Detail Totals =='
+WITH selected_run AS (
+    SELECT COALESCE(
+        NULLIF(:'run_id', '')::bigint,
+        (
+            SELECT generation_run_id
+            FROM generation_runtime_metrics
+            GROUP BY generation_run_id
+            ORDER BY max(started_at) DESC
+            LIMIT 1
+        )
+    ) AS generation_run_id
+),
+player_totals AS (
+    SELECT
+        grm.subphase_name,
+        count(*) AS metric_rows,
+        sum(grm.elapsed_ms) AS elapsed_ms,
+        avg(grm.elapsed_ms) AS avg_elapsed_ms,
+        max(grm.elapsed_ms) AS max_elapsed_ms,
+        sum(grm.input_count) AS input_count,
+        sum(grm.output_count) AS output_count
+    FROM selected_run sr
+    JOIN generation_runtime_metrics grm ON grm.generation_run_id = sr.generation_run_id
+    WHERE grm.stage_name = 'players'
+        AND grm.event_type = 'completed'
+    GROUP BY grm.subphase_name
+),
+total AS (
+    SELECT sum(elapsed_ms) AS elapsed_ms FROM player_totals
+)
+SELECT
+    pt.subphase_name,
+    pt.metric_rows,
+    round(pt.elapsed_ms::numeric / 1000, 3) AS elapsed_seconds,
+    round((pt.elapsed_ms::numeric / nullif(t.elapsed_ms, 0)) * 100, 2) AS pct_of_player_time,
+    round(pt.avg_elapsed_ms::numeric / 1000, 3) AS avg_seconds,
+    round(pt.max_elapsed_ms::numeric / 1000, 3) AS max_seconds,
+    pt.input_count,
+    pt.output_count
+FROM player_totals pt
+CROSS JOIN total t
+ORDER BY pt.elapsed_ms DESC;
+
+\echo ''
 \echo '== Ratings Detail Totals =='
 WITH selected_run AS (
     SELECT COALESCE(

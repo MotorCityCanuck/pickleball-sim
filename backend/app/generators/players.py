@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from bisect import bisect_left
+from contextlib import nullcontext
 import random
-from typing import Any, Iterable, Sequence, TypeVar
+from time import perf_counter
+from typing import Any, ContextManager, Iterable, Sequence, TypeVar
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -245,6 +247,17 @@ class NameIndex:
         ] = {}
         self.last_exact: dict[tuple[str, str], WeightedSampler[str] | None] = {}
         self.last_country: dict[str, WeightedSampler[str] | None] = {}
+        self.query_counts: dict[str, int] = {
+            "first_exact": 0,
+            "first_country_year": 0,
+            "first_state_years": 0,
+            "first_country_years": 0,
+            "last_exact": 0,
+            "last_country": 0,
+        }
+        self.query_elapsed_seconds: dict[str, float] = {
+            key: 0.0 for key in self.query_counts
+        }
 
     def choose_first_name(
         self,
@@ -321,7 +334,8 @@ class NameIndex:
     ) -> WeightedSampler[str] | None:
         if key not in self.first_exact:
             country_code, state_province_code, birth_year, gender = key
-            rows = self.session.execute(
+            rows = self._timed_query(
+                "first_exact",
                 select(FirstName.first_name, FirstName.normalized_probability)
                 .where(
                     FirstName.country_code == country_code,
@@ -329,8 +343,8 @@ class NameIndex:
                     FirstName.birth_year == birth_year,
                     FirstName.gender == gender,
                 )
-                .order_by(FirstName.id)
-            ).all()
+                .order_by(FirstName.id),
+            )
             self.first_exact[key] = _sampler_or_none(rows)
         return self.first_exact[key]
 
@@ -340,15 +354,16 @@ class NameIndex:
     ) -> WeightedSampler[str] | None:
         if key not in self.first_country_year:
             country_code, birth_year, gender = key
-            rows = self.session.execute(
+            rows = self._timed_query(
+                "first_country_year",
                 select(FirstName.first_name, FirstName.normalized_probability)
                 .where(
                     FirstName.country_code == country_code,
                     FirstName.birth_year == birth_year,
                     FirstName.gender == gender,
                 )
-                .order_by(FirstName.id)
-            ).all()
+                .order_by(FirstName.id),
+            )
             self.first_country_year[key] = _sampler_or_none(rows)
         return self.first_country_year[key]
 
@@ -360,6 +375,7 @@ class NameIndex:
     ) -> set[int]:
         key = (country_code, state_province_code, gender)
         if key not in self.first_years_by_state_gender:
+            started_at = perf_counter()
             self.first_years_by_state_gender[key] = set(
                 self.session.scalars(
                     select(FirstName.birth_year)
@@ -371,6 +387,7 @@ class NameIndex:
                     .distinct()
                 )
             )
+            self._record_query_elapsed("first_state_years", started_at)
         return self.first_years_by_state_gender[key]
 
     def _first_country_years(
@@ -380,6 +397,7 @@ class NameIndex:
     ) -> set[int]:
         key = (country_code, gender)
         if key not in self.first_years_by_country_gender:
+            started_at = perf_counter()
             self.first_years_by_country_gender[key] = set(
                 self.session.scalars(
                     select(FirstName.birth_year)
@@ -390,6 +408,7 @@ class NameIndex:
                     .distinct()
                 )
             )
+            self._record_query_elapsed("first_country_years", started_at)
         return self.first_years_by_country_gender[key]
 
     def _last_exact_sampler(
@@ -399,26 +418,47 @@ class NameIndex:
     ) -> WeightedSampler[str] | None:
         key = (country_code, state_province_code)
         if key not in self.last_exact:
-            rows = self.session.execute(
+            rows = self._timed_query(
+                "last_exact",
                 select(LastName.last_name, LastName.normalized_probability)
                 .where(
                     LastName.country_code == country_code,
                     LastName.state_province_code == state_province_code,
                 )
-                .order_by(LastName.id)
-            ).all()
+                .order_by(LastName.id),
+            )
             self.last_exact[key] = _sampler_or_none(rows)
         return self.last_exact[key]
 
     def _last_country_sampler(self, country_code: str) -> WeightedSampler[str] | None:
         if country_code not in self.last_country:
-            rows = self.session.execute(
+            rows = self._timed_query(
+                "last_country",
                 select(LastName.last_name, LastName.normalized_probability)
                 .where(LastName.country_code == country_code)
-                .order_by(LastName.id)
-            ).all()
+                .order_by(LastName.id),
+            )
             self.last_country[country_code] = _sampler_or_none(rows)
         return self.last_country[country_code]
+
+    def _timed_query(self, query_name: str, statement: Any) -> Sequence[tuple[Any, ...]]:
+        started_at = perf_counter()
+        try:
+            return self.session.execute(statement).all()
+        finally:
+            self._record_query_elapsed(query_name, started_at)
+
+    def _record_query_elapsed(self, query_name: str, started_at: float) -> None:
+        self.query_counts[query_name] += 1
+        self.query_elapsed_seconds[query_name] += perf_counter() - started_at
+
+    @property
+    def total_query_count(self) -> int:
+        return sum(self.query_counts.values())
+
+    @property
+    def total_query_elapsed_ms(self) -> int:
+        return int(sum(self.query_elapsed_seconds.values()) * 1000)
 
 
 class ClubIndex:
@@ -431,6 +471,8 @@ class ClubIndex:
             tuple[int, date],
             WeightedSampler[tuple[int, date | None]] | None,
         ] = {}
+        self.query_count = 0
+        self.query_elapsed_seconds = 0.0
 
     def choose_club(
         self,
@@ -464,6 +506,7 @@ class ClubIndex:
 
     def _clubs_for_region(self, region_id: int) -> list[tuple[int, date | None, int | None]]:
         if region_id not in self.clubs_by_region:
+            started_at = perf_counter()
             self.clubs_by_region[region_id] = [
                 (club_id, founding_date, member_capacity)
                 for club_id, founding_date, member_capacity in self.session.execute(
@@ -472,7 +515,13 @@ class ClubIndex:
                     .order_by(Club.id)
                 )
             ]
+            self.query_count += 1
+            self.query_elapsed_seconds += perf_counter() - started_at
         return self.clubs_by_region[region_id]
+
+    @property
+    def total_query_elapsed_ms(self) -> int:
+        return int(self.query_elapsed_seconds * 1000)
 
 
 class PlayerGenerator:
@@ -485,6 +534,7 @@ class PlayerGenerator:
         batch_id: int,
         player_count: int | None = None,
         session: Session | None = None,
+        runtime_recorder: Any | None = None,
     ) -> PlayerGenerationResult:
         """Generate initial players for a generation run and monthly batch."""
         if session is not None:
@@ -493,6 +543,7 @@ class PlayerGenerator:
                 batch_id=batch_id,
                 player_count=player_count,
                 session=session,
+                runtime_recorder=runtime_recorder,
             )
 
         with session_scope() as active_session:
@@ -501,6 +552,7 @@ class PlayerGenerator:
                 batch_id=batch_id,
                 player_count=player_count,
                 session=active_session,
+                runtime_recorder=runtime_recorder,
             )
 
     def _generate_initial_population(
@@ -510,34 +562,42 @@ class PlayerGenerator:
         batch_id: int,
         player_count: int | None,
         session: Session,
+        runtime_recorder: Any | None = None,
     ) -> PlayerGenerationResult:
-        generation_run = session.get(GenerationRun, generation_run_id)
-        if generation_run is None:
-            raise ValueError(f"Generation run {generation_run_id} does not exist")
+        with _measure_runtime(runtime_recorder, "load_generation_context") as metric:
+            generation_run = session.get(GenerationRun, generation_run_id)
+            if generation_run is None:
+                raise ValueError(f"Generation run {generation_run_id} does not exist")
 
-        batch = session.get(MonthlyBatch, batch_id)
-        if batch is None:
-            raise ValueError(f"Monthly batch {batch_id} does not exist")
-        if batch.generation_run_id != generation_run_id:
-            raise ValueError("Batch does not belong to the generation run")
+            batch = session.get(MonthlyBatch, batch_id)
+            if batch is None:
+                raise ValueError(f"Monthly batch {batch_id} does not exist")
+            if batch.generation_run_id != generation_run_id:
+                raise ValueError("Batch does not belong to the generation run")
+            metric["output_count"] = 2
 
-        existing_run_players = session.scalar(
-            select(func.count()).select_from(Player).where(
-                Player.generation_run_id == generation_run_id
+        with _measure_runtime(runtime_recorder, "check_existing_rows") as metric:
+            existing_run_players = session.scalar(
+                select(func.count()).select_from(Player).where(
+                    Player.generation_run_id == generation_run_id
+                )
             )
-        )
-        if existing_run_players:
-            raise ValueError(
-                f"Generation run {generation_run_id} already has players"
-            )
+            if existing_run_players:
+                raise ValueError(
+                    f"Generation run {generation_run_id} already has players"
+                )
 
-        existing_batch_registrations = session.scalar(
-            select(func.count()).select_from(PlayerRegistration).where(
-                PlayerRegistration.batch_id == batch_id
+            existing_batch_registrations = session.scalar(
+                select(func.count()).select_from(PlayerRegistration).where(
+                    PlayerRegistration.batch_id == batch_id
+                )
             )
-        )
-        if existing_batch_registrations:
-            raise ValueError(f"Monthly batch {batch_id} already has registrations")
+            if existing_batch_registrations:
+                raise ValueError(f"Monthly batch {batch_id} already has registrations")
+            metric["metadata"]["existing_run_players"] = int(existing_run_players or 0)
+            metric["metadata"]["existing_batch_registrations"] = int(
+                existing_batch_registrations or 0
+            )
 
         config = PlayerGenerationConfig.from_payload(generation_run.parameter_snapshot)
         target_count = player_count if player_count is not None else config.player_count
@@ -552,6 +612,7 @@ class PlayerGenerator:
             session=session,
             force_active=False,
             rng_seed=int(generation_run.seed_value),
+            runtime_recorder=runtime_recorder,
         )
 
     def generate_incremental_population(
@@ -560,6 +621,7 @@ class PlayerGenerator:
         generation_run_id: int,
         batch_id: int,
         session: Session | None = None,
+        runtime_recorder: Any | None = None,
     ) -> PlayerGenerationResult:
         """Generate later-batch player additions using the configured monthly growth rate."""
         if session is not None:
@@ -567,6 +629,7 @@ class PlayerGenerator:
                 generation_run_id=generation_run_id,
                 batch_id=batch_id,
                 session=session,
+                runtime_recorder=runtime_recorder,
             )
 
         with session_scope() as active_session:
@@ -574,6 +637,7 @@ class PlayerGenerator:
                 generation_run_id=generation_run_id,
                 batch_id=batch_id,
                 session=active_session,
+                runtime_recorder=runtime_recorder,
             )
 
     def _generate_incremental_population(
@@ -582,34 +646,42 @@ class PlayerGenerator:
         generation_run_id: int,
         batch_id: int,
         session: Session,
+        runtime_recorder: Any | None = None,
     ) -> PlayerGenerationResult:
-        generation_run = session.get(GenerationRun, generation_run_id)
-        if generation_run is None:
-            raise ValueError(f"Generation run {generation_run_id} does not exist")
+        with _measure_runtime(runtime_recorder, "load_generation_context") as metric:
+            generation_run = session.get(GenerationRun, generation_run_id)
+            if generation_run is None:
+                raise ValueError(f"Generation run {generation_run_id} does not exist")
 
-        batch = session.get(MonthlyBatch, batch_id)
-        if batch is None:
-            raise ValueError(f"Monthly batch {batch_id} does not exist")
-        if batch.generation_run_id != generation_run_id:
-            raise ValueError("Batch does not belong to the generation run")
+            batch = session.get(MonthlyBatch, batch_id)
+            if batch is None:
+                raise ValueError(f"Monthly batch {batch_id} does not exist")
+            if batch.generation_run_id != generation_run_id:
+                raise ValueError("Batch does not belong to the generation run")
+            metric["output_count"] = 2
 
-        existing_run_players = session.scalar(
-            select(func.count()).select_from(Player).where(
-                Player.generation_run_id == generation_run_id
+        with _measure_runtime(runtime_recorder, "check_existing_rows") as metric:
+            existing_run_players = session.scalar(
+                select(func.count()).select_from(Player).where(
+                    Player.generation_run_id == generation_run_id
+                )
             )
-        )
-        if not existing_run_players:
-            raise ValueError(
-                f"Generation run {generation_run_id} has no existing players for incremental growth"
-            )
+            if not existing_run_players:
+                raise ValueError(
+                    f"Generation run {generation_run_id} has no existing players for incremental growth"
+                )
 
-        existing_batch_registrations = session.scalar(
-            select(func.count()).select_from(PlayerRegistration).where(
-                PlayerRegistration.batch_id == batch_id
+            existing_batch_registrations = session.scalar(
+                select(func.count()).select_from(PlayerRegistration).where(
+                    PlayerRegistration.batch_id == batch_id
+                )
             )
-        )
-        if existing_batch_registrations:
-            raise ValueError(f"Monthly batch {batch_id} already has registrations")
+            if existing_batch_registrations:
+                raise ValueError(f"Monthly batch {batch_id} already has registrations")
+            metric["metadata"]["existing_run_players"] = int(existing_run_players or 0)
+            metric["metadata"]["existing_batch_registrations"] = int(
+                existing_batch_registrations or 0
+            )
 
         config = PlayerGenerationConfig.from_payload(generation_run.parameter_snapshot)
         target_count = _incremental_player_count(
@@ -639,6 +711,7 @@ class PlayerGenerator:
             session=session,
             force_active=True,
             rng_seed=int(generation_run.seed_value) * 1_000_003 + int(batch_id) * 10_009 + 31,
+            runtime_recorder=runtime_recorder,
         )
 
     def _generate_population_for_batch(
@@ -651,6 +724,7 @@ class PlayerGenerator:
         session: Session,
         force_active: bool,
         rng_seed: int,
+        runtime_recorder: Any | None = None,
     ) -> PlayerGenerationResult:
         generation_run_id = generation_run.id
         batch_id = batch.id
@@ -658,13 +732,15 @@ class PlayerGenerator:
             raise ValueError("Generation run and batch must be persisted before player generation")
 
         config = PlayerGenerationConfig.from_payload(generation_run.parameter_snapshot)
-        regions = list(
-            session.scalars(
-                select(Region)
-                .where(Region.country_code.in_(("US", "CA")))
-                .order_by(Region.country_code, Region.state_province_code, Region.id)
+        with _measure_runtime(runtime_recorder, "load_regions") as metric:
+            regions = list(
+                session.scalars(
+                    select(Region)
+                    .where(Region.country_code.in_(("US", "CA")))
+                    .order_by(Region.country_code, Region.state_province_code, Region.id)
+                )
             )
-        )
+            metric["output_count"] = len(regions)
         if not regions:
             raise ValueError("No production regions are available for player generation")
         region_by_id = {region.id: region for region in regions}
@@ -691,94 +767,125 @@ class PlayerGenerator:
                 current_chunk_size = min(chunk_size, target_count - generated_so_far)
                 generated_players: list[Player] = []
 
-                for _ in range(current_chunk_size):
-                    region = region_sampler.choose(rng)
-                    age = choose_age(rng, config, sampler=age_sampler)
-                    birth_date = choose_birth_date(rng, age, registration_month)
-                    gender = gender_sampler.choose(rng)
-                    first_name = name_index.choose_first_name(
-                        rng,
-                        country_code=region.country_code,
-                        state_province_code=region.state_province_code,
-                        birth_year=birth_date.year,
-                        gender=gender,
-                    )
-                    last_name = name_index.choose_last_name(
-                        rng,
-                        country_code=region.country_code,
-                        state_province_code=region.state_province_code,
-                    )
-                    associated_club = club_index.choose_club(
-                        rng,
-                        region_id=region.id,
-                        batch_month=registration_month,
-                    )
-                    registration_date = choose_registration_date(
-                        rng,
-                        batch_month=registration_month,
-                        birth_date=birth_date,
-                        associated_club=associated_club,
-                    )
-                    generated_players.append(
-                        Player(
-                            first_name=first_name,
-                            last_name=last_name,
+                with _measure_runtime(
+                    runtime_recorder,
+                    "synthesize_player_rows",
+                    input_count=current_chunk_size,
+                    metadata={
+                        "chunk_start": generated_so_far,
+                        "chunk_size": current_chunk_size,
+                    },
+                ) as metric:
+                    for _ in range(current_chunk_size):
+                        region = region_sampler.choose(rng)
+                        age = choose_age(rng, config, sampler=age_sampler)
+                        birth_date = choose_birth_date(rng, age, registration_month)
+                        gender = gender_sampler.choose(rng)
+                        first_name = name_index.choose_first_name(
+                            rng,
+                            country_code=region.country_code,
+                            state_province_code=region.state_province_code,
+                            birth_year=birth_date.year,
                             gender=gender,
-                            birth_date=birth_date,
-                            dominant_hand=dominant_hand_sampler.choose(rng),
-                            home_region_id=region.id,
-                            registration_date=registration_date,
-                            initial_skill_seed=initial_skill_seed(rng, config),
-                            player_status=(
-                                "ACTIVE"
-                                if force_active
-                                else player_status_sampler.choose(rng)
-                            ),
-                            generation_run_id=generation_run_id,
                         )
-                    )
+                        last_name = name_index.choose_last_name(
+                            rng,
+                            country_code=region.country_code,
+                            state_province_code=region.state_province_code,
+                        )
+                        associated_club = club_index.choose_club(
+                            rng,
+                            region_id=region.id,
+                            batch_month=registration_month,
+                        )
+                        registration_date = choose_registration_date(
+                            rng,
+                            batch_month=registration_month,
+                            birth_date=birth_date,
+                            associated_club=associated_club,
+                        )
+                        generated_players.append(
+                            Player(
+                                first_name=first_name,
+                                last_name=last_name,
+                                gender=gender,
+                                birth_date=birth_date,
+                                dominant_hand=dominant_hand_sampler.choose(rng),
+                                home_region_id=region.id,
+                                registration_date=registration_date,
+                                initial_skill_seed=initial_skill_seed(rng, config),
+                                player_status=(
+                                    "ACTIVE"
+                                    if force_active
+                                    else player_status_sampler.choose(rng)
+                                ),
+                                generation_run_id=generation_run_id,
+                            )
+                        )
+                    metric["output_count"] = len(generated_players)
 
-                session.add_all(generated_players)
-                session.flush()
+                with _measure_runtime(
+                    runtime_recorder,
+                    "flush_players",
+                    input_count=len(generated_players),
+                    metadata={"chunk_start": generated_so_far},
+                ) as metric:
+                    session.add_all(generated_players)
+                    session.flush()
+                    metric["output_count"] = len(generated_players)
 
-                registrations = [
-                    PlayerRegistration(
-                        player_id=player.id,
-                        batch_id=batch_id,
-                        registration_month=registration_month,
-                        assigned_region_id=player.home_region_id,
-                        initial_rating_value=config.initial_rating_mean,
-                        initial_confidence_score=config.initial_confidence_score,
-                    )
-                    for player in generated_players
-                ]
-                session.add_all(registrations)
-                session.flush()
-
-                rating_history_rows = [
-                    PlayerRatingHistory(
-                        player_id=player.id,
-                        rating_date=registration_month,
-                        rating_type="initial",
-                        rating_value=initial_rating_value(
-                            generation_run.seed_value,
+                with _measure_runtime(
+                    runtime_recorder,
+                    "flush_registrations",
+                    input_count=len(generated_players),
+                    metadata={"chunk_start": generated_so_far},
+                ) as metric:
+                    registrations = [
+                        PlayerRegistration(
+                            player_id=player.id,
                             batch_id=batch_id,
-                            player_sequence=generated_so_far + index,
-                            config=config,
-                        ),
-                        confidence_score=config.initial_confidence_score,
-                        volatility_score=Decimal("1.000"),
-                        regional_adjustment_factor=_regional_adjustment_factor(
-                            region_by_id.get(player.home_region_id)
-                        ),
-                        match_count_used=0,
-                        calculation_version="initial_v1",
-                        batch_id=batch_id,
-                    )
-                    for index, player in enumerate(generated_players)
-                ]
-                session.add_all(rating_history_rows)
-                session.flush()
+                            registration_month=registration_month,
+                            assigned_region_id=player.home_region_id,
+                            initial_rating_value=config.initial_rating_mean,
+                            initial_confidence_score=config.initial_confidence_score,
+                        )
+                        for player in generated_players
+                    ]
+                    session.add_all(registrations)
+                    session.flush()
+                    metric["output_count"] = len(registrations)
+
+                with _measure_runtime(
+                    runtime_recorder,
+                    "flush_initial_ratings",
+                    input_count=len(generated_players),
+                    metadata={"chunk_start": generated_so_far},
+                ) as metric:
+                    rating_history_rows = [
+                        PlayerRatingHistory(
+                            player_id=player.id,
+                            rating_date=registration_month,
+                            rating_type="initial",
+                            rating_value=initial_rating_value(
+                                generation_run.seed_value,
+                                batch_id=batch_id,
+                                player_sequence=generated_so_far + index,
+                                config=config,
+                            ),
+                            confidence_score=config.initial_confidence_score,
+                            volatility_score=Decimal("1.000"),
+                            regional_adjustment_factor=_regional_adjustment_factor(
+                                region_by_id.get(player.home_region_id)
+                            ),
+                            match_count_used=0,
+                            calculation_version="initial_v1",
+                            batch_id=batch_id,
+                        )
+                        for index, player in enumerate(generated_players)
+                    ]
+                    session.add_all(rating_history_rows)
+                    session.flush()
+                    metric["output_count"] = len(rating_history_rows)
 
                 for player in generated_players:
                     session.expunge(player)
@@ -788,10 +895,48 @@ class PlayerGenerator:
                     session.expunge(rating_history_row)
                 generated_so_far += current_chunk_size
 
-            batch.active_player_count_start = active_start
-            batch.new_player_count = target_count
-            batch.active_player_count_end = active_start + target_count
-            session.flush()
+            with _measure_runtime(
+                runtime_recorder,
+                "finalize_batch",
+                input_count=target_count,
+            ) as metric:
+                batch.active_player_count_start = active_start
+                batch.new_player_count = target_count
+                batch.active_player_count_end = active_start + target_count
+                session.flush()
+                metric["output_count"] = target_count
+
+        _record_completed_runtime(
+            runtime_recorder,
+            "name_lookup_queries",
+            elapsed_ms=name_index.total_query_elapsed_ms,
+            input_count=target_count,
+            output_count=name_index.total_query_count,
+            metadata={
+                "query_counts": name_index.query_counts,
+                "query_elapsed_ms": {
+                    key: int(value * 1000)
+                    for key, value in name_index.query_elapsed_seconds.items()
+                },
+                "first_exact_cache_size": len(name_index.first_exact),
+                "first_country_year_cache_size": len(name_index.first_country_year),
+                "last_exact_cache_size": len(name_index.last_exact),
+                "last_country_cache_size": len(name_index.last_country),
+            },
+        )
+        _record_completed_runtime(
+            runtime_recorder,
+            "club_lookup_queries",
+            elapsed_ms=club_index.total_query_elapsed_ms,
+            input_count=target_count,
+            output_count=club_index.query_count,
+            metadata={
+                "region_cache_size": len(club_index.clubs_by_region),
+                "club_sampler_cache_size": len(club_index.club_samplers),
+            },
+        )
+        if runtime_recorder is not None:
+            runtime_recorder.flush()
 
         return PlayerGenerationResult(
             generation_run_id=generation_run_id,
@@ -935,6 +1080,55 @@ def weighted_choice(
         if target < cumulative:
             return value
     return normalized_items[-1][0]
+
+
+def _measure_runtime(
+    runtime_recorder: Any | None,
+    subphase_name: str,
+    *,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    attempt_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ContextManager[dict[str, Any]]:
+    if runtime_recorder is None:
+        return nullcontext(
+            {
+                "input_count": input_count,
+                "output_count": output_count,
+                "attempt_count": attempt_count,
+                "metadata": dict(metadata or {}),
+            }
+        )
+    return runtime_recorder.measure(
+        subphase_name,
+        input_count=input_count,
+        output_count=output_count,
+        attempt_count=attempt_count,
+        metadata=metadata,
+    )
+
+
+def _record_completed_runtime(
+    runtime_recorder: Any | None,
+    subphase_name: str,
+    *,
+    elapsed_ms: int,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    attempt_count: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if runtime_recorder is None:
+        return
+    runtime_recorder.record_completed(
+        subphase_name,
+        elapsed_ms=elapsed_ms,
+        input_count=input_count,
+        output_count=output_count,
+        attempt_count=attempt_count,
+        metadata=metadata,
+    )
 
 
 def _sampler_or_none(rows: Sequence[tuple[T, Any]]) -> WeightedSampler[T] | None:

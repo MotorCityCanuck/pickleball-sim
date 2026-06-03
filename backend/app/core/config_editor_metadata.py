@@ -256,6 +256,51 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         required=True,
     ),
     ConfigEditorFieldDefinition(
+        path="instrumentation.players_enabled",
+        label="Player instrumentation",
+        control_type="checkbox",
+        scope="synthetic",
+        description="Record detailed runtime metrics for player creation.",
+        default_value=_path_default("instrumentation.players_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.club_memberships_enabled",
+        label="Club membership instrumentation",
+        control_type="checkbox",
+        scope="synthetic",
+        description="Record runtime metrics for the club membership generation module.",
+        default_value=_path_default("instrumentation.club_memberships_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.teams_enabled",
+        label="Team instrumentation",
+        control_type="checkbox",
+        scope="synthetic",
+        description="Record runtime metrics for the team generation module.",
+        default_value=_path_default("instrumentation.teams_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.matches_enabled",
+        label="Match instrumentation",
+        control_type="checkbox",
+        scope="synthetic",
+        description="Record detailed runtime metrics for match generation.",
+        default_value=_path_default("instrumentation.matches_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.ratings_enabled",
+        label="Rating instrumentation",
+        control_type="checkbox",
+        scope="synthetic",
+        description="Record detailed runtime metrics for rating updates.",
+        default_value=_path_default("instrumentation.ratings_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
         path="player_generation.player_count",
         label="Initial player count",
         control_type="integer",
@@ -1360,6 +1405,19 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         ),
     ),
     ConfigEditorSectionDefinition(
+        id="synthetic_runtime_instrumentation",
+        scope="synthetic",
+        title="Runtime Instrumentation",
+        description="Per-module runtime metric switches. Disabled modules still write disabled-marker rows for analysis.",
+        field_paths=(
+            "instrumentation.players_enabled",
+            "instrumentation.club_memberships_enabled",
+            "instrumentation.teams_enabled",
+            "instrumentation.matches_enabled",
+            "instrumentation.ratings_enabled",
+        ),
+    ),
+    ConfigEditorSectionDefinition(
         id="synthetic_player_generation",
         scope="synthetic",
         title="Player Generation",
@@ -1563,6 +1621,13 @@ def _build_field_state(
 ) -> ConfigEditorFieldState:
     definition = CONFIG_EDITOR_FIELDS_BY_PATH[path]
     value = get_payload_value(payload, path)
+    is_present_in_payload = value is not None
+    if (
+        value is None
+        and definition.control_type == "checkbox"
+        and definition.default_value is not None
+    ):
+        value = definition.default_value
     linked_value = (
         get_payload_value(payload, definition.linked_path)
         if definition.linked_path
@@ -1578,7 +1643,7 @@ def _build_field_state(
                 or linked_value == definition.linked_default_value
             )
         ),
-        is_present_in_payload=value is not None,
+        is_present_in_payload=is_present_in_payload,
         linked_value=linked_value,
         linked_is_present_in_payload=linked_value is not None,
     )

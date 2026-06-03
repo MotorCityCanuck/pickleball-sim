@@ -327,6 +327,11 @@ class MonthlyGenerationPipeline:
             details={},
             progress_listener=progress_listener,
         )
+        module_instrumentation_enabled = self._module_instrumentation_enabled(
+            session,
+            generation_run_id=generation_run_id,
+            module_name=step,
+        )
         runtime_recorder = (
             RuntimeMetricRecorder(
                 session=session,
@@ -334,7 +339,7 @@ class MonthlyGenerationPipeline:
                 batch_id=batch.id,
                 stage_name="monthly_pipeline",
             )
-            if self.runtime_metrics_enabled
+            if self.runtime_metrics_enabled and module_instrumentation_enabled
             else None
         )
         try:
@@ -349,6 +354,20 @@ class MonthlyGenerationPipeline:
                     metric["output_count"] = _pipeline_step_output_count(result)
                     metric["metadata"]["result_status"] = result.status
                     metric["metadata"]["details"] = result.details
+            if self.runtime_metrics_enabled and not module_instrumentation_enabled:
+                self._record_disabled_runtime_metric(
+                    session=session,
+                    generation_run_id=generation_run_id,
+                    batch_id=batch.id,
+                    stage_name="monthly_pipeline",
+                    subphase_name=step,
+                    metadata={
+                        "module_name": step,
+                        "result_status": result.status,
+                        "details": result.details,
+                    },
+                    output_count=_pipeline_step_output_count(result),
+                )
         except Exception as exc:
             _emit_progress(
                 generation_run_id=generation_run_id,
@@ -401,11 +420,18 @@ class MonthlyGenerationPipeline:
                 )
             raise ValueError("Player registrations already exist for this batch")
 
+        runtime_recorder = self._detail_runtime_recorder(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            stage_name="players",
+        )
         if existing_players:
             result = self.player_generator.generate_incremental_population(
                 generation_run_id=generation_run_id,
                 batch_id=batch_id,
                 session=session,
+                runtime_recorder=runtime_recorder,
             )
         else:
             result = self.player_generator.generate_initial_population(
@@ -413,6 +439,7 @@ class MonthlyGenerationPipeline:
                 batch_id=batch_id,
                 player_count=player_count,
                 session=session,
+                runtime_recorder=runtime_recorder,
             )
         return PipelineStepResult(
             "players",
@@ -529,15 +556,11 @@ class MonthlyGenerationPipeline:
                 )
             raise ValueError(f"Monthly batch {batch.id} already has matches")
 
-        runtime_recorder = (
-            RuntimeMetricRecorder(
-                session=session,
-                generation_run_id=generation_run_id,
-                batch_id=batch.id,
-                stage_name="matches",
-            )
-            if self.runtime_metrics_enabled
-            else None
+        runtime_recorder = self._detail_runtime_recorder(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch.id,
+            stage_name="matches",
         )
         match_generator_kwargs = {
             "batch_id": batch.id,
@@ -613,15 +636,11 @@ class MonthlyGenerationPipeline:
             )
             raise ValueError(f"Monthly batch {batch_id} already has rating updates")
 
-        runtime_recorder = (
-            RuntimeMetricRecorder(
-                session=session,
-                generation_run_id=generation_run_id,
-                batch_id=batch_id,
-                stage_name="ratings",
-            )
-            if self.runtime_metrics_enabled
-            else None
+        runtime_recorder = self._detail_runtime_recorder(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            stage_name="ratings",
         )
         rating_generator_kwargs = {
             "batch_id": batch_id,
@@ -642,6 +661,84 @@ class MonthlyGenerationPipeline:
                 "log_count": result.log_count,
             },
         )
+
+    def _detail_runtime_recorder(
+        self,
+        *,
+        session: Session,
+        generation_run_id: int,
+        batch_id: int,
+        stage_name: str,
+    ) -> RuntimeMetricRecorder | None:
+        if not self.runtime_metrics_enabled:
+            return None
+        if self._module_instrumentation_enabled(
+            session,
+            generation_run_id=generation_run_id,
+            module_name=stage_name,
+        ):
+            return RuntimeMetricRecorder(
+                session=session,
+                generation_run_id=generation_run_id,
+                batch_id=batch_id,
+                stage_name=stage_name,
+            )
+        self._record_disabled_runtime_metric(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            stage_name=stage_name,
+            subphase_name="instrumentation_disabled",
+            metadata={"module_name": stage_name},
+        )
+        return None
+
+    def _module_instrumentation_enabled(
+        self,
+        session: Session,
+        *,
+        generation_run_id: int,
+        module_name: str,
+    ) -> bool:
+        generation_run = session.get(GenerationRun, generation_run_id)
+        payload = generation_run.parameter_snapshot if generation_run else None
+        if not isinstance(payload, dict):
+            return True
+        instrumentation = payload.get("instrumentation")
+        if not isinstance(instrumentation, dict):
+            return True
+        value = instrumentation.get(f"{module_name}_enabled", True)
+        return value if isinstance(value, bool) else True
+
+    def _record_disabled_runtime_metric(
+        self,
+        *,
+        session: Session,
+        generation_run_id: int,
+        batch_id: int,
+        stage_name: str,
+        subphase_name: str,
+        metadata: dict[str, Any] | None = None,
+        output_count: int | None = None,
+    ) -> None:
+        recorder = RuntimeMetricRecorder(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            stage_name=stage_name,
+        )
+        disabled_metadata = {
+            "instrumentation_enabled": False,
+            "reason": "disabled_by_configuration",
+        }
+        disabled_metadata.update(metadata or {})
+        recorder.record_completed(
+            subphase_name,
+            elapsed_ms=0,
+            output_count=output_count,
+            metadata=disabled_metadata,
+        )
+        recorder.flush()
 
 
 def _successive_batches(

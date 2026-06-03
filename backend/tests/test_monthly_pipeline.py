@@ -234,13 +234,14 @@ def session(session_factory):
         db_session.close()
 
 
-def seed_run(session):
+def seed_run(session, *, parameter_snapshot=None):
     session.add(
         GenerationRun(
             id=1,
             generation_name="pipeline",
             seed_value=42,
             simulation_version="test",
+            parameter_snapshot=parameter_snapshot,
             status="not_started",
         )
     )
@@ -268,7 +269,15 @@ def seed_run(session):
 
 
 class FakePlayerGenerator:
-    def generate_initial_population(self, *, generation_run_id, batch_id, player_count, session):
+    def generate_initial_population(
+        self,
+        *,
+        generation_run_id,
+        batch_id,
+        player_count,
+        session,
+        runtime_recorder=None,
+    ):
         rows_loaded = player_count or 2
         session.add_all(
             [
@@ -303,7 +312,14 @@ class FakePlayerGenerator:
             active_player_count_end=rows_loaded,
         )
 
-    def generate_incremental_population(self, *, generation_run_id, batch_id, session):
+    def generate_incremental_population(
+        self,
+        *,
+        generation_run_id,
+        batch_id,
+        session,
+        runtime_recorder=None,
+    ):
         next_player_id = session.query(Player).count() + 1
         session.add(
             Player(
@@ -594,6 +610,60 @@ def test_pipeline_records_coarse_stage_runtime_metrics(session):
     assert all(metric.batch_id == 1 for metric in metrics)
     assert all(metric.elapsed_ms >= 0 for metric in metrics)
     assert all(metric.metadata_json["result_status"] == "generated" for metric in metrics)
+
+
+def test_pipeline_records_disabled_instrumentation_markers(session):
+    seed_run(
+        session,
+        parameter_snapshot={
+            "instrumentation": {
+                "players_enabled": False,
+                "matches_enabled": True,
+                "ratings_enabled": True,
+            }
+        },
+    )
+
+    fake_pipeline(runtime_metrics_enabled=True).run_months(
+        generation_run_id=1,
+        months=1,
+        session=session,
+    )
+
+    player_pipeline_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "monthly_pipeline",
+            GenerationRuntimeMetric.subphase_name == "players",
+        )
+        .one()
+    )
+    assert player_pipeline_metric.elapsed_ms == 0
+    assert player_pipeline_metric.metadata_json["instrumentation_enabled"] is False
+    assert player_pipeline_metric.metadata_json["module_name"] == "players"
+    assert player_pipeline_metric.metadata_json["result_status"] == "generated"
+
+    player_detail_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "players",
+            GenerationRuntimeMetric.subphase_name == "instrumentation_disabled",
+        )
+        .one()
+    )
+    assert player_detail_metric.elapsed_ms == 0
+    assert player_detail_metric.metadata_json["instrumentation_enabled"] is False
+    assert player_detail_metric.metadata_json["module_name"] == "players"
+
+    assert (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "players",
+            GenerationRuntimeMetric.subphase_name == "synthesize_player_rows",
+        )
+        .count()
+        == 0
+    )
 
 
 def test_pipeline_skips_succeeded_batch_when_skip_existing_is_enabled(session):

@@ -45,6 +45,7 @@ def validate_live_config_payload(
     issues.extend(_validate_supported_datasets(payload))
     issues.extend(_validate_first_batch_month(payload))
     issues.extend(_validate_historical_batch_count(payload))
+    issues.extend(_validate_instrumentation(payload))
     issues.extend(_validate_hidden_performance_bias(payload))
 
     module_validators = (
@@ -65,6 +66,31 @@ def validate_live_config_payload(
             issues.append(issue)
 
     return tuple(issues)
+
+
+def _validate_instrumentation(
+    payload: Mapping[str, Any],
+) -> list[ConfigValidationIssue]:
+    instrumentation = payload.get("instrumentation")
+    if not isinstance(instrumentation, Mapping):
+        return []
+
+    issues: list[ConfigValidationIssue] = []
+    for key in (
+        "players_enabled",
+        "club_memberships_enabled",
+        "teams_enabled",
+        "matches_enabled",
+        "ratings_enabled",
+    ):
+        issues.extend(
+            _validate_bool(
+                instrumentation,
+                key,
+                f"instrumentation.{key}",
+            )
+        )
+    return issues
 
 
 def _validate_supported_datasets(
