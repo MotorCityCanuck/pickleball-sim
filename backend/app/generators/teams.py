@@ -43,6 +43,7 @@ class TeamFormationConfig:
     rating_gap_std_dev: Decimal
     rating_gap_max: Decimal
     team_type_weights: tuple[tuple[str, Decimal], ...]
+    competitive_team_rate: Decimal
     team_persistence_probability_recreational: Decimal
     team_persistence_probability_competitive: Decimal
     dormant_team_reactivation_rate: Decimal
@@ -53,7 +54,6 @@ class TeamFormationConfig:
     team_region_proximity_weight: Decimal
     team_prior_partnership_weight: Decimal
     team_noise_factor: Decimal
-    monthly_team_dissolution_rate: Decimal
     allow_multiple_active_teams_per_scope: bool
 
     @classmethod
@@ -111,12 +111,16 @@ class TeamFormationConfig:
             rating_gap_std_dev=rating_gap_std_dev,
             rating_gap_max=rating_gap_max,
             team_type_weights=team_type_weights,
+            competitive_team_rate=_probability(
+                team_config.get("competitive_team_rate", 0.20),
+                "competitive_team_rate",
+            ),
             team_persistence_probability_recreational=_probability(
-                team_config.get("team_persistence_probability_recreational", 0.72),
+                team_config.get("team_persistence_probability_recreational", 0.25),
                 "team_persistence_probability_recreational",
             ),
             team_persistence_probability_competitive=_probability(
-                team_config.get("team_persistence_probability_competitive", 0.88),
+                team_config.get("team_persistence_probability_competitive", 0.75),
                 "team_persistence_probability_competitive",
             ),
             dormant_team_reactivation_rate=_probability(
@@ -150,10 +154,6 @@ class TeamFormationConfig:
             team_noise_factor=_probability(
                 team_config.get("team_noise_factor", 0.15),
                 "team_noise_factor",
-            ),
-            monthly_team_dissolution_rate=_probability(
-                team_config.get("monthly_team_dissolution_rate", 0.10),
-                "monthly_team_dissolution_rate",
             ),
             allow_multiple_active_teams_per_scope=bool(
                 team_config.get("allow_multiple_active_teams_per_scope", False)
@@ -528,9 +528,8 @@ class TeamGenerator:
                 team_status="active",
                 formation_date=batch.batch_month,
                 chemistry_score=_initial_chemistry(rng, config),
-                persistence_probability=_team_persistence_probability(
-                    first_player,
-                    partner,
+                persistence_probability=_assigned_team_persistence_probability(
+                    rng,
                     config=config,
                 ),
                 generation_run_id=generation_run_id,
@@ -676,11 +675,7 @@ def _apply_monthly_team_lifecycle(
     )
     for team in active_teams:
         persistence = float(team.persistence_probability or Decimal("0"))
-        dissolve_probability = float(config.monthly_team_dissolution_rate) * max(
-            0.0,
-            1.0 - persistence,
-        )
-        if rng.random() >= dissolve_probability:
+        if rng.random() < persistence:
             continue
         team.team_status = (
             "retired"
@@ -887,21 +882,14 @@ def _initial_chemistry(
     return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
 
-def _team_persistence_probability(
-    first_player: PlayerCandidate,
-    second_player: PlayerCandidate,
+def _assigned_team_persistence_probability(
+    rng: random.Random,
     *,
     config: TeamFormationConfig,
 ) -> Decimal:
-    if _is_competitive_player_context(first_player) and _is_competitive_player_context(
-        second_player
-    ):
+    if _random_probability(rng) < config.competitive_team_rate:
         return config.team_persistence_probability_competitive
     return config.team_persistence_probability_recreational
-
-
-def _is_competitive_player_context(player: PlayerCandidate) -> bool:
-    return (player.primary_club_competitiveness or "").strip().lower() == "competitive"
 
 
 def _team_type_weights(value: dict[str, Any]) -> tuple[tuple[str, Decimal], ...]:

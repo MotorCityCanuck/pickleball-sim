@@ -331,18 +331,14 @@ def test_generate_for_batch_enforces_team_type_gender_constraints(session):
         assert genders == {"M", "F"}
 
 
-def test_generate_for_batch_assigns_persistence_by_primary_club_competitiveness(session):
+def test_generate_for_batch_assigns_recreational_persistence_when_competitive_rate_zero(session):
     payload = test_payload(20)
     payload["team_formation"]["same_club_team_rate"] = 1.0
     payload["team_formation"]["same_region_team_rate"] = 1.0
+    payload["team_formation"]["competitive_team_rate"] = 0.0
     payload["team_formation"]["team_persistence_probability_recreational"] = 0.61
     payload["team_formation"]["team_persistence_probability_competitive"] = 0.93
-    generation_run, batch = seed_team_data(
-        session,
-        payload=payload,
-        player_count=20,
-        club_competitiveness_levels=("competitive", "recreational"),
-    )
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=20)
 
     TeamGenerator().generate_for_batch(
         generation_run_id=generation_run.id,
@@ -350,21 +346,25 @@ def test_generate_for_batch_assigns_persistence_by_primary_club_competitiveness(
         session=session,
     )
 
-    player_club_competitiveness = {
-        membership.player_id: session.get(Club, membership.club_id).competitiveness_level
-        for membership in session.query(ClubMembership).filter_by(is_primary=True)
-    }
     for team in session.query(Team):
-        player_ids = [membership.player_id for membership in team.memberships]
-        expected = (
-            Decimal("0.93")
-            if all(
-                player_club_competitiveness.get(player_id) == "competitive"
-                for player_id in player_ids
-            )
-            else Decimal("0.61")
-        )
-        assert Decimal(str(team.persistence_probability)) == expected
+        assert Decimal(str(team.persistence_probability)) == Decimal("0.61")
+
+
+def test_generate_for_batch_assigns_competitive_persistence_when_competitive_rate_one(session):
+    payload = test_payload(20)
+    payload["team_formation"]["competitive_team_rate"] = 1.0
+    payload["team_formation"]["team_persistence_probability_recreational"] = 0.61
+    payload["team_formation"]["team_persistence_probability_competitive"] = 0.93
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=20)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    for team in session.query(Team):
+        assert Decimal(str(team.persistence_probability)) == Decimal("0.93")
 
 
 def test_generate_for_batch_is_deterministic(session_factory):
@@ -459,11 +459,20 @@ def test_config_validates_probability_fields():
         TeamFormationConfig.from_payload(payload)
 
 
+def test_config_validates_competitive_team_rate():
+    payload = test_payload(2)
+    payload["team_formation"]["competitive_team_rate"] = 2
+
+    with pytest.raises(ValueError, match="competitive_team_rate"):
+        TeamFormationConfig.from_payload(payload)
+
+
 def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
     payload = test_payload(20)
     payload["team_formation"]["player_team_participation_rate"] = 1.0
-    payload["team_formation"]["monthly_team_dissolution_rate"] = 0.0
     payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    payload["team_formation"]["team_persistence_probability_recreational"] = 1.0
+    payload["team_formation"]["team_persistence_probability_competitive"] = 1.0
     payload["team_formation"]["same_club_team_rate"] = 0.0
     payload["team_formation"]["same_region_team_rate"] = 0.0
     payload["team_formation"]["rating_gap_max"] = 10_000
@@ -555,6 +564,56 @@ def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
         new_players[0].id,
         new_players[1].id,
     }
+
+
+def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecycle(session):
+    payload = test_payload(4)
+    payload["team_formation"]["player_team_participation_rate"] = 1.0
+    payload["team_formation"]["competitive_team_rate"] = 0.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    payload["team_formation"]["retired_team_rate_on_dissolution"] = 0.0
+    payload["team_formation"]["team_type_weights"] = {
+        "mens_doubles": 0.0,
+        "womens_doubles": 0.0,
+        "mixed_doubles": 0.0,
+        "open_doubles": 1.0,
+    }
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=4)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    teams = session.query(Team).order_by(Team.id).all()
+    teams[0].persistence_probability = Decimal("1.0")
+    teams[1].persistence_probability = Decimal("0.0")
+    session.commit()
+
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="future_increment",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.commit()
+
+    result = TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    session.refresh(teams[0])
+    session.refresh(teams[1])
+    assert result.rows_loaded == 1
+    assert teams[0].team_status == "active"
+    assert teams[0].dissolution_date is None
+    assert teams[1].team_status == "dormant"
+    assert teams[1].dissolution_date == date(2024, 2, 1)
 
 
 def _all_teams_have_two_players(session):

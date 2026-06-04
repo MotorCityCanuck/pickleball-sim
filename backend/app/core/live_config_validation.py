@@ -553,6 +553,7 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("same_region_team_rate", "team_formation.same_region_team_rate"),
         ("rating gap settings", "team_formation.rating_gap_mean"),
         ("team_type_weights", "team_formation.team_type_weights"),
+        ("competitive_team_rate", "team_formation.competitive_team_rate"),
         (
             "team_persistence_probability_recreational",
             "team_formation.team_persistence_probability_recreational",
@@ -570,10 +571,6 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
             "team_formation.team_prior_partnership_weight",
         ),
         ("team_noise_factor", "team_formation.team_noise_factor"),
-        (
-            "monthly_team_dissolution_rate",
-            "team_formation.monthly_team_dissolution_rate",
-        ),
     ),
     "matches": (
         (
