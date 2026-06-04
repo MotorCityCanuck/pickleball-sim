@@ -516,6 +516,10 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
             "player_generation.monthly_player_inactivation_rate",
         ),
         ("age bounds", "player_generation.age_min"),
+        (
+            "minimum_registration_age",
+            "player_generation.minimum_registration_age",
+        ),
         ("elite_tail_rate", "ratings.initial_rating_elite_tail_rate"),
         ("elite rating bounds", "ratings.initial_rating_elite_min"),
         ("initial_confidence_score", "confidence.initial_confidence_score"),

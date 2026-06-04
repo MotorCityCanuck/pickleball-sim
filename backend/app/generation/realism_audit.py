@@ -152,19 +152,20 @@ PLAYER_AGE_DISTRIBUTION_SQL = {
         WITH player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
+                    WHEN CAST((julianday(pr.registration_month) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
                         THEN 'under_18'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
+                    WHEN CAST((julianday(pr.registration_month) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
                         THEN '18_29'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
+                    WHEN CAST((julianday(pr.registration_month) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
                         THEN '30_44'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
+                    WHEN CAST((julianday(pr.registration_month) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
                         THEN '45_59'
-                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
+                    WHEN CAST((julianday(pr.registration_month) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
                         THEN '60_74'
                     ELSE '75_plus'
                 END AS age_bucket
             FROM players p
+            JOIN player_registrations pr ON pr.player_id = p.id
             WHERE p.generation_run_id = :generation_run_id
         )
         SELECT
@@ -190,8 +191,94 @@ PLAYER_AGE_DISTRIBUTION_SQL = {
         WITH player_ages AS (
             SELECT
                 CASE
-                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 18
+                    WHEN CAST(EXTRACT(YEAR FROM age(pr.registration_month, p.birth_date)) AS INTEGER) < 18
                         THEN 'under_18'
+                    WHEN CAST(EXTRACT(YEAR FROM age(pr.registration_month, p.birth_date)) AS INTEGER) < 30
+                        THEN '18_29'
+                    WHEN CAST(EXTRACT(YEAR FROM age(pr.registration_month, p.birth_date)) AS INTEGER) < 45
+                        THEN '30_44'
+                    WHEN CAST(EXTRACT(YEAR FROM age(pr.registration_month, p.birth_date)) AS INTEGER) < 60
+                        THEN '45_59'
+                    WHEN CAST(EXTRACT(YEAR FROM age(pr.registration_month, p.birth_date)) AS INTEGER) < 75
+                        THEN '60_74'
+                    ELSE '75_plus'
+                END AS age_bucket
+            FROM players p
+            JOIN player_registrations pr ON pr.player_id = p.id
+            WHERE p.generation_run_id = :generation_run_id
+        )
+        SELECT
+            age_bucket,
+            COUNT(*) AS player_count,
+            ROUND(
+                100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                2
+            ) AS player_pct
+        FROM player_ages
+        GROUP BY age_bucket
+        ORDER BY
+            CASE age_bucket
+                WHEN 'under_18' THEN 0
+                WHEN '18_29' THEN 1
+                WHEN '30_44' THEN 2
+                WHEN '45_59' THEN 3
+                WHEN '60_74' THEN 4
+                ELSE 5
+            END
+    """,
+}
+
+
+PLAYER_REGISTRATION_AGE_DISTRIBUTION_SQL = {
+    "sqlite": """
+        WITH player_ages AS (
+            SELECT
+                CASE
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 12
+                        THEN 'under_12'
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 18
+                        THEN '12_17'
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 30
+                        THEN '18_29'
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 45
+                        THEN '30_44'
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 60
+                        THEN '45_59'
+                    WHEN CAST((julianday(p.registration_date) - julianday(p.birth_date)) / 365.2425 AS INTEGER) < 75
+                        THEN '60_74'
+                    ELSE '75_plus'
+                END AS age_bucket
+            FROM players p
+            WHERE p.generation_run_id = :generation_run_id
+        )
+        SELECT
+            age_bucket,
+            COUNT(*) AS player_count,
+            ROUND(
+                100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                2
+            ) AS player_pct
+        FROM player_ages
+        GROUP BY age_bucket
+        ORDER BY
+            CASE age_bucket
+                WHEN 'under_12' THEN 0
+                WHEN '12_17' THEN 1
+                WHEN '18_29' THEN 2
+                WHEN '30_44' THEN 3
+                WHEN '45_59' THEN 4
+                WHEN '60_74' THEN 5
+                ELSE 6
+            END
+    """,
+    "postgresql": """
+        WITH player_ages AS (
+            SELECT
+                CASE
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 12
+                        THEN 'under_12'
+                    WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 18
+                        THEN '12_17'
                     WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 30
                         THEN '18_29'
                     WHEN CAST(EXTRACT(YEAR FROM age(p.registration_date, p.birth_date)) AS INTEGER) < 45
@@ -216,12 +303,13 @@ PLAYER_AGE_DISTRIBUTION_SQL = {
         GROUP BY age_bucket
         ORDER BY
             CASE age_bucket
-                WHEN 'under_18' THEN 0
-                WHEN '18_29' THEN 1
-                WHEN '30_44' THEN 2
-                WHEN '45_59' THEN 3
-                WHEN '60_74' THEN 4
-                ELSE 5
+                WHEN 'under_12' THEN 0
+                WHEN '12_17' THEN 1
+                WHEN '18_29' THEN 2
+                WHEN '30_44' THEN 3
+                WHEN '45_59' THEN 4
+                WHEN '60_74' THEN 5
+                ELSE 6
             END
     """,
 }
@@ -567,12 +655,21 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         name="player_age_distribution",
         scope="generation_run",
         category="players",
-        description="Observed player age-bucket distribution versus configured weights.",
+        description="Observed player age-bucket distribution at player creation versus configured weights.",
         sql=PLAYER_AGE_DISTRIBUTION_SQL,
-        required_params=("generation_run_id", "batch_id"),
+        required_params=("generation_run_id",),
         tags=("players", "distribution", "age"),
         related_config_keys=("player_generation.age_distribution",),
         post_process=_post_process_player_age_distribution,
+    ),
+    RealismAuditQuery(
+        name="player_registration_age_distribution",
+        scope="generation_run",
+        category="players",
+        description="Observed player age-bucket distribution at stored registration date.",
+        sql=PLAYER_REGISTRATION_AGE_DISTRIBUTION_SQL,
+        required_params=("generation_run_id",),
+        tags=("players", "distribution", "age", "registration"),
     ),
     RealismAuditQuery(
         name="player_region_distribution",

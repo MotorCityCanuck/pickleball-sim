@@ -288,6 +288,7 @@ def seed_audit_dataset(session) -> None:
                             "female": 0.5
                         },
                         "age_distribution": {
+                            "under_18": 0.0,
                             "18_29": 0.25,
                             "30_44": 0.125,
                             "45_59": 0.25,
@@ -627,6 +628,13 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
     )
     assert result_map["player_age_distribution"] == (
         {
+            "age_bucket": "under_18",
+            "player_count": 0,
+            "player_pct": 0.0,
+            "configured_pct": 0.0,
+            "pct_point_drift": 0.0,
+        },
+        {
             "age_bucket": "18_29",
             "player_count": 2,
             "player_pct": 25.0,
@@ -788,7 +796,7 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
     )
 
 
-def test_player_age_distribution_uses_registration_date(session):
+def test_player_age_distribution_uses_creation_month(session):
     seed_audit_dataset(session)
     session.execute(
         text(
@@ -806,11 +814,18 @@ def test_player_age_distribution_uses_registration_date(session):
 
     assert results[0].rows == (
         {
+            "age_bucket": "under_18",
+            "player_count": 0,
+            "player_pct": 0.0,
+            "configured_pct": 0.0,
+            "pct_point_drift": 0.0,
+        },
+        {
             "age_bucket": "18_29",
-            "player_count": 1,
-            "player_pct": 12.5,
+            "player_count": 2,
+            "player_pct": 25.0,
             "configured_pct": 25.0,
-            "pct_point_drift": -12.5,
+            "pct_point_drift": 0.0,
         },
         {
             "age_bucket": "30_44",
@@ -840,12 +855,50 @@ def test_player_age_distribution_uses_registration_date(session):
             "configured_pct": 0.0,
             "pct_point_drift": 0.0,
         },
+    )
+
+
+def test_player_registration_age_distribution_uses_registration_date(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            UPDATE players
+            SET registration_date = '2017-01-01'
+            WHERE id = 1
+            """
+        )
+    )
+    session.commit()
+    runner = RealismAuditRunner(session)
+
+    results = runner.run(query_names=["player_registration_age_distribution"])
+
+    assert results[0].rows == (
         {
-            "age_bucket": "under_18",
+            "age_bucket": "12_17",
             "player_count": 1,
             "player_pct": 12.5,
-            "configured_pct": None,
-            "pct_point_drift": None,
+        },
+        {
+            "age_bucket": "18_29",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "age_bucket": "30_44",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "age_bucket": "45_59",
+            "player_count": 2,
+            "player_pct": 25.0,
+        },
+        {
+            "age_bucket": "60_74",
+            "player_count": 3,
+            "player_pct": 37.5,
         },
     )
 

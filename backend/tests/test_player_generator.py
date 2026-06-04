@@ -36,14 +36,16 @@ def test_payload(player_count):
         "simulation": {},
         "player_generation": {
             "player_count": player_count,
-            "age_min": 18,
+            "age_min": 12,
             "age_max": 85,
+            "minimum_registration_age": 12,
             "age_distribution": {
-                "18_29": 0.08,
-                "30_44": 0.18,
-                "45_59": 0.32,
-                "60_74": 0.34,
-                "75_plus": 0.08,
+                "under_18": 0.04,
+                "18_29": 0.24,
+                "30_44": 0.32,
+                "45_59": 0.24,
+                "60_74": 0.13,
+                "75_plus": 0.03,
             },
             "gender_weights": {
                 "male": 0.5,
@@ -79,6 +81,13 @@ def test_payload(player_count):
 
 
 test_payload.__test__ = False
+
+
+def _age_on(reference_date: date, birth_date: date) -> int:
+    age = reference_date.year - birth_date.year
+    if (reference_date.month, reference_date.day) < (birth_date.month, birth_date.day):
+        age -= 1
+    return age
 
 
 def _json_ready(value):
@@ -355,7 +364,7 @@ def seed_reference_data(session, *, payload=None):
         ("CA", "ON", "QC"),
     ]:
         for state in [primary_state, fallback_state]:
-            for year in range(1939, 2007):
+            for year in range(1939, 2013):
                 for gender, names in {
                     "M": [("Alex", 0.7), ("Jordan", 0.3)],
                     "F": [("Taylor", 0.6), ("Morgan", 0.4)],
@@ -620,6 +629,17 @@ def test_payload_probability_validation_fails_fast(session):
             batch_id=monthly_batch.id,
             session=session,
         )
+
+
+def test_payload_minimum_registration_age_cannot_exceed_age_min():
+    from app.generators.players import PlayerGenerationConfig
+
+    payload = test_payload(1)
+    payload["player_generation"]["age_min"] = 11
+    payload["player_generation"]["minimum_registration_age"] = 12
+
+    with pytest.raises(ValueError, match="minimum_registration_age"):
+        PlayerGenerationConfig.from_payload(payload)
 
 
 def test_payload_player_count_defaults_to_current_100():
@@ -889,6 +909,22 @@ def test_payload_registration_date_is_no_earlier_than_region_club_founding(sessi
         assert club.founding_date <= player.registration_date <= date(2024, 1, 1)
 
 
+def test_payload_registration_date_respects_minimum_registration_age(session):
+    generation_run, monthly_batch = seed_reference_data(session, payload=test_payload(8))
+
+    PlayerGenerator().generate_initial_population(
+        generation_run_id=generation_run.id,
+        batch_id=monthly_batch.id,
+        session=session,
+    )
+
+    minimum_registration_age = generation_run.parameter_snapshot["player_generation"][
+        "minimum_registration_age"
+    ]
+    for player in session.query(Player):
+        assert _age_on(player.registration_date, player.birth_date) >= minimum_registration_age
+
+
 def test_payload_registration_date_uses_batch_month_when_club_founded_later(session):
     generation_run, monthly_batch = seed_reference_data(session, payload=test_payload(2))
     session.query(Club).update({Club.founding_date: date(2025, 1, 1)})
@@ -900,9 +936,12 @@ def test_payload_registration_date_uses_batch_month_when_club_founded_later(sess
         session=session,
     )
 
-    assert {player.registration_date for player in session.query(Player)} == {
-        date(2024, 1, 1)
-    }
+    minimum_registration_age = generation_run.parameter_snapshot["player_generation"][
+        "minimum_registration_age"
+    ]
+    for player in session.query(Player):
+        assert player.registration_date <= date(2024, 1, 1)
+        assert _age_on(player.registration_date, player.birth_date) >= minimum_registration_age
 
 
 def test_payload_age_bounds_are_respected(session):
@@ -919,7 +958,7 @@ def test_payload_age_bounds_are_respected(session):
     )
 
     assert {
-        date(2024, 1, 1).year - player.birth_date.year
+        _age_on(date(2024, 1, 1), player.birth_date)
         for player in session.query(Player).all()
     } == {60}
 
@@ -1744,7 +1783,7 @@ def test_payload_generation_birth_date_day_is_valid(session):
         session=session,
     )
 
-    assert all(1 <= player.birth_date.day <= 28 for player in session.query(Player))
+    assert all(1 <= player.birth_date.day <= 31 for player in session.query(Player))
 
 
 def test_payload_generation_accepts_numeric_strings(session):
@@ -1776,7 +1815,7 @@ def test_payload_generation_age_distribution_75_plus(session):
     )
 
     assert all(
-        75 <= date(2024, 1, 1).year - player.birth_date.year <= 85
+        75 <= _age_on(date(2024, 1, 1), player.birth_date) <= 85
         for player in session.query(Player)
     )
 
@@ -2423,6 +2462,17 @@ def test_payload_generation_supports_default_age_distribution():
     assert PlayerGenerationConfig.from_payload(payload).age_distribution
 
 
+def test_payload_generation_supports_default_minimum_registration_age():
+    from app.generators.players import PlayerGenerationConfig
+
+    payload = test_payload(1)
+    del payload["player_generation"]["minimum_registration_age"]
+
+    assert (
+        PlayerGenerationConfig.from_payload(payload).minimum_registration_age == 12
+    )
+
+
 def test_payload_generation_supports_default_skill_seed():
     from app.generators.players import PlayerGenerationConfig
 
@@ -2544,7 +2594,7 @@ def test_payload_generation_with_clamped_empty_age_range_falls_back_to_min(sessi
     )
 
     player = session.query(Player).one()
-    assert date(2024, 1, 1).year - player.birth_date.year == 30
+    assert _age_on(date(2024, 1, 1), player.birth_date) == 30
 
 
 def test_payload_generation_missing_country_names_can_still_use_other_country_if_region_matches(session):
@@ -2578,7 +2628,7 @@ def test_payload_generation_uses_batch_month_for_birth_year(session):
         session=session,
     )
 
-    assert session.query(Player).one().birth_date.year == 1980
+    assert _age_on(date(2024, 7, 1), session.query(Player).one().birth_date) == 44
 
 
 def test_payload_generation_can_select_nearest_name_year_for_old_players(session):
@@ -2928,7 +2978,7 @@ def test_payload_generation_birth_year_uses_registration_year(session):
         session=session,
     )
 
-    assert session.query(Player).one().birth_date.year == 2000
+    assert _age_on(date(2030, 1, 1), session.query(Player).one().birth_date) == 30
 
 
 def test_payload_generation_can_lookup_future_birth_year_by_nearest(session):
@@ -3821,7 +3871,7 @@ def test_payload_generation_uses_registration_year_for_age_not_current_date(sess
         session=session,
     )
 
-    assert session.query(Player).one().birth_date.year == 1980
+    assert _age_on(date(2010, 1, 1), session.query(Player).one().birth_date) == 30
 
 
 def test_payload_generation_values_are_not_none(session):

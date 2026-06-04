@@ -52,6 +52,7 @@ class PlayerGenerationConfig:
     monthly_player_inactivation_rate: Decimal
     age_min: int
     age_max: int
+    minimum_registration_age: int
     age_distribution: tuple[tuple[tuple[int, int], Decimal], ...]
     gender_weights: tuple[tuple[str, Decimal], ...]
     dominant_hand_weights: tuple[tuple[str, Decimal], ...]
@@ -100,10 +101,21 @@ class PlayerGenerationConfig:
                 "player_generation.monthly_player_inactivation_rate must be between 0 and 1"
             )
 
-        age_min = int(player_config.get("age_min", 18))
+        age_min = int(player_config.get("age_min", 12))
         age_max = int(player_config.get("age_max", 85))
         if age_min < 0 or age_max < age_min:
             raise ValueError("player_generation age bounds are invalid")
+        minimum_registration_age = int(
+            player_config.get("minimum_registration_age", 12)
+        )
+        if minimum_registration_age < 0:
+            raise ValueError(
+                "player_generation.minimum_registration_age must be non-negative"
+            )
+        if age_min < minimum_registration_age:
+            raise ValueError(
+                "player_generation.age_min must be at least minimum_registration_age"
+            )
         rating_min = _decimal(ratings.get("rating_min", 0))
         rating_max = _decimal(ratings.get("rating_max", 5000))
         if rating_min < 0 or rating_max <= rating_min:
@@ -127,6 +139,7 @@ class PlayerGenerationConfig:
             monthly_player_inactivation_rate=monthly_player_inactivation_rate,
             age_min=age_min,
             age_max=age_max,
+            minimum_registration_age=minimum_registration_age,
             age_distribution=_age_distribution(
                 player_config.get("age_distribution", {}),
                 age_min=age_min,
@@ -901,13 +914,13 @@ class PlayerGenerator:
         dominant_hand_sampler = WeightedSampler(config.dominant_hand_weights)
         player_status_sampler = WeightedSampler(config.player_status_weights)
         rng = random.Random(rng_seed)
-        registration_month = _month_start(batch.batch_month)
+        creation_month = _month_start(batch.batch_month)
         chunk_size = 5_000
         name_index.preload(
             regions=regions,
             birth_years=range(
-                registration_month.year - config.age_max,
-                registration_month.year - config.age_min + 1,
+                creation_month.year - config.age_max,
+                creation_month.year - config.age_min + 1,
             ),
             genders=[gender for gender, _ in config.gender_weights],
         )
@@ -930,7 +943,7 @@ class PlayerGenerator:
                     for _ in range(current_chunk_size):
                         region = region_sampler.choose(rng)
                         age = choose_age(rng, config, sampler=age_sampler)
-                        birth_date = choose_birth_date(rng, age, registration_month)
+                        birth_date = choose_birth_date(rng, age, creation_month)
                         gender = gender_sampler.choose(rng)
                         first_name = name_index.choose_first_name(
                             rng,
@@ -947,13 +960,14 @@ class PlayerGenerator:
                         associated_club = club_index.choose_club(
                             rng,
                             region_id=region.id,
-                            batch_month=registration_month,
+                            batch_month=creation_month,
                         )
                         registration_date = choose_registration_date(
                             rng,
-                            batch_month=registration_month,
+                            batch_month=creation_month,
                             birth_date=birth_date,
                             associated_club=associated_club,
+                            minimum_registration_age=config.minimum_registration_age,
                         )
                         generated_players.append(
                             Player(
@@ -995,7 +1009,7 @@ class PlayerGenerator:
                         PlayerRegistration(
                             player_id=player.id,
                             batch_id=batch_id,
-                            registration_month=registration_month,
+                            registration_month=creation_month,
                             assigned_region_id=player.home_region_id,
                             initial_rating_value=config.initial_rating_mean,
                             initial_confidence_score=config.initial_confidence_score,
@@ -1015,7 +1029,7 @@ class PlayerGenerator:
                     rating_history_rows = [
                         PlayerRatingHistory(
                             player_id=player.id,
-                            rating_date=registration_month,
+                            rating_date=creation_month,
                             rating_type="initial",
                             rating_value=initial_rating_value(
                                 generation_run.seed_value,
@@ -1129,13 +1143,21 @@ def choose_age(
 def choose_birth_date(
     rng: random.Random,
     age: int,
-    registration_month: date,
+    creation_month: date,
 ) -> date:
-    """Choose a birth date that makes the player approximately the sampled age."""
-    year = registration_month.year - age
-    month = rng.randint(1, 12)
-    day = rng.randint(1, 28)
-    return date(year, month, day)
+    """Choose a birth date that makes the player exactly the sampled age at creation."""
+    latest_birth_date = date(
+        creation_month.year - age,
+        creation_month.month,
+        creation_month.day,
+    )
+    earliest_birth_date = date(
+        creation_month.year - age - 1,
+        creation_month.month,
+        creation_month.day,
+    ) + timedelta(days=1)
+    day_offset = rng.randint(0, (latest_birth_date - earliest_birth_date).days)
+    return earliest_birth_date + timedelta(days=day_offset)
 
 
 def choose_registration_date(
@@ -1144,14 +1166,17 @@ def choose_registration_date(
     batch_month: date,
     birth_date: date,
     associated_club: Club | None,
+    minimum_registration_age: int,
 ) -> date:
     """Choose a realistic registration date no earlier than club founding."""
     latest_date = batch_month
-    if associated_club is None or associated_club.founding_date is None:
-        return latest_date
-
-    earliest_date = birth_date + timedelta(days=1)
-    earliest_date = max(earliest_date, associated_club.founding_date)
+    earliest_date = date(
+        birth_date.year + minimum_registration_age,
+        birth_date.month,
+        birth_date.day,
+    )
+    if associated_club is not None and associated_club.founding_date is not None:
+        earliest_date = max(earliest_date, associated_club.founding_date)
 
     if earliest_date >= latest_date:
         return latest_date
@@ -1295,15 +1320,19 @@ def _age_distribution(
     age_max: int,
 ) -> tuple[tuple[tuple[int, int], Decimal], ...]:
     distribution = value or {
-        "18_29": 0.08,
-        "30_44": 0.18,
-        "45_59": 0.32,
-        "60_74": 0.34,
-        "75_plus": 0.08,
+        "under_18": 0.04,
+        "18_29": 0.24,
+        "30_44": 0.32,
+        "45_59": 0.24,
+        "60_74": 0.13,
+        "75_plus": 0.03,
     }
     parsed: list[tuple[tuple[int, int], Decimal]] = []
     for key, weight in distribution.items():
-        if key.endswith("_plus"):
+        if key.startswith("under_"):
+            low = age_min
+            high = int(key.removeprefix("under_")) - 1
+        elif key.endswith("_plus"):
             low = int(key.removesuffix("_plus"))
             high = age_max
         else:
