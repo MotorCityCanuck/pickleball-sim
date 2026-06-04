@@ -6,11 +6,12 @@ from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from bisect import bisect_left
 from contextlib import nullcontext
+from collections import defaultdict
 import random
 from time import perf_counter
 from typing import Any, ContextManager, Iterable, Sequence, TypeVar
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
@@ -259,6 +260,31 @@ class NameIndex:
             key: 0.0 for key in self.query_counts
         }
 
+    def preload(
+        self,
+        *,
+        regions: Sequence[Region],
+        birth_years: Iterable[int],
+        genders: Iterable[str],
+    ) -> None:
+        """Bulk-load the name cohorts needed for a batch before synthesis begins."""
+        state_keys = {
+            (region.country_code, region.state_province_code)
+            for region in regions
+            if region.state_province_code
+        }
+        year_values = sorted(set(int(year) for year in birth_years))
+        gender_values = sorted(set(genders))
+        if not state_keys or not year_values or not gender_values:
+            return
+
+        self._preload_first_exact(
+            state_keys=state_keys,
+            birth_years=year_values,
+            genders=gender_values,
+        )
+        self._preload_last_names(state_keys=state_keys)
+
     def choose_first_name(
         self,
         rng: random.Random,
@@ -347,6 +373,76 @@ class NameIndex:
             )
             self.first_exact[key] = _sampler_or_none(rows)
         return self.first_exact[key]
+
+    def _preload_first_exact(
+        self,
+        *,
+        state_keys: set[tuple[str, str]],
+        birth_years: Sequence[int],
+        genders: Sequence[str],
+    ) -> None:
+        started_at = perf_counter()
+        try:
+            rows = self.session.execute(
+                select(
+                    FirstName.country_code,
+                    FirstName.state_province_code,
+                    FirstName.birth_year,
+                    FirstName.gender,
+                    FirstName.first_name,
+                    FirstName.normalized_probability,
+                )
+                .where(
+                    tuple_(
+                        FirstName.country_code,
+                        FirstName.state_province_code,
+                    ).in_(sorted(state_keys)),
+                    FirstName.birth_year.in_(birth_years),
+                    FirstName.gender.in_(genders),
+                )
+                .order_by(
+                    FirstName.country_code,
+                    FirstName.state_province_code,
+                    FirstName.birth_year,
+                    FirstName.gender,
+                    FirstName.id,
+                )
+            ).all()
+        finally:
+            self._record_query_elapsed("first_exact", started_at)
+
+        grouped: dict[tuple[str, str, int, str], list[tuple[str, Any]]] = defaultdict(list)
+        country_year_grouped: dict[tuple[str, int, str], list[tuple[str, Any]]] = defaultdict(
+            list
+        )
+        years_by_state_gender: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+        years_by_country_gender: dict[tuple[str, str], set[int]] = defaultdict(set)
+        for (
+            country_code,
+            state_province_code,
+            birth_year,
+            gender,
+            first_name,
+            normalized_probability,
+        ) in rows:
+            key = (country_code, state_province_code, birth_year, gender)
+            grouped[key].append((first_name, normalized_probability))
+            country_year_grouped[(country_code, birth_year, gender)].append(
+                (first_name, normalized_probability)
+            )
+            years_by_state_gender[(country_code, state_province_code, gender)].add(
+                birth_year
+            )
+            years_by_country_gender[(country_code, gender)].add(birth_year)
+
+        for key, sampler_rows in grouped.items():
+            self.first_exact[key] = _sampler_or_none(sampler_rows)
+        for key, sampler_rows in country_year_grouped.items():
+            self.first_country_year[key] = _sampler_or_none(sampler_rows)
+        for key, years in years_by_state_gender.items():
+            self.first_years_by_state_gender[key] = years
+        for key, years in years_by_country_gender.items():
+            self.first_years_by_country_gender[key] = years
 
     def _first_country_year_sampler(
         self,
@@ -440,6 +536,53 @@ class NameIndex:
             )
             self.last_country[country_code] = _sampler_or_none(rows)
         return self.last_country[country_code]
+
+    def _preload_last_names(
+        self,
+        *,
+        state_keys: set[tuple[str, str]],
+    ) -> None:
+        started_at = perf_counter()
+        try:
+            rows = self.session.execute(
+                select(
+                    LastName.country_code,
+                    LastName.state_province_code,
+                    LastName.last_name,
+                    LastName.normalized_probability,
+                )
+                .where(
+                    tuple_(
+                        LastName.country_code,
+                        LastName.state_province_code,
+                    ).in_(sorted(state_keys))
+                )
+                .order_by(
+                    LastName.country_code,
+                    LastName.state_province_code,
+                    LastName.id,
+                )
+            ).all()
+        finally:
+            self._record_query_elapsed("last_exact", started_at)
+
+        exact_grouped: dict[tuple[str, str], list[tuple[str, Any]]] = defaultdict(list)
+        country_grouped: dict[str, list[tuple[str, Any]]] = defaultdict(list)
+        for (
+            country_code,
+            state_province_code,
+            last_name,
+            normalized_probability,
+        ) in rows:
+            sampler_row = (last_name, normalized_probability)
+            country_grouped[country_code].append(sampler_row)
+            state_key = (country_code, state_province_code)
+            exact_grouped[state_key].append(sampler_row)
+
+        for key, sampler_rows in exact_grouped.items():
+            self.last_exact[key] = _sampler_or_none(sampler_rows)
+        for country_code, sampler_rows in country_grouped.items():
+            self.last_country[country_code] = _sampler_or_none(sampler_rows)
 
     def _timed_query(self, query_name: str, statement: Any) -> Sequence[tuple[Any, ...]]:
         started_at = perf_counter()
@@ -760,6 +903,14 @@ class PlayerGenerator:
         rng = random.Random(rng_seed)
         registration_month = _month_start(batch.batch_month)
         chunk_size = 5_000
+        name_index.preload(
+            regions=regions,
+            birth_years=range(
+                registration_month.year - config.age_max,
+                registration_month.year - config.age_min + 1,
+            ),
+            genders=[gender for gender, _ in config.gender_weights],
+        )
 
         with session.begin_nested():
             generated_so_far = 0

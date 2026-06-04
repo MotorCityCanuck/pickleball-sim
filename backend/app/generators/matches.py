@@ -671,6 +671,17 @@ class MatchGenerator:
             if hasattr(batch, "generation_run") and batch.generation_run
             else _generation_payload(session, batch)
         )
+        self._emit_progress(
+            progress_listener,
+            progress_current=0,
+            progress_total=1,
+            progress_unit="step",
+            message=f"Loading active teams for batch {batch.batch_month}.",
+            details={
+                "phase": "load_active_teams",
+                "batch_month": str(batch.batch_month),
+            },
+        )
         with _measure_runtime(
             runtime_recorder,
             "load_active_teams",
@@ -681,8 +692,22 @@ class MatchGenerator:
                 batch.generation_run_id,
                 batch.batch_month,
                 config=config,
+                runtime_recorder=runtime_recorder,
+                progress_callback=lambda message, details: self._emit_progress(
+                    progress_listener,
+                    progress_current=0,
+                    progress_total=1,
+                    progress_unit="step",
+                    message=message,
+                    details={
+                        "phase": "load_active_teams",
+                        "batch_month": str(batch.batch_month),
+                        **details,
+                    },
+                ),
             )
             metric["output_count"] = len(teams)
+            metric["metadata"]["active_team_count"] = len(teams)
         if len(teams) < 2:
             raise ValueError("At least two active teams are required")
 
@@ -1271,31 +1296,51 @@ def _active_teams(
     generation_run_id: int,
     batch_month: date,
     config: MatchGenerationConfig | None = None,
+    runtime_recorder: Any | None = None,
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> list[TeamCandidate]:
-    latest_ratings = (
-        select(
-            PlayerRatingHistory.player_id.label("player_id"),
-            PlayerRatingHistory.rating_value.label("rating_value"),
-            func.row_number()
-            .over(
-                partition_by=PlayerRatingHistory.player_id,
-                order_by=(
-                    PlayerRatingHistory.rating_date.desc(),
-                    PlayerRatingHistory.id.desc(),
-                ),
-            )
-            .label("rating_rank"),
-        )
-        .join(Player, Player.id == PlayerRatingHistory.player_id)
-        .where(
-            Player.generation_run_id == generation_run_id,
-            Player.player_status == "ACTIVE",
-            PlayerRatingHistory.rating_date <= batch_month,
-        )
-        .subquery()
-    )
-
     team_rows: dict[int, dict[str, Any]] = {}
+    if progress_callback is not None:
+        progress_callback(
+            f"Loading active team rosters for batch {batch_month}.",
+            {"subphase": "load_active_team_rosters"},
+        )
+    with _measure_runtime(
+        runtime_recorder,
+        "load_active_team_rosters",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
+        },
+    ) as metric:
+        roster_rows = session.execute(
+            select(
+                Team.id,
+                Team.team_type,
+                Team.formation_date,
+                TeamMembership.player_id,
+                TeamMembership.player_position,
+                Player.home_region_id,
+                Player.birth_date,
+            )
+            .join(TeamMembership, TeamMembership.team_id == Team.id)
+            .join(Player, Player.id == TeamMembership.player_id)
+            .where(
+                Team.generation_run_id == generation_run_id,
+                Team.team_status == "active",
+                Team.formation_date <= batch_month,
+                or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
+                TeamMembership.joined_date <= batch_month,
+                or_(
+                    TeamMembership.left_date.is_(None),
+                    TeamMembership.left_date > batch_month,
+                ),
+                Player.player_status == "ACTIVE",
+            )
+            .order_by(Team.id, TeamMembership.player_position)
+        ).all()
+        metric["output_count"] = len(roster_rows)
+
     for (
         team_id,
         team_type,
@@ -1304,35 +1349,7 @@ def _active_teams(
         player_position,
         home_region_id,
         birth_date,
-        rating_value,
-    ) in session.execute(
-        select(
-            Team.id,
-            Team.team_type,
-            Team.formation_date,
-            TeamMembership.player_id,
-            TeamMembership.player_position,
-            Player.home_region_id,
-            Player.birth_date,
-            latest_ratings.c.rating_value,
-        )
-        .join(TeamMembership, TeamMembership.team_id == Team.id)
-        .join(Player, Player.id == TeamMembership.player_id)
-        .join(latest_ratings, latest_ratings.c.player_id == Player.id)
-        .where(
-            Team.generation_run_id == generation_run_id,
-            Team.team_status == "active",
-            Team.formation_date <= batch_month,
-            or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
-            TeamMembership.joined_date <= batch_month,
-            or_(
-                TeamMembership.left_date.is_(None),
-                TeamMembership.left_date > batch_month,
-            ),
-            latest_ratings.c.rating_rank == 1,
-        )
-        .order_by(Team.id, TeamMembership.player_position)
-    ):
+    ) in roster_rows:
         row = team_rows.setdefault(
             team_id,
             {
@@ -1344,12 +1361,32 @@ def _active_teams(
             },
         )
         row["birth_dates"].append(birth_date)
-        row["players"].append((player_id, player_position, _decimal(rating_value)))
+        row["players"].append((player_id, player_position))
+
+    if progress_callback is not None:
+        progress_callback(
+            f"Loading latest ratings for active team players in batch {batch_month}.",
+            {"subphase": "load_latest_team_player_ratings"},
+        )
+    with _measure_runtime(
+        runtime_recorder,
+        "load_latest_team_player_ratings",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
+        },
+    ) as metric:
+        latest_ratings_by_player = _latest_active_team_player_ratings(
+            session,
+            generation_run_id=generation_run_id,
+            batch_month=batch_month,
+        )
+        metric["output_count"] = len(latest_ratings_by_player)
 
     player_ids_by_team: dict[int, tuple[int, ...]] = {}
     for team_id, row in team_rows.items():
         player_ids_by_team[team_id] = tuple(
-            sorted(player_id for player_id, _, _ in row["players"])
+            sorted(player_id for player_id, _ in row["players"])
         )
 
     fatigue_window_days = (
@@ -1369,68 +1406,185 @@ def _active_teams(
     all_player_ids = {
         player_id for player_ids in player_ids_by_team.values() for player_id in player_ids
     }
-    club_ids_by_player, primary_club_ids_by_player = _club_membership_maps(
-        session,
-        player_ids=all_player_ids,
-        batch_month=batch_month,
-    )
-    region_names = _region_name_map(
-        session,
-        region_ids={
-            row["region_id"]
-            for row in team_rows.values()
-            if row["region_id"] is not None
+    if progress_callback is not None:
+        progress_callback(
+            f"Loading club memberships for active teams in batch {batch_month}.",
+            {"subphase": "load_active_team_club_memberships"},
+        )
+    with _measure_runtime(
+        runtime_recorder,
+        "load_active_team_club_memberships",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
         },
-    )
-    prior_match_counts, recent_match_counts, recent_game_counts = (
-        _historical_team_activity_maps(
+    ) as metric:
+        club_ids_by_player, primary_club_ids_by_player = _club_membership_maps(
             session,
-            generation_run_id=generation_run_id,
+            player_ids=all_player_ids,
             batch_month=batch_month,
-            player_ids_by_team=player_ids_by_team,
-            fatigue_window_days=fatigue_window_days,
-            recent_pair_window_days=recent_pair_window_days,
         )
-    )
+        metric["output_count"] = len(club_ids_by_player)
 
-    candidates: list[TeamCandidate] = []
-    for team_id, row in team_rows.items():
-        if len(row["players"]) != 2:
-            continue
-        players = tuple(sorted(row["players"], key=lambda player: player[1]))
-        player_ids = player_ids_by_team[team_id]
-        average_rating = (players[0][2] + players[1][2]) / Decimal("2")
-        club_ids = frozenset(
-            club_id
-            for player_id in player_ids
-            for club_id in club_ids_by_player.get(player_id, frozenset())
+    region_ids = {
+        row["region_id"]
+        for row in team_rows.values()
+        if row["region_id"] is not None
+    }
+    if progress_callback is not None:
+        progress_callback(
+            f"Loading region names for active teams in batch {batch_month}.",
+            {"subphase": "load_active_team_regions"},
         )
-        primary_club_ids = frozenset(
-            club_id
-            for player_id in player_ids
-            for club_id in primary_club_ids_by_player.get(player_id, frozenset())
+    with _measure_runtime(
+        runtime_recorder,
+        "load_active_team_regions",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
+        },
+    ) as metric:
+        region_names = _region_name_map(
+            session,
+            region_ids=region_ids,
         )
-        candidates.append(
-            TeamCandidate(
-                id=team_id,
-                team_type=row["team_type"],
-                region_id=row["region_id"],
-                average_rating=average_rating,
-                players=players,
-                avg_age=_average_age(row["birth_dates"], as_of=batch_month),
-                player_ids=player_ids,
-                club_ids=club_ids,
-                primary_club_ids=primary_club_ids,
-                formation_date=row["formation_date"],
-                team_total_prior_matches=prior_match_counts.get(team_id, 0),
-                recent_game_count=recent_game_counts.get(team_id, 0),
-                recent_pair_counts={
-                    player_ids: recent_match_counts.get(team_id, 0),
-                },
-                region_name=region_names.get(row["region_id"]),
+        metric["output_count"] = len(region_names)
+
+    if progress_callback is not None:
+        progress_callback(
+            f"Loading historical team activity for batch {batch_month}.",
+            {"subphase": "load_active_team_history"},
+        )
+    with _measure_runtime(
+        runtime_recorder,
+        "load_active_team_history",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
+        },
+    ) as metric:
+        prior_match_counts, recent_match_counts, recent_game_counts = (
+            _historical_team_activity_maps(
+                session,
+                generation_run_id=generation_run_id,
+                batch_month=batch_month,
+                player_ids_by_team=player_ids_by_team,
+                fatigue_window_days=fatigue_window_days,
+                recent_pair_window_days=recent_pair_window_days,
             )
         )
+        metric["output_count"] = len(prior_match_counts)
+
+    candidates: list[TeamCandidate] = []
+    if progress_callback is not None:
+        progress_callback(
+            f"Building active team candidates for batch {batch_month}.",
+            {"subphase": "build_active_team_candidates"},
+        )
+    with _measure_runtime(
+        runtime_recorder,
+        "build_active_team_candidates",
+        metadata={
+            "parent_subphase": "load_active_teams",
+            "batch_month": batch_month,
+        },
+    ) as metric:
+        for team_id, row in team_rows.items():
+            if len(row["players"]) != 2:
+                continue
+            player_ids = player_ids_by_team[team_id]
+            player_ratings = []
+            missing_rating = False
+            for player_id, player_position in row["players"]:
+                rating_value = latest_ratings_by_player.get(player_id)
+                if rating_value is None:
+                    missing_rating = True
+                    break
+                player_ratings.append((player_id, player_position, rating_value))
+            if missing_rating:
+                continue
+            players = tuple(sorted(player_ratings, key=lambda player: player[1]))
+            average_rating = (players[0][2] + players[1][2]) / Decimal("2")
+            club_ids = frozenset(
+                club_id
+                for player_id in player_ids
+                for club_id in club_ids_by_player.get(player_id, frozenset())
+            )
+            primary_club_ids = frozenset(
+                club_id
+                for player_id in player_ids
+                for club_id in primary_club_ids_by_player.get(player_id, frozenset())
+            )
+            candidates.append(
+                TeamCandidate(
+                    id=team_id,
+                    team_type=row["team_type"],
+                    region_id=row["region_id"],
+                    average_rating=average_rating,
+                    players=players,
+                    avg_age=_average_age(row["birth_dates"], as_of=batch_month),
+                    player_ids=player_ids,
+                    club_ids=club_ids,
+                    primary_club_ids=primary_club_ids,
+                    formation_date=row["formation_date"],
+                    team_total_prior_matches=prior_match_counts.get(team_id, 0),
+                    recent_game_count=recent_game_counts.get(team_id, 0),
+                    recent_pair_counts={
+                        player_ids: recent_match_counts.get(team_id, 0),
+                    },
+                    region_name=region_names.get(row["region_id"]),
+                )
+            )
+        metric["output_count"] = len(candidates)
     return candidates
+
+
+def _latest_active_team_player_ratings(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_month: date,
+) -> dict[int, Decimal]:
+    active_player_ids = (
+        select(TeamMembership.player_id.label("player_id"))
+        .join(Team, Team.id == TeamMembership.team_id)
+        .join(Player, Player.id == TeamMembership.player_id)
+        .where(
+            Team.generation_run_id == generation_run_id,
+            Team.team_status == "active",
+            Team.formation_date <= batch_month,
+            or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
+            TeamMembership.joined_date <= batch_month,
+            or_(
+                TeamMembership.left_date.is_(None),
+                TeamMembership.left_date > batch_month,
+            ),
+            Player.player_status == "ACTIVE",
+        )
+        .distinct()
+        .subquery()
+    )
+
+    latest_ratings_by_player: dict[int, Decimal] = {}
+    for player_id, rating_value in session.execute(
+        select(
+            PlayerRatingHistory.player_id,
+            PlayerRatingHistory.rating_value,
+        )
+        .join(
+            active_player_ids,
+            active_player_ids.c.player_id == PlayerRatingHistory.player_id,
+        )
+        .where(PlayerRatingHistory.rating_date <= batch_month)
+        .order_by(
+            PlayerRatingHistory.player_id,
+            PlayerRatingHistory.rating_date.desc(),
+            PlayerRatingHistory.id.desc(),
+        )
+    ):
+        if player_id not in latest_ratings_by_player:
+            latest_ratings_by_player[player_id] = _decimal(rating_value)
+    return latest_ratings_by_player
 
 
 def _average_age(

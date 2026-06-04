@@ -661,6 +661,12 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         select(GenerationRuntimeMetric).order_by(GenerationRuntimeMetric.id)
     ).all()
     assert [metric.subphase_name for metric in metrics] == [
+        "load_active_team_rosters",
+        "load_latest_team_player_ratings",
+        "load_active_team_club_memberships",
+        "load_active_team_regions",
+        "load_active_team_history",
+        "build_active_team_candidates",
         "load_active_teams",
         "calculate_team_targets",
         "load_recent_pair_dates",
@@ -686,6 +692,23 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
     assert all(metric.batch_id == batch.id for metric in metrics)
     assert all(metric.stage_name == "matches" for metric in metrics)
     assert all(metric.elapsed_ms >= 0 for metric in metrics)
+    load_active_team_detail_metrics = [
+        metric
+        for metric in metrics
+        if metric.subphase_name in {
+            "load_active_team_rosters",
+            "load_latest_team_player_ratings",
+            "load_active_team_club_memberships",
+            "load_active_team_regions",
+            "load_active_team_history",
+            "build_active_team_candidates",
+        }
+    ]
+    assert len(load_active_team_detail_metrics) == 6
+    assert all(
+        metric.metadata_json["parent_subphase"] == "load_active_teams"
+        for metric in load_active_team_detail_metrics
+    )
 
     planning_metric = next(
         metric for metric in metrics if metric.subphase_name == "planning"

@@ -488,7 +488,16 @@ def test_generate_initial_population_records_runtime_subphases(session):
     assert by_subphase["flush_players"].output_count == 8
     assert by_subphase["flush_registrations"].output_count == 8
     assert by_subphase["flush_initial_ratings"].output_count == 8
-    assert by_subphase["name_lookup_queries"].output_count > 0
+    name_query_metric = by_subphase["name_lookup_queries"]
+    assert name_query_metric.output_count == 2
+    assert name_query_metric.metadata_json["query_counts"] == {
+        "first_exact": 1,
+        "first_country_year": 0,
+        "first_state_years": 0,
+        "first_country_years": 0,
+        "last_exact": 1,
+        "last_country": 0,
+    }
     assert by_subphase["club_lookup_queries"].output_count > 0
 
 
