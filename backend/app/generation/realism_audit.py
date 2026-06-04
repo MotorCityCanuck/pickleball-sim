@@ -285,6 +285,202 @@ MATCH_DAY_OF_WEEK_SQL = {
 }
 
 
+FIRST_NAME_ALIGNMENT_SQL = {
+    "sqlite": """
+        WITH player_context AS (
+            SELECT
+                p.id AS player_id,
+                p.first_name,
+                p.gender,
+                CAST(strftime('%Y', p.birth_date) AS INTEGER) AS birth_year,
+                r.country_code,
+                r.state_province_code
+            FROM players p
+            LEFT JOIN regions r
+                ON r.id = p.home_region_id
+            WHERE p.generation_run_id = :generation_run_id
+        ),
+        exact_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.state_province_code,
+                fn.birth_year,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        state_gender_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.state_province_code,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        country_year_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.birth_year,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        country_gender_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        aligned AS (
+            SELECT
+                CASE
+                    WHEN pc.country_code IS NULL OR pc.gender IS NULL THEN 'missing_reference'
+                    WHEN exact_ref.first_name IS NOT NULL THEN 'exact_state_year'
+                    WHEN state_ref.first_name IS NOT NULL THEN 'state_gender_other_year'
+                    WHEN country_year_ref.first_name IS NOT NULL THEN 'country_year_other_state'
+                    WHEN country_ref.first_name IS NOT NULL THEN 'country_gender_other_state_year'
+                    ELSE 'missing_reference'
+                END AS alignment_bucket
+            FROM player_context pc
+            LEFT JOIN exact_reference exact_ref
+                ON exact_ref.country_code = pc.country_code
+                AND exact_ref.state_province_code = pc.state_province_code
+                AND exact_ref.birth_year = pc.birth_year
+                AND exact_ref.gender = pc.gender
+                AND exact_ref.first_name = pc.first_name
+            LEFT JOIN state_gender_reference state_ref
+                ON state_ref.country_code = pc.country_code
+                AND state_ref.state_province_code = pc.state_province_code
+                AND state_ref.gender = pc.gender
+                AND state_ref.first_name = pc.first_name
+            LEFT JOIN country_year_reference country_year_ref
+                ON country_year_ref.country_code = pc.country_code
+                AND country_year_ref.birth_year = pc.birth_year
+                AND country_year_ref.gender = pc.gender
+                AND country_year_ref.first_name = pc.first_name
+            LEFT JOIN country_gender_reference country_ref
+                ON country_ref.country_code = pc.country_code
+                AND country_ref.gender = pc.gender
+                AND country_ref.first_name = pc.first_name
+        )
+        SELECT
+            alignment_bucket,
+            COUNT(*) AS player_count,
+            ROUND(
+                100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                2
+            ) AS player_pct
+        FROM aligned
+        GROUP BY alignment_bucket
+        ORDER BY
+            CASE alignment_bucket
+                WHEN 'exact_state_year' THEN 0
+                WHEN 'state_gender_other_year' THEN 1
+                WHEN 'country_year_other_state' THEN 2
+                WHEN 'country_gender_other_state_year' THEN 3
+                ELSE 4
+            END
+    """,
+    "postgresql": """
+        WITH player_context AS (
+            SELECT
+                p.id AS player_id,
+                p.first_name,
+                p.gender,
+                CAST(EXTRACT(YEAR FROM p.birth_date) AS INTEGER) AS birth_year,
+                r.country_code,
+                r.state_province_code
+            FROM players p
+            LEFT JOIN regions r
+                ON r.id = p.home_region_id
+            WHERE p.generation_run_id = :generation_run_id
+        ),
+        exact_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.state_province_code,
+                fn.birth_year,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        state_gender_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.state_province_code,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        country_year_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.birth_year,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        country_gender_reference AS (
+            SELECT DISTINCT
+                fn.country_code,
+                fn.gender,
+                fn.first_name
+            FROM first_names fn
+        ),
+        aligned AS (
+            SELECT
+                CASE
+                    WHEN pc.country_code IS NULL OR pc.gender IS NULL THEN 'missing_reference'
+                    WHEN exact_ref.first_name IS NOT NULL THEN 'exact_state_year'
+                    WHEN state_ref.first_name IS NOT NULL THEN 'state_gender_other_year'
+                    WHEN country_year_ref.first_name IS NOT NULL THEN 'country_year_other_state'
+                    WHEN country_ref.first_name IS NOT NULL THEN 'country_gender_other_state_year'
+                    ELSE 'missing_reference'
+                END AS alignment_bucket
+            FROM player_context pc
+            LEFT JOIN exact_reference exact_ref
+                ON exact_ref.country_code = pc.country_code
+                AND exact_ref.state_province_code = pc.state_province_code
+                AND exact_ref.birth_year = pc.birth_year
+                AND exact_ref.gender = pc.gender
+                AND exact_ref.first_name = pc.first_name
+            LEFT JOIN state_gender_reference state_ref
+                ON state_ref.country_code = pc.country_code
+                AND state_ref.state_province_code = pc.state_province_code
+                AND state_ref.gender = pc.gender
+                AND state_ref.first_name = pc.first_name
+            LEFT JOIN country_year_reference country_year_ref
+                ON country_year_ref.country_code = pc.country_code
+                AND country_year_ref.birth_year = pc.birth_year
+                AND country_year_ref.gender = pc.gender
+                AND country_year_ref.first_name = pc.first_name
+            LEFT JOIN country_gender_reference country_ref
+                ON country_ref.country_code = pc.country_code
+                AND country_ref.gender = pc.gender
+                AND country_ref.first_name = pc.first_name
+        )
+        SELECT
+            alignment_bucket,
+            COUNT(*) AS player_count,
+            ROUND(
+                100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                2
+            ) AS player_pct
+        FROM aligned
+        GROUP BY alignment_bucket
+        ORDER BY
+            CASE alignment_bucket
+                WHEN 'exact_state_year' THEN 0
+                WHEN 'state_gender_other_year' THEN 1
+                WHEN 'country_year_other_state' THEN 2
+                WHEN 'country_gender_other_state_year' THEN 3
+                ELSE 4
+            END
+    """,
+}
+
+
 REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
     RealismAuditQuery(
         name="player_roster_summary",
@@ -472,6 +668,114 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         """,
         required_params=("generation_run_id",),
         tags=("players", "registrations", "batches"),
+    ),
+    RealismAuditQuery(
+        name="player_name_uniqueness_summary",
+        scope="generation_run",
+        category="players",
+        description="Distinct-name and duplicate full-name summary for one generation run.",
+        sql="""
+            WITH full_name_counts AS (
+                SELECT
+                    p.first_name,
+                    p.last_name,
+                    COUNT(*) AS player_count
+                FROM players p
+                WHERE p.generation_run_id = :generation_run_id
+                GROUP BY p.first_name, p.last_name
+            )
+            SELECT
+                :generation_run_id AS generation_run_id,
+                COUNT(*) AS player_count,
+                COUNT(DISTINCT p.first_name) AS distinct_first_name_count,
+                COUNT(DISTINCT p.last_name) AS distinct_last_name_count,
+                COUNT(DISTINCT p.first_name || '|' || p.last_name) AS distinct_full_name_count,
+                COALESCE((SELECT MAX(player_count) FROM full_name_counts), 0) AS max_players_sharing_full_name,
+                ROUND(
+                    100.0 * COALESCE((SELECT MAX(player_count) FROM full_name_counts), 0)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS max_full_name_player_pct
+            FROM players p
+            WHERE p.generation_run_id = :generation_run_id
+        """,
+        required_params=("generation_run_id",),
+        tags=("players", "names", "distribution"),
+    ),
+    RealismAuditQuery(
+        name="player_first_name_alignment",
+        scope="generation_run",
+        category="players",
+        description="Generated first-name alignment to state/year/gender reference cohorts.",
+        sql=FIRST_NAME_ALIGNMENT_SQL,
+        required_params=("generation_run_id",),
+        tags=("players", "names", "distribution"),
+    ),
+    RealismAuditQuery(
+        name="player_last_name_alignment",
+        scope="generation_run",
+        category="players",
+        description="Generated last-name alignment to state/province versus country reference cohorts.",
+        sql="""
+            WITH player_context AS (
+                SELECT
+                    p.id AS player_id,
+                    p.last_name,
+                    r.country_code,
+                    r.state_province_code
+                FROM players p
+                LEFT JOIN regions r
+                    ON r.id = p.home_region_id
+                WHERE p.generation_run_id = :generation_run_id
+            ),
+            exact_reference AS (
+                SELECT DISTINCT
+                    ln.country_code,
+                    ln.state_province_code,
+                    ln.last_name
+                FROM last_names ln
+            ),
+            country_reference AS (
+                SELECT DISTINCT
+                    ln.country_code,
+                    ln.last_name
+                FROM last_names ln
+            ),
+            aligned AS (
+                SELECT
+                    CASE
+                        WHEN pc.country_code IS NULL THEN 'missing_reference'
+                        WHEN exact_ref.last_name IS NOT NULL THEN 'exact_state'
+                        WHEN country_ref.last_name IS NOT NULL THEN 'country_other_state'
+                        ELSE 'missing_reference'
+                    END AS alignment_bucket
+                FROM player_context pc
+                LEFT JOIN exact_reference exact_ref
+                    ON exact_ref.country_code = pc.country_code
+                    AND exact_ref.state_province_code = pc.state_province_code
+                    AND exact_ref.last_name = pc.last_name
+                LEFT JOIN country_reference country_ref
+                    ON country_ref.country_code = pc.country_code
+                    AND country_ref.last_name = pc.last_name
+            )
+            SELECT
+                alignment_bucket,
+                COUNT(*) AS player_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                    2
+                ) AS player_pct
+            FROM aligned
+            GROUP BY alignment_bucket
+            ORDER BY
+                CASE alignment_bucket
+                    WHEN 'exact_state' THEN 0
+                    WHEN 'country_other_state' THEN 1
+                    ELSE 2
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("players", "names", "distribution"),
     ),
     RealismAuditQuery(
         name="initial_rating_distribution_summary",
@@ -797,6 +1101,32 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("clubs", "geography", "outliers"),
     ),
     RealismAuditQuery(
+        name="match_volume_by_batch",
+        scope="generation_run",
+        category="matches",
+        description="Per-batch match volume trend across the full generation run.",
+        sql="""
+            SELECT
+                b.id AS batch_id,
+                b.batch_month,
+                COUNT(m.id) AS match_count,
+                COUNT(DISTINCT m.match_date) AS unique_match_days,
+                ROUND(
+                    1.0 * COUNT(m.id) / NULLIF(COUNT(DISTINCT m.match_date), 0),
+                    3
+                ) AS avg_matches_per_match_day,
+                COUNT(DISTINCT m.region_id) AS distinct_match_regions
+            FROM monthly_batches b
+            LEFT JOIN matches m
+                ON m.batch_id = b.id
+            WHERE b.generation_run_id = :generation_run_id
+            GROUP BY b.id, b.batch_month, b.batch_sequence
+            ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("matches", "cadence", "batches"),
+    ),
+    RealismAuditQuery(
         name="match_volume_summary",
         scope="batch",
         category="matches",
@@ -1046,6 +1376,96 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("matches", "cadence", "teams"),
     ),
     RealismAuditQuery(
+        name="team_partner_continuity_by_batch",
+        scope="generation_run",
+        category="teams",
+        description="Per-batch active-roster continuity relative to the immediately prior batch.",
+        sql="""
+            WITH ordered_batches AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.batch_month,
+                    ROW_NUMBER() OVER (
+                        ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                    ) AS batch_ordinal
+                FROM monthly_batches b
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            batch_pairs AS (
+                SELECT
+                    current_batch.batch_id,
+                    current_batch.batch_month,
+                    current_batch.batch_ordinal,
+                    prior_batch.batch_id AS prior_batch_id
+                FROM ordered_batches current_batch
+                LEFT JOIN ordered_batches prior_batch
+                    ON prior_batch.batch_ordinal = current_batch.batch_ordinal - 1
+            ),
+            active_rosters AS (
+                SELECT
+                    bp.batch_id,
+                    CAST(MIN(tm.player_id) AS TEXT) || ':' || CAST(MAX(tm.player_id) AS TEXT) AS roster_key
+                FROM batch_pairs bp
+                JOIN teams t
+                    ON t.generation_run_id = :generation_run_id
+                    AND t.team_status = 'active'
+                    AND t.formation_date <= bp.batch_month
+                    AND (t.dissolution_date IS NULL OR t.dissolution_date > bp.batch_month)
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.joined_date <= bp.batch_month
+                    AND (tm.left_date IS NULL OR tm.left_date > bp.batch_month)
+                GROUP BY bp.batch_id, t.id
+                HAVING COUNT(*) = 2
+            ),
+            classified AS (
+                SELECT
+                    bp.batch_id,
+                    bp.batch_month,
+                    bp.prior_batch_id,
+                    ar.roster_key,
+                    CASE
+                        WHEN bp.prior_batch_id IS NOT NULL
+                            AND EXISTS (
+                                SELECT 1
+                                FROM active_rosters prior_ar
+                                WHERE prior_ar.batch_id = bp.prior_batch_id
+                                    AND prior_ar.roster_key = ar.roster_key
+                            )
+                        THEN 1
+                        ELSE 0
+                    END AS persisted_from_prior_batch
+                FROM batch_pairs bp
+                LEFT JOIN active_rosters ar
+                    ON ar.batch_id = bp.batch_id
+            )
+            SELECT
+                batch_id,
+                batch_month,
+                COUNT(roster_key) AS active_roster_count,
+                SUM(persisted_from_prior_batch) AS persisted_roster_count,
+                SUM(
+                    CASE
+                        WHEN roster_key IS NOT NULL AND persisted_from_prior_batch = 0
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS new_roster_count,
+                CASE
+                    WHEN prior_batch_id IS NULL THEN NULL
+                    ELSE ROUND(
+                        100.0 * SUM(persisted_from_prior_batch) / NULLIF(COUNT(roster_key), 0),
+                        2
+                    )
+                END AS persisted_roster_pct
+            FROM classified
+            GROUP BY batch_id, batch_month, prior_batch_id
+            ORDER BY batch_month ASC, batch_id ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("teams", "persistence", "batches"),
+    ),
+    RealismAuditQuery(
         name="matches_per_player_distribution",
         scope="batch",
         category="matches",
@@ -1125,6 +1545,110 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
             "match_scheduling.monthly_matches_per_active_player_std_dev",
             "match_scheduling.match_volume_noise_factor",
         ),
+    ),
+    RealismAuditQuery(
+        name="repeat_partner_match_distribution",
+        scope="batch",
+        category="matches",
+        description="Distribution of prior same-partner match counts for match-team rosters in the audited batch.",
+        sql="""
+            WITH ordered_batches AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month,
+                    ROW_NUMBER() OVER (
+                        ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                    ) AS batch_ordinal
+                FROM monthly_batches b
+                WHERE b.generation_run_id = (
+                    SELECT generation_run_id
+                    FROM monthly_batches
+                    WHERE id = :batch_id
+                )
+            ),
+            batch_context AS (
+                SELECT
+                    batch_id,
+                    generation_run_id,
+                    batch_month,
+                    batch_ordinal
+                FROM ordered_batches
+                WHERE batch_id = :batch_id
+            ),
+            current_match_team_rosters AS (
+                SELECT
+                    mt.id AS match_team_id,
+                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                FROM matches m
+                JOIN match_teams mt
+                    ON mt.match_id = m.id
+                JOIN match_team_players mtp
+                    ON mtp.match_team_id = mt.id
+                WHERE m.batch_id = :batch_id
+                GROUP BY mt.id
+            ),
+            prior_match_team_rosters AS (
+                SELECT
+                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                FROM batch_context bc
+                JOIN ordered_batches ob
+                    ON ob.generation_run_id = bc.generation_run_id
+                    AND ob.batch_ordinal < bc.batch_ordinal
+                JOIN matches m
+                    ON m.batch_id = ob.batch_id
+                JOIN match_teams mt
+                    ON mt.match_id = m.id
+                JOIN match_team_players mtp
+                    ON mtp.match_team_id = mt.id
+                GROUP BY mt.id
+            ),
+            prior_roster_counts AS (
+                SELECT
+                    roster_key,
+                    COUNT(*) AS prior_match_count
+                FROM prior_match_team_rosters
+                GROUP BY roster_key
+            ),
+            prior_pair_counts AS (
+                SELECT
+                    cmtr.match_team_id,
+                    COALESCE(prc.prior_match_count, 0) AS prior_match_count
+                FROM current_match_team_rosters cmtr
+                LEFT JOIN prior_roster_counts prc
+                    ON prc.roster_key = cmtr.roster_key
+            ),
+            bucketed AS (
+                SELECT
+                    CASE
+                        WHEN prior_match_count = 0 THEN '0'
+                        WHEN prior_match_count <= 2 THEN '1_2'
+                        WHEN prior_match_count <= 5 THEN '3_5'
+                        ELSE '6_plus'
+                    END AS prior_match_count_bucket,
+                    prior_match_count
+                FROM prior_pair_counts
+            )
+            SELECT
+                prior_match_count_bucket,
+                COUNT(*) AS team_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                    2
+                ) AS team_pct,
+                ROUND(AVG(prior_match_count), 2) AS avg_prior_match_count
+            FROM bucketed
+            GROUP BY prior_match_count_bucket
+            ORDER BY
+                CASE prior_match_count_bucket
+                    WHEN '0' THEN 0
+                    WHEN '1_2' THEN 1
+                    WHEN '3_5' THEN 2
+                    ELSE 3
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "teams", "persistence"),
     ),
     RealismAuditQuery(
         name="zero_match_players_by_registration_cohort",
@@ -1789,6 +2313,180 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         """,
         required_params=("batch_id",),
         tags=("matches", "scores", "probabilities"),
+    ),
+    RealismAuditQuery(
+        name="rating_summary_by_batch",
+        scope="generation_run",
+        category="ratings",
+        description="Per-batch current-rating summary and spread trend across the full generation run.",
+        sql="""
+            WITH ordered_batches AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.batch_month,
+                    ROW_NUMBER() OVER (
+                        ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                    ) AS batch_ordinal
+                FROM monthly_batches b
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            player_batch_terminal_ratings AS (
+                SELECT
+                    prh.player_id,
+                    source_batch.batch_ordinal AS start_batch_ordinal,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id, prh.batch_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rn
+                FROM player_rating_history prh
+                JOIN ordered_batches source_batch
+                    ON source_batch.batch_id = prh.batch_id
+            ),
+            player_rating_spans AS (
+                SELECT
+                    player_id,
+                    start_batch_ordinal,
+                    COALESCE(
+                        LEAD(start_batch_ordinal) OVER (
+                            PARTITION BY player_id
+                            ORDER BY start_batch_ordinal
+                        ),
+                        (SELECT MAX(batch_ordinal) + 1 FROM ordered_batches)
+                    ) AS end_batch_ordinal,
+                    rating_value
+                FROM player_batch_terminal_ratings
+                WHERE rn = 1
+            ),
+            latest_ratings AS (
+                SELECT
+                    ob.batch_id,
+                    ob.batch_month,
+                    prs.player_id,
+                    prs.rating_value
+                FROM player_rating_spans prs
+                JOIN players p
+                    ON p.id = prs.player_id
+                    AND p.generation_run_id = :generation_run_id
+                JOIN ordered_batches ob
+                    ON ob.batch_ordinal >= prs.start_batch_ordinal
+                    AND ob.batch_ordinal < prs.end_batch_ordinal
+                    AND p.registration_date <= ob.batch_month
+            )
+            SELECT
+                batch_id,
+                batch_month,
+                COUNT(*) AS rated_player_count,
+                ROUND(AVG(rating_value), 3) AS avg_rating,
+                MIN(rating_value) AS min_rating,
+                MAX(rating_value) AS max_rating,
+                ROUND(MAX(rating_value) - MIN(rating_value), 3) AS rating_range,
+                SUM(CASE WHEN rating_value < 1000 THEN 1 ELSE 0 END) AS sub_1000_count,
+                SUM(CASE WHEN rating_value >= 2000 THEN 1 ELSE 0 END) AS rating_2000_plus_count
+            FROM latest_ratings
+            GROUP BY batch_id, batch_month
+            ORDER BY batch_month ASC, batch_id ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("ratings", "batches", "distribution"),
+    ),
+    RealismAuditQuery(
+        name="rating_band_distribution_by_batch",
+        scope="generation_run",
+        category="ratings",
+        description="Per-batch current-rating band distribution across the full generation run.",
+        sql="""
+            WITH ordered_batches AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.batch_month,
+                    ROW_NUMBER() OVER (
+                        ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                    ) AS batch_ordinal
+                FROM monthly_batches b
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            player_batch_terminal_ratings AS (
+                SELECT
+                    prh.player_id,
+                    source_batch.batch_ordinal AS start_batch_ordinal,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id, prh.batch_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rn
+                FROM player_rating_history prh
+                JOIN ordered_batches source_batch
+                    ON source_batch.batch_id = prh.batch_id
+            ),
+            player_rating_spans AS (
+                SELECT
+                    player_id,
+                    start_batch_ordinal,
+                    COALESCE(
+                        LEAD(start_batch_ordinal) OVER (
+                            PARTITION BY player_id
+                            ORDER BY start_batch_ordinal
+                        ),
+                        (SELECT MAX(batch_ordinal) + 1 FROM ordered_batches)
+                    ) AS end_batch_ordinal,
+                    rating_value
+                FROM player_batch_terminal_ratings
+                WHERE rn = 1
+            ),
+            latest_ratings AS (
+                SELECT
+                    ob.batch_id,
+                    ob.batch_month,
+                    prs.player_id,
+                    prs.rating_value
+                FROM player_rating_spans prs
+                JOIN players p
+                    ON p.id = prs.player_id
+                    AND p.generation_run_id = :generation_run_id
+                JOIN ordered_batches ob
+                    ON ob.batch_ordinal >= prs.start_batch_ordinal
+                    AND ob.batch_ordinal < prs.end_batch_ordinal
+                    AND p.registration_date <= ob.batch_month
+            ),
+            bucketed AS (
+                SELECT
+                    batch_id,
+                    batch_month,
+                    CASE
+                        WHEN rating_value < 1000 THEN 'sub_1000'
+                        WHEN rating_value < 1500 THEN '1000_1499'
+                        WHEN rating_value < 2000 THEN '1500_1999'
+                        ELSE '2000_plus'
+                    END AS rating_band
+                FROM latest_ratings
+            )
+            SELECT
+                batch_id,
+                batch_month,
+                rating_band,
+                COUNT(*) AS player_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(
+                        SUM(COUNT(*)) OVER (PARTITION BY batch_id),
+                        0
+                    ),
+                    2
+                ) AS player_pct
+            FROM bucketed
+            GROUP BY batch_id, batch_month, rating_band
+            ORDER BY
+                batch_month ASC,
+                batch_id ASC,
+                CASE rating_band
+                    WHEN 'sub_1000' THEN 0
+                    WHEN '1000_1499' THEN 1
+                    WHEN '1500_1999' THEN 2
+                    ELSE 3
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("ratings", "batches", "distribution"),
     ),
     RealismAuditQuery(
         name="rating_delta_summary",

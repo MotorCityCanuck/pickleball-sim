@@ -81,6 +81,30 @@ def session():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE first_names (
+                id integer primary key,
+                country_code varchar(10) not null,
+                state_province_code varchar(10),
+                birth_year integer not null,
+                gender varchar(20),
+                first_name varchar(100) not null,
+                normalized_probability numeric(12, 8)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE last_names (
+                id integer primary key,
+                country_code varchar(10) not null,
+                state_province_code varchar(10),
+                last_name varchar(100) not null,
+                normalized_probability numeric(12, 8)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE player_registrations (
                 id integer primary key,
                 player_id bigint not null,
@@ -349,6 +373,40 @@ def seed_audit_dataset(session) -> None:
                 (105, 6, 10, '2026-01-01'),
                 (106, 7, 10, '2026-01-01'),
                 (107, 8, 10, '2026-01-01')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO first_names (
+                id, country_code, state_province_code, birth_year, gender, first_name, normalized_probability
+            ) VALUES
+                (1, 'US', 'NY', 2000, 'M', 'Alex', 1.0),
+                (2, 'US', 'NY', 1997, 'F', 'Blair', 1.0),
+                (3, 'US', 'CA', 1988, 'M', 'Casey', 1.0),
+                (4, 'US', 'TX', 1975, 'F', 'Devon', 1.0),
+                (5, 'US', 'FL', 1970, 'M', 'Emery', 1.0),
+                (6, 'US', 'FL', 1960, 'F', 'Finley', 1.0),
+                (7, 'US', 'NY', 1962, 'M', 'Gray', 1.0),
+                (8, 'CA', 'BC', 1964, 'F', 'Harper', 1.0)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO last_names (
+                id, country_code, state_province_code, last_name, normalized_probability
+            ) VALUES
+                (1, 'US', 'NY', 'Smith', 1.0),
+                (2, 'US', 'CA', 'Jones', 1.0),
+                (3, 'US', 'NY', 'Lee', 1.0),
+                (4, 'US', 'TX', 'Kim', 1.0),
+                (5, 'US', 'FL', 'Patel', 1.0),
+                (6, 'US', 'FL', 'Brown', 1.0),
+                (7, 'US', 'NY', 'Miller', 1.0),
+                (8, 'CA', 'BC', 'Davis', 1.0)
             """
         )
     )
@@ -788,6 +846,324 @@ def test_player_age_distribution_uses_registration_date(session):
             "player_pct": 12.5,
             "configured_pct": None,
             "pct_point_drift": None,
+        },
+    )
+
+
+def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
+            ) VALUES
+                (11, 1, '2026-02-01', 2, 'historical_initial', 'succeeded', '2026-02-15 12:00:00', '2026-02-15 12:00:00'),
+                (12, 1, '2026-03-01', 3, 'historical_initial', 'succeeded', '2026-03-15 12:00:00', '2026-03-15 12:00:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO matches (
+                id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number,
+                predicted_win_probability, batch_id
+            ) VALUES
+                (2002, '2026-02-03', 1, 'recreational', 3004, 1, 0.65, 11),
+                (2003, '2026-03-03', 1, 'league', 3007, 2, 0.55, 12)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_teams (
+                id, match_id, team_number, team_score
+            ) VALUES
+                (3004, 2002, 1, 1),
+                (3005, 2002, 2, 0),
+                (3006, 2003, 1, 0),
+                (3007, 2003, 2, 1)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_team_players (
+                id, match_team_id, player_id
+            ) VALUES
+                (3508, 3004, 1),
+                (3509, 3004, 2),
+                (3510, 3005, 3),
+                (3511, 3005, 4),
+                (3512, 3006, 1),
+                (3513, 3006, 2),
+                (3514, 3007, 3),
+                (3515, 3007, 4)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO player_rating_history (
+                id, player_id, rating_date, rating_type, rating_value, confidence_score, batch_id
+            ) VALUES
+                (208, 1, '2026-02-03', 'match_update', 1540, 0.24, 11),
+                (209, 2, '2026-02-03', 'match_update', 1640, 0.24, 11),
+                (210, 3, '2026-02-03', 'match_update', 1660, 0.67, 11),
+                (211, 4, '2026-02-03', 'match_update', 1760, 0.67, 11),
+                (212, 1, '2026-03-03', 'match_update', 1530, 0.26, 12),
+                (213, 2, '2026-03-03', 'match_update', 1630, 0.26, 12),
+                (214, 3, '2026-03-03', 'match_update', 1670, 0.69, 12),
+                (215, 4, '2026-03-03', 'match_update', 1770, 0.69, 12)
+            """
+        )
+    )
+    session.commit()
+
+    runner = RealismAuditRunner(session)
+    results = runner.run(
+        query_names=[
+            "player_name_uniqueness_summary",
+            "player_first_name_alignment",
+            "player_last_name_alignment",
+            "match_volume_by_batch",
+            "team_partner_continuity_by_batch",
+            "repeat_partner_match_distribution",
+            "rating_summary_by_batch",
+            "rating_band_distribution_by_batch",
+        ]
+    )
+
+    result_map = {result.query.name: result.rows for result in results}
+
+    assert result_map["player_name_uniqueness_summary"] == (
+        {
+            "generation_run_id": 1,
+            "player_count": 8,
+            "distinct_first_name_count": 8,
+            "distinct_last_name_count": 8,
+            "distinct_full_name_count": 8,
+            "max_players_sharing_full_name": 1,
+            "max_full_name_player_pct": 12.5,
+        },
+    )
+    assert result_map["player_first_name_alignment"] == (
+        {
+            "alignment_bucket": "exact_state_year",
+            "player_count": 5,
+            "player_pct": 62.5,
+        },
+        {
+            "alignment_bucket": "state_gender_other_year",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "alignment_bucket": "country_year_other_state",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "alignment_bucket": "country_gender_other_state_year",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+    )
+    assert result_map["player_last_name_alignment"] == (
+        {
+            "alignment_bucket": "exact_state",
+            "player_count": 6,
+            "player_pct": 75.0,
+        },
+        {
+            "alignment_bucket": "country_other_state",
+            "player_count": 2,
+            "player_pct": 25.0,
+        },
+    )
+    assert result_map["match_volume_by_batch"] == (
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "match_count": 2,
+            "unique_match_days": 1,
+            "avg_matches_per_match_day": 2.0,
+            "distinct_match_regions": 1,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "match_count": 1,
+            "unique_match_days": 1,
+            "avg_matches_per_match_day": 1.0,
+            "distinct_match_regions": 1,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "match_count": 1,
+            "unique_match_days": 1,
+            "avg_matches_per_match_day": 1.0,
+            "distinct_match_regions": 1,
+        },
+    )
+    assert result_map["team_partner_continuity_by_batch"] == (
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "active_roster_count": 3,
+            "persisted_roster_count": 0,
+            "new_roster_count": 3,
+            "persisted_roster_pct": None,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "active_roster_count": 3,
+            "persisted_roster_count": 3,
+            "new_roster_count": 0,
+            "persisted_roster_pct": 100.0,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "active_roster_count": 3,
+            "persisted_roster_count": 3,
+            "new_roster_count": 0,
+            "persisted_roster_pct": 100.0,
+        },
+    )
+    assert result_map["repeat_partner_match_distribution"] == (
+        {
+            "prior_match_count_bucket": "3_5",
+            "team_count": 2,
+            "team_pct": 100.0,
+            "avg_prior_match_count": 3.0,
+        },
+    )
+    assert result_map["rating_summary_by_batch"] == (
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "rated_player_count": 8,
+            "avg_rating": 1537.5,
+            "min_rating": 900,
+            "max_rating": 2100,
+            "rating_range": 1200.0,
+            "sub_1000_count": 1,
+            "rating_2000_plus_count": 1,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "rated_player_count": 8,
+            "avg_rating": 1537.5,
+            "min_rating": 900,
+            "max_rating": 2100,
+            "rating_range": 1200.0,
+            "sub_1000_count": 1,
+            "rating_2000_plus_count": 1,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "rated_player_count": 8,
+            "avg_rating": 1537.5,
+            "min_rating": 900,
+            "max_rating": 2100,
+            "rating_range": 1200.0,
+            "sub_1000_count": 1,
+            "rating_2000_plus_count": 1,
+        },
+    )
+    assert result_map["rating_band_distribution_by_batch"] == (
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "rating_band": "sub_1000",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "rating_band": "1000_1499",
+            "player_count": 2,
+            "player_pct": 25.0,
+        },
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "rating_band": "1500_1999",
+            "player_count": 4,
+            "player_pct": 50.0,
+        },
+        {
+            "batch_id": 10,
+            "batch_month": "2026-01-01",
+            "rating_band": "2000_plus",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "rating_band": "sub_1000",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "rating_band": "1000_1499",
+            "player_count": 2,
+            "player_pct": 25.0,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "rating_band": "1500_1999",
+            "player_count": 4,
+            "player_pct": 50.0,
+        },
+        {
+            "batch_id": 11,
+            "batch_month": "2026-02-01",
+            "rating_band": "2000_plus",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "rating_band": "sub_1000",
+            "player_count": 1,
+            "player_pct": 12.5,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "rating_band": "1000_1499",
+            "player_count": 2,
+            "player_pct": 25.0,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "rating_band": "1500_1999",
+            "player_count": 4,
+            "player_pct": 50.0,
+        },
+        {
+            "batch_id": 12,
+            "batch_month": "2026-03-01",
+            "rating_band": "2000_plus",
+            "player_count": 1,
+            "player_pct": 12.5,
         },
     )
 

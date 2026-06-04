@@ -6,6 +6,28 @@
 
 This platform generates realistic synthetic pickleball match data for graduate-level data science education and Olympic team selection analytics.
 
+## Solution Scale
+
+This is a medium-to-large simulation platform rather than a single-purpose
+script or prototype.
+
+- `~53.6k` lines of backend Python across `161` Python source files
+- `38` ORM models and `38` schema tables in
+  [backend/schema.sql](backend/schema.sql)
+- `48` test files with `1,066` individual test cases
+- `53` documentation files
+- `9` Jinja templates supporting the control panel UI
+
+In practical terms, the solution spans:
+
+- application logic
+- data engineering
+- monthly job orchestration
+- runtime instrumentation and failure recovery
+- operator-facing web control
+- dataset export packaging and validation
+- realism audit and analytics support
+
 ### Key Features
 
 - 🏓 **50,000 default synthetic players** across North America, with
@@ -62,43 +84,56 @@ This platform generates realistic synthetic pickleball match data for graduate-l
 
 ```
 pickleball-sim/
-├── backend/                    # Python application
+├── README.md                   # This file
+├── backend/                    # Python application and test suite
 │   ├── app/
-│   │   ├── core/              # Configuration and settings
-│   │   ├── db/                # Database session management
-│   │   ├── models/            # SQLAlchemy ORM models
-│   │   ├── generation/        # Generation run and monthly pipeline orchestration
-│   │   ├── generators/        # Data generation modules
-│   │   ├── web/               # FastAPI web interface
-│   │   └── utils/             # Shared utilities
-│   ├── scripts/               # ORM, seed, and generation CLI utilities
-│   ├── tests/                 # Test suite
-│   └── requirements.txt       # Python dependencies
-├── data/                      # Data storage
-│   ├── input/                 # Reference data inputs
-│   ├── output/                # Generated datasets
-│   ├── parquet/               # Exported Parquet files
-│   └── uploads/               # User-uploaded files
-├── scripts/                   # Utility scripts
-├── docs/                      # Additional documentation
-├── architecture/              # Architecture specifications
-├── database/                  # Database design documents
-├── generation_logic/          # Generation algorithm specs
-├── student_assignment/        # Student project materials
-├── compose.yaml               # Docker services
-└── README.md                  # This file
+│   │   ├── core/               # Configuration and settings
+│   │   ├── db/                 # Database session management
+│   │   ├── models/             # SQLAlchemy ORM models
+│   │   ├── generation/         # Generation run and monthly pipeline orchestration
+│   │   ├── generators/         # Data generation modules
+│   │   ├── exports/            # Student dataset export and validation
+│   │   ├── seed_data_ingest/   # Raw seed ingestion pipeline
+│   │   ├── seed_data_normalize/ # Reference data normalization
+│   │   ├── web/                # FastAPI web interface
+│   ├── scripts/                # ORM, seed, and generation CLI utilities
+│   ├── tests/                  # Test suite
+├── data/                       # Seed data, exports, and audit snapshots
+├── scripts/                    # Runtime, reporting, and environment scripts
+├── docs/                       # Architecture, orchestration, and design docs
+├── sql/                        # Reporting SQL
+└── compose.yaml                # Docker services
 ```
+
+## Backend Modules
+
+The backend is organized into clear subsystems:
+
+- `core` (`7` files, `~3.4k` lines): configuration defaults, config editor
+  metadata, validation, app settings
+- `generation` (`15` files, `~6.4k` lines): run orchestration, job lifecycle,
+  destructive reset, monthly pipeline, runtime metrics
+- `generators` (`8` files, `~6.4k` lines): players, club memberships, teams,
+  matches, ratings, games, hidden performance bias
+- `models` (`38` files, `~1.9k` lines): relational model surface for domain,
+  orchestration, exports, and seed data
+- `web` (`4` files, `~3.2k` lines): control panel routes, query projections,
+  job recovery
+- `exports` (`9` files, `~3.2k` lines): student-facing dataset projection,
+  packaging, validation
+- `seed_data_ingest` and `seed_data_normalize` (`13` files, `~2.8k` lines
+  combined): raw ingest and normalized reference data preparation
 
 ## Documentation
 
-📚 **Start here for development:**
+Start here for development:
 
-1. **[Quick Start Guide](docs_QUICK_START_GUIDE.md)** - 15-minute orientation
-2. **[Master Document Index](docs_MASTER_DOCUMENT_INDEX.md)** - Complete navigation
-3. **[Database Design](database/Pickleball_Simulation_Database_Design_v3.md)** - Schema specification
-4. **[Configuration Parameters](generation_logic/configuration_parameters_specification.md)** - All parameters
-5. **[Configuration Payload Architecture](architecture/configuration_payload_architecture.md)** - JSONB payload shape
-6. **[Design Review Summary](docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
+1. **[Quick Start Guide](docs/docs_QUICK_START_GUIDE.md)** - 15-minute orientation
+2. **[Master Document Index](docs/docs_MASTER_DOCUMENT_INDEX.md)** - Complete navigation
+3. **[Database Design](docs/database/Pickleball_Simulation_Database_Design_v3.md)** - Schema specification
+4. **[Configuration Parameters](docs/generation_logic/configuration_parameters_specification.md)** - All parameters
+5. **[Configuration Payload Architecture](docs/architecture/configuration_payload_architecture.md)** - JSONB payload shape
+6. **[Design Review Summary](docs/docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
 
 ## Architecture
 
@@ -127,6 +162,19 @@ Configuration → Monthly Batch Processor
                       ↓
     Validation → Parquet Export → Student Analytics
 ```
+
+### Operational Surface
+
+The platform includes more than batch generation code:
+
+- durable generation runs and monthly batches
+- job and stage status tracking
+- runtime instrumentation and SQL reporting
+- destructive reset and stalled-job recovery
+- server-rendered FastAPI/HTMX control panel
+- Parquet student dataset release packaging
+- release quality validation with DuckDB-based checks
+- realism audit snapshots and reporting utilities
 
 ## Development Phases
 
@@ -168,8 +216,6 @@ Configuration → Monthly Batch Processor
 
 ## Key Design Principles
 
-⚠️ **CRITICAL RULES**
-
 1. **Batch Association**: All generated data MUST include `batch_id` (NOT NULL)
 2. **Historical Integrity**: Ratings stored in `player_rating_history`, NOT on `players` table
 3. **Age Calculation**: Store `birth_date`, calculate age at query time
@@ -178,7 +224,7 @@ Configuration → Monthly Batch Processor
 
 ## Database Schema
 
-37 ORM-backed tables organized into layers:
+38 ORM-backed tables organized into layers:
 
 - **Bronze**: Raw ingestion and staging (`uploaded_files`, `raw_seed_load_runs`, `raw_seed_load_errors`, `raw_metro_areas`, `raw_pickleball_club_names`, `raw_pickleball_club_distributions`, `raw_first_names`, `raw_last_names`, `raw_state_prov_biases`)
 - **Silver**: Validated entities (`players`, `clubs`, `teams`, `regions`)
@@ -187,11 +233,11 @@ Configuration → Monthly Batch Processor
 - **Configuration Repository**: Versioned generation settings (`configuration_profiles`, `configuration_profile_versions`)
 - **Student Dataset Releases**: Export-release metadata (`student_dataset_releases`, `student_dataset_release_files`)
 
-See [Database Design](database/Pickleball_Simulation_Database_Design_v3.md) for complete DDL.
+See [Database Design](docs/database/Pickleball_Simulation_Database_Design_v3.md) for complete DDL.
 
 ## Configuration
 
-All parameters defined in [Configuration Parameters Specification](generation_logic/configuration_parameters_specification.md)
+All parameters defined in [Configuration Parameters Specification](docs/generation_logic/configuration_parameters_specification.md)
 
 Key defaults:
 - Monthly player growth: **2%**
@@ -236,7 +282,9 @@ docker exec -it pickleball-postgres psql -U postgres -d pickleball
 
 ## Contributing
 
-This is an educational project. See architecture documents for design decisions.
+This is an educational project with a meaningful operational footprint. See the
+architecture and orchestration documents for design decisions before changing
+generation, control-plane, or export behavior.
 
 ## License
 
@@ -245,12 +293,13 @@ Educational use only.
 ## Contact
 
 For questions about the architecture, see the authoritative design documents in:
-- `architecture/`
-- `database/`
-- `generation_logic/`
+- `docs/architecture/`
+- `docs/database/`
+- `docs/generation_logic/`
 
 ---
 
-**Status**: Core generation and match/game generation in progress  
-**Last Updated**: 2026-05-18  
-**Version**: 1.1
+**Status**: Operational simulation platform with active performance and
+observability optimization  
+**Last Updated**: 2026-06-03  
+**Version**: 1.2
