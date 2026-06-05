@@ -11,7 +11,7 @@ import tempfile
 from typing import Any
 import zipfile
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 from fastapi.templating import Jinja2Templates
@@ -29,6 +29,12 @@ from app.core import (
 from app.db.session import get_session
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
+from app.tournament_simulation import (
+    PortfolioSlot,
+    StudentGroup,
+    TeamSubmission,
+    TournamentService,
+)
 
 from .control_panel_queries import (
     ConfigEditorState,
@@ -75,6 +81,11 @@ def get_seed_refresh_service() -> SeedRefreshService:
 def get_student_dataset_export_service() -> StudentDatasetExportService:
     """Return the student dataset export service."""
     return StudentDatasetExportService()
+
+
+def get_tournament_service() -> TournamentService:
+    """Return the tournament workflow service."""
+    return TournamentService()
 
 
 def get_background_job_runner() -> BackgroundJobRunner:
@@ -449,7 +460,174 @@ def build_control_panel_router() -> APIRouter:
                 "export_launch_message": export_launch_message,
                 "export_launch_error": export_launch_error,
             },
+            )
+
+    @router.post("/control/tournaments/events", response_class=JSONResponse)
+    def control_panel_tournament_event_create(
+        payload: dict[str, Any] = Body(...),
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+    ) -> JSONResponse:
+        try:
+            creation = tournament_service.create_event(
+                event_name=str(payload.get("event_name") or "Tournament Event"),
+                source_batch_id=int(payload["source_batch_id"]),
+                tournament_date=_parse_iso_date(str(payload["tournament_date"])),
+                student_groups=_student_groups_from_payload(payload),
+                submissions=_team_submissions_from_payload(payload),
+                generation_run_id=(
+                    int(payload["generation_run_id"])
+                    if payload.get("generation_run_id") is not None
+                    else None
+                ),
+                config_snapshot=payload.get("config_snapshot"),
+                session=session,
+            )
+            session.commit()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "event_id": creation.event.id,
+                    "student_group_count": len(creation.student_groups),
+                    "submission_count": len(creation.submissions),
+                }
+            )
+        except Exception as exc:
+            session.rollback()
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    @router.post("/control/tournaments/{event_id}/validate", response_class=JSONResponse)
+    def control_panel_tournament_validate(
+        event_id: int,
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+    ) -> JSONResponse:
+        try:
+            result = tournament_service.validate_event(
+                event_id=event_id,
+                session=session,
+            )
+            session.commit()
+            return JSONResponse(
+                {
+                    "ok": result.is_valid,
+                    "source_batch_id": result.source_batch_id,
+                    "division_count": len(result.divisions),
+                    "issues": [_validation_issue_payload(issue) for issue in result.issues],
+                },
+                status_code=200 if result.is_valid else 422,
+            )
+        except Exception as exc:
+            session.rollback()
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    @router.post("/control/tournaments/{event_id}/monte-carlo/start", response_class=JSONResponse)
+    def control_panel_tournament_monte_carlo_start(
+        event_id: int,
+        payload: dict[str, Any] = Body(default={}),
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
+    ) -> JSONResponse:
+        try:
+            seed = int(payload.get("seed", 1))
+            iterations = int(payload.get("iterations", 1000))
+            if bool(payload.get("background", False)):
+                start = tournament_service.register_monte_carlo_run(
+                    event_id=event_id,
+                    iterations=iterations,
+                    seed=seed,
+                    session=session,
+                )
+                session.commit()
+                background_runner.submit(
+                    tournament_service.execute_run_in_background,
+                    simulation_run_id=start.simulation_run.id,
+                )
+            else:
+                start = tournament_service.run_monte_carlo(
+                    event_id=event_id,
+                    iterations=iterations,
+                    seed=seed,
+                    session=session,
+                )
+                session.commit()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "simulation_run_id": start.simulation_run.id,
+                    "job_status_id": start.job_status.id,
+                    "status": start.simulation_run.status,
+                }
+            )
+        except Exception as exc:
+            session.rollback()
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    @router.post("/control/tournaments/{event_id}/official/start", response_class=JSONResponse)
+    def control_panel_tournament_official_start(
+        event_id: int,
+        payload: dict[str, Any] = Body(default={}),
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
+    ) -> JSONResponse:
+        try:
+            seed = int(payload.get("seed", 1))
+            if bool(payload.get("background", False)):
+                start = tournament_service.register_official_run(
+                    event_id=event_id,
+                    seed=seed,
+                    session=session,
+                )
+                session.commit()
+                background_runner.submit(
+                    tournament_service.execute_run_in_background,
+                    simulation_run_id=start.simulation_run.id,
+                )
+            else:
+                start = tournament_service.run_official(
+                    event_id=event_id,
+                    seed=seed,
+                    session=session,
+                )
+                session.commit()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "simulation_run_id": start.simulation_run.id,
+                    "job_status_id": start.job_status.id,
+                    "status": start.simulation_run.status,
+                }
+            )
+        except Exception as exc:
+            session.rollback()
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    @router.get("/control/tournaments/{event_id}/summary", response_class=JSONResponse)
+    def control_panel_tournament_summary(
+        event_id: int,
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+    ) -> JSONResponse:
+        summary = tournament_service.latest_summary(event_id=event_id, session=session)
+        if summary is None:
+            return JSONResponse({"ok": False, "error": "No tournament results found."}, status_code=404)
+        return JSONResponse({"ok": True, "summary": summary})
+
+    @router.get("/control/tournaments/official-matches/{official_match_id}", response_class=JSONResponse)
+    def control_panel_tournament_official_match_detail(
+        official_match_id: int,
+        session: Session = Depends(get_session),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+    ) -> JSONResponse:
+        detail = tournament_service.official_match_detail(
+            official_match_id=official_match_id,
+            session=session,
         )
+        if detail is None:
+            return JSONResponse({"ok": False, "error": "Official match not found."}, status_code=404)
+        return JSONResponse({"ok": True, "match": detail})
 
     @router.post("/control/system/copy-path", response_class=JSONResponse)
     def control_panel_copy_path(path: str = Form(...)) -> JSONResponse:
@@ -1325,3 +1503,45 @@ def _field_validation_paths(field: object) -> tuple[str, ...]:
     if isinstance(primary_path, str) and primary_path:
         return (primary_path,)
     return ()
+
+
+def _parse_iso_date(value: str):
+    from datetime import date
+
+    return date.fromisoformat(value)
+
+
+def _student_groups_from_payload(payload: dict[str, Any]) -> tuple[StudentGroup, ...]:
+    return tuple(
+        StudentGroup(
+            id=int(group["id"]),
+            name=str(group.get("name") or f"Group {group['id']}"),
+        )
+        for group in payload.get("student_groups", ())
+    )
+
+
+def _team_submissions_from_payload(payload: dict[str, Any]) -> tuple[TeamSubmission, ...]:
+    return tuple(
+        TeamSubmission(
+            group_id=int(row["group_id"]),
+            slot=PortfolioSlot(
+                country_code=str(row["country_code"]),
+                division=str(row["division"]),
+            ),
+            team_id=int(row["team_id"]),
+        )
+        for row in payload.get("submissions", ())
+    )
+
+
+def _validation_issue_payload(issue: object) -> dict[str, Any]:
+    return {
+        "group_id": getattr(issue, "group_id"),
+        "team_id": getattr(issue, "team_id"),
+        "country_code": getattr(issue, "slot").country_code,
+        "division": getattr(issue, "slot").division,
+        "field": getattr(issue, "field"),
+        "code": getattr(issue, "code"),
+        "message": getattr(issue, "message"),
+    }

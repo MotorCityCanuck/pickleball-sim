@@ -14,6 +14,7 @@ from .dtos import (
 from .monte_carlo import MonteCarloResult, run_monte_carlo
 from .round_robin import build_division_from_submissions, round_robin_pairings
 from .round_robin_simulator import simulate_division_round_robin
+from .service import TournamentEventCreation, TournamentRunStart, TournamentService
 from .student_scoring import score_student_groups
 from .team_loader import (
     SubmissionValidationIssue,
@@ -37,6 +38,9 @@ __all__ = [
     "TournamentScoringConfig",
     "TournamentSimulationConfig",
     "TournamentTeamEntry",
+    "TournamentEventCreation",
+    "TournamentRunStart",
+    "TournamentService",
     "ValidatedTournamentInput",
     "build_division_from_submissions",
     "latest_completed_source_batch",
