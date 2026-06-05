@@ -26,6 +26,7 @@ from app.models import (
     PlayerRegistration,
     RatingsUpdateLog,
     Team,
+    TeamLifecycleEvent,
 )
 
 from .control_plane import GenerationControlPlane
@@ -506,10 +507,9 @@ class MonthlyGenerationPipeline:
     ) -> PipelineStepResult:
         batch_team_events = _count(
             session,
-            select(func.count()).select_from(Team).where(
-                Team.generation_run_id == generation_run_id,
-                (Team.formation_date == batch.batch_month)
-                | (Team.dissolution_date == batch.batch_month),
+            select(func.count()).select_from(TeamLifecycleEvent).where(
+                TeamLifecycleEvent.generation_run_id == generation_run_id,
+                TeamLifecycleEvent.batch_id == batch.id,
             ),
         )
         if batch_team_events:

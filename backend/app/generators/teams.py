@@ -20,6 +20,7 @@ from app.models import (
     Player,
     PlayerRatingHistory,
     Team,
+    TeamLifecycleEvent,
     TeamMembership,
 )
 
@@ -449,12 +450,9 @@ class TeamGenerator:
             raise ValueError("Batch does not belong to the generation run")
 
         batch_team_events = session.scalar(
-            select(func.count()).select_from(Team).where(
-                Team.generation_run_id == generation_run_id,
-                or_(
-                    Team.formation_date == batch.batch_month,
-                    Team.dissolution_date == batch.batch_month,
-                ),
+            select(func.count()).select_from(TeamLifecycleEvent).where(
+                TeamLifecycleEvent.generation_run_id == generation_run_id,
+                TeamLifecycleEvent.batch_id == batch_id,
             )
         )
         if batch_team_events:
@@ -470,6 +468,7 @@ class TeamGenerator:
         _apply_monthly_team_lifecycle(
             session,
             generation_run_id=generation_run_id,
+            batch_id=batch_id,
             batch_month=batch.batch_month,
             config=config,
             rng=rng,
@@ -562,6 +561,14 @@ class TeamGenerator:
         ]
         session.add_all(team_memberships)
         session.flush()
+        _record_team_lifecycle_events(
+            session,
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            event_date=batch.batch_month,
+            teams=teams,
+            event_type="formed",
+        )
 
         return TeamGenerationResult(
             generation_run_id=generation_run_id,
@@ -657,10 +664,12 @@ def _apply_monthly_team_lifecycle(
     session: Session,
     *,
     generation_run_id: int,
+    batch_id: int,
     batch_month: date,
     config: TeamFormationConfig,
     rng: random.Random,
 ) -> None:
+    status_changes: list[tuple[Team, str]] = []
     active_teams = tuple(
         session.scalars(
             select(Team)
@@ -677,13 +686,23 @@ def _apply_monthly_team_lifecycle(
         persistence = float(team.persistence_probability or Decimal("0"))
         if rng.random() < persistence:
             continue
-        team.team_status = (
+        new_status = (
             "retired"
             if rng.random() < float(config.retired_team_rate_on_dissolution)
             else "dormant"
         )
+        team.team_status = new_status
         team.dissolution_date = batch_month
+        status_changes.append((team, new_status))
     session.flush()
+    _record_team_lifecycle_events(
+        session,
+        generation_run_id=generation_run_id,
+        batch_id=batch_id,
+        event_date=batch_month,
+        teams=[team for team, _ in status_changes],
+        event_type_by_team_id={team.id: event_type for team, event_type in status_changes},
+    )
 
     if config.dormant_team_reactivation_rate <= 0:
         return
@@ -715,6 +734,44 @@ def _apply_monthly_team_lifecycle(
         team.team_status = "active"
         team.dissolution_date = None
         covered_player_ids.update(player_ids)
+        status_changes.append((team, "reactivated"))
+    session.flush()
+    _record_team_lifecycle_events(
+        session,
+        generation_run_id=generation_run_id,
+        batch_id=batch_id,
+        event_date=batch_month,
+        teams=[team for team, event_type in status_changes if event_type == "reactivated"],
+        event_type="reactivated",
+    )
+
+
+def _record_team_lifecycle_events(
+    session: Session,
+    *,
+    generation_run_id: int,
+    batch_id: int,
+    event_date: date,
+    teams: list[Team] | tuple[Team, ...],
+    event_type: str | None = None,
+    event_type_by_team_id: dict[int, str] | None = None,
+) -> None:
+    if not teams:
+        return
+    session.add_all(
+        TeamLifecycleEvent(
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+            team_id=team.id,
+            event_date=event_date,
+            event_type=(
+                event_type
+                if event_type is not None
+                else str(event_type_by_team_id[team.id])
+            ),
+        )
+        for team in teams
+    )
     session.flush()
 
 

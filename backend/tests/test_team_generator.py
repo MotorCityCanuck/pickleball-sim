@@ -24,6 +24,7 @@ from app.models import (  # noqa: E402
     Player,
     PlayerRatingHistory,
     Team,
+    TeamLifecycleEvent,
     TeamMembership,
 )
 
@@ -192,6 +193,20 @@ def session_factory():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE team_lifecycle_events (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                team_id bigint not null,
+                event_date date not null,
+                event_type varchar(30) not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
     return sessionmaker(bind=engine, autoflush=False, future=True)
 
 
@@ -302,6 +317,9 @@ def test_generate_for_batch_creates_teams_and_memberships(session):
     assert {team.formation_date for team in session.query(Team)} == {
         date(2024, 1, 1)
     }
+    assert {
+        event.event_type for event in session.query(TeamLifecycleEvent).all()
+    } == {"formed"}
     assert _all_teams_have_two_players(session)
     assert _no_duplicate_players(session)
 
@@ -614,6 +632,87 @@ def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecy
     assert teams[0].dissolution_date is None
     assert teams[1].team_status == "dormant"
     assert teams[1].dissolution_date == date(2024, 2, 1)
+    lifecycle_events = (
+        session.query(TeamLifecycleEvent)
+        .filter(TeamLifecycleEvent.batch_id == second_batch.id)
+        .order_by(TeamLifecycleEvent.team_id, TeamLifecycleEvent.id)
+        .all()
+    )
+    assert [(event.team_id, event.event_type) for event in lifecycle_events] == [
+        (teams[1].id, "dormant"),
+        (session.query(Team).order_by(Team.id.desc()).first().id, "formed"),
+    ]
+
+
+def test_generate_for_later_batch_records_reactivated_team_event(session):
+    payload = test_payload(4)
+    payload["team_formation"]["player_team_participation_rate"] = 1.0
+    payload["team_formation"]["competitive_team_rate"] = 0.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 1.0
+    payload["team_formation"]["retired_team_rate_on_dissolution"] = 0.0
+    payload["team_formation"]["team_type_weights"] = {
+        "mens_doubles": 0.0,
+        "womens_doubles": 0.0,
+        "mixed_doubles": 0.0,
+        "open_doubles": 1.0,
+    }
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=4)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    team = session.query(Team).order_by(Team.id).first()
+    team.team_status = "dormant"
+    team.dissolution_date = date(2024, 2, 1)
+    dormant_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="future_increment",
+        processing_status="succeeded",
+    )
+    session.add(dormant_batch)
+    session.flush()
+    session.add(
+        TeamLifecycleEvent(
+            generation_run_id=generation_run.id,
+            batch_id=dormant_batch.id,
+            team_id=team.id,
+            event_date=date(2024, 2, 1),
+            event_type="dormant",
+        )
+    )
+    session.commit()
+
+    reactivation_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 3, 1),
+        batch_sequence=3,
+        batch_type="future_increment",
+        processing_status="pending",
+    )
+    session.add(reactivation_batch)
+    session.commit()
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=reactivation_batch.id,
+        session=session,
+    )
+
+    reactivation_event = (
+        session.query(TeamLifecycleEvent)
+        .filter(
+            TeamLifecycleEvent.batch_id == reactivation_batch.id,
+            TeamLifecycleEvent.team_id == team.id,
+            TeamLifecycleEvent.event_type == "reactivated",
+        )
+        .one()
+    )
+    assert reactivation_event.event_date == date(2024, 3, 1)
 
 
 def _all_teams_have_two_players(session):

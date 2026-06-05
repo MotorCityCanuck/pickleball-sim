@@ -12,6 +12,7 @@ from .clubs import Club
 from .club_memberships import ClubMembership
 from .teams import Team
 from .team_memberships import TeamMembership
+from .team_lifecycle_events import TeamLifecycleEvent
 from .tournaments import Tournament
 from .matches import Match
 from .match_games import MatchGame
@@ -55,6 +56,7 @@ __all__ = [
     'ClubMembership',
     'Team',
     'TeamMembership',
+    'TeamLifecycleEvent',
     'Tournament',
     'Match',
     'MatchGame',

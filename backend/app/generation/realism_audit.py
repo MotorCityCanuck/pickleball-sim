@@ -1498,21 +1498,68 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                 LEFT JOIN ordered_batches prior_batch
                     ON prior_batch.batch_ordinal = current_batch.batch_ordinal - 1
             ),
-            active_rosters AS (
+            has_lifecycle_events AS (
+                SELECT
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM team_lifecycle_events tle
+                            WHERE tle.generation_run_id = :generation_run_id
+                        )
+                        THEN 1
+                        ELSE 0
+                    END AS has_events
+            ),
+            event_ranked AS (
                 SELECT
                     bp.batch_id,
-                    CAST(MIN(tm.player_id) AS TEXT) || ':' || CAST(MAX(tm.player_id) AS TEXT) AS roster_key
+                    tle.team_id,
+                    tle.event_type,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY bp.batch_id, tle.team_id
+                        ORDER BY tle.event_date DESC, tle.id DESC
+                    ) AS event_rank
                 FROM batch_pairs bp
+                JOIN team_lifecycle_events tle
+                    ON tle.generation_run_id = :generation_run_id
+                    AND tle.event_date <= bp.batch_month
+            ),
+            active_teams AS (
+                SELECT
+                    er.batch_id,
+                    er.team_id
+                FROM event_ranked er
+                JOIN has_lifecycle_events h
+                    ON h.has_events = 1
+                WHERE er.event_rank = 1
+                    AND er.event_type IN ('formed', 'reactivated')
+
+                UNION ALL
+
+                SELECT
+                    bp.batch_id,
+                    t.id AS team_id
+                FROM batch_pairs bp
+                JOIN has_lifecycle_events h
+                    ON h.has_events = 0
                 JOIN teams t
                     ON t.generation_run_id = :generation_run_id
                     AND t.team_status = 'active'
                     AND t.formation_date <= bp.batch_month
                     AND (t.dissolution_date IS NULL OR t.dissolution_date > bp.batch_month)
+            ),
+            active_rosters AS (
+                SELECT
+                    at.batch_id,
+                    CAST(MIN(tm.player_id) AS TEXT) || ':' || CAST(MAX(tm.player_id) AS TEXT) AS roster_key
+                FROM active_teams at
+                JOIN batch_pairs bp
+                    ON bp.batch_id = at.batch_id
                 JOIN team_memberships tm
-                    ON tm.team_id = t.id
+                    ON tm.team_id = at.team_id
                     AND tm.joined_date <= bp.batch_month
                     AND (tm.left_date IS NULL OR tm.left_date > bp.batch_month)
-                GROUP BY bp.batch_id, t.id
+                GROUP BY at.batch_id, at.team_id
                 HAVING COUNT(*) = 2
             ),
             classified AS (

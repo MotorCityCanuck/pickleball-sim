@@ -71,6 +71,7 @@ EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
         "raw_state_prov_biases",
         "student_dataset_release_files",
         "student_dataset_releases",
+        "team_lifecycle_events",
         "tournaments",
         "uploaded_files",
         "validation_results",

@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "validation_results",
     "student_dataset_releases",
     "student_dataset_release_files",
+    "team_lifecycle_events",
 }
 
 STALE_SPLIT_NAME_TABLES = {
@@ -139,6 +140,10 @@ EXPECTED_INDEXES = {
     "idx_team_memberships_dates",
     "idx_team_memberships_player",
     "idx_team_memberships_team",
+    "idx_team_lifecycle_events_batch",
+    "idx_team_lifecycle_events_date",
+    "idx_team_lifecycle_events_run",
+    "idx_team_lifecycle_events_team",
     "idx_teams_formation_date",
     "idx_teams_status",
     "idx_teams_type",
@@ -228,6 +233,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
     },
     "team_memberships": {"chk_membership_dates", "chk_position"},
     "teams": {"chk_team_dates", "chk_team_status", "chk_team_type"},
+    "team_lifecycle_events": {"chk_team_lifecycle_event_type"},
     "tournaments": {"chk_tournament_dates"},
     "uploaded_files": {"chk_file_size"},
     "student_dataset_releases": {

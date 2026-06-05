@@ -173,6 +173,18 @@ def session():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE team_lifecycle_events (
+                id integer primary key,
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                team_id bigint not null,
+                event_date date not null,
+                event_type varchar(30) not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE matches (
                 id integer primary key,
                 match_date date not null,
@@ -478,6 +490,20 @@ def seed_audit_dataset(session) -> None:
                 (2003, 501, 4, '2026-01-01', NULL),
                 (2004, 502, 5, '2026-01-01', NULL),
                 (2005, 502, 6, '2026-01-01', NULL)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO team_lifecycle_events (
+                id, generation_run_id, batch_id, team_id, event_date, event_type
+            ) VALUES
+                (4000, 1, 10, 500, '2026-01-01', 'formed'),
+                (4001, 1, 10, 501, '2026-01-01', 'formed'),
+                (4002, 1, 10, 502, '2026-01-01', 'formed'),
+                (4003, 1, 11, 502, '2026-02-01', 'dormant'),
+                (4004, 1, 12, 502, '2026-03-01', 'reactivated')
             """
         )
     )
@@ -1076,8 +1102,8 @@ def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
         {
             "batch_id": 11,
             "batch_month": "2026-02-01",
-            "active_roster_count": 3,
-            "persisted_roster_count": 3,
+            "active_roster_count": 2,
+            "persisted_roster_count": 2,
             "new_roster_count": 0,
             "persisted_roster_pct": 100.0,
         },
@@ -1085,9 +1111,9 @@ def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
             "batch_id": 12,
             "batch_month": "2026-03-01",
             "active_roster_count": 3,
-            "persisted_roster_count": 3,
-            "new_roster_count": 0,
-            "persisted_roster_pct": 100.0,
+            "persisted_roster_count": 2,
+            "new_roster_count": 1,
+            "persisted_roster_pct": 66.67,
         },
     )
     assert result_map["repeat_partner_match_distribution"] == (
