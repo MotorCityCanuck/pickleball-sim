@@ -21,27 +21,52 @@ class GameGenerationConfig(Protocol):
 
 
 @dataclass(frozen=True)
-class GeneratedGames:
-    """Generated game rows and match-level win counts."""
+class SimulatedGameResult:
+    """Pure non-ORM result for one simulated game."""
+
+    game_number: int
+    team_one_score: int
+    team_two_score: int
+    winning_team_number: int
+    target_score: int
+    win_by: int
+    expected_team_one_score_share: Decimal
+    actual_team_one_score_share: Decimal
+    expected_team_one_score: Decimal
+    expected_team_two_score: Decimal
+    score_noise_factor: Decimal
+
+
+@dataclass(frozen=True)
+class SimulatedMatchGames:
+    """Pure non-ORM result for all games in one match."""
 
     team_one_games_won: int
     team_two_games_won: int
-    games: list[MatchGame]
+    games: tuple[SimulatedGameResult, ...]
 
 
-def generate_match_games(
+@dataclass(frozen=True)
+class GeneratedGames:
+    """Monthly-generation ORM game rows and match-level win counts."""
+
+    team_one_games_won: int
+    team_two_games_won: int
+    games: tuple[MatchGame, ...]
+
+
+def simulate_match_games(
     rng: random.Random,
     *,
-    match: Match,
     expected_team_one_win_probability: Decimal,
     match_type: str,
     config: GameGenerationConfig,
-) -> GeneratedGames:
-    """Generate all game rows for one match."""
+) -> SimulatedMatchGames:
+    """Simulate all game outcomes for one match without ORM objects."""
     game_count = games_per_match(match_type, config)
     team_one_games_won = 0
     team_two_games_won = 0
-    games: list[MatchGame] = []
+    games: list[SimulatedGameResult] = []
     for game_number in range(1, game_count + 1):
         adjusted_probability = adjusted_game_probability(
             rng,
@@ -65,8 +90,7 @@ def generate_match_games(
             config,
         )
         games.append(
-            MatchGame(
-                match_id=match.id,
+            SimulatedGameResult(
                 game_number=game_number,
                 team_one_score=team_one_score,
                 team_two_score=team_two_score,
@@ -83,10 +107,53 @@ def generate_match_games(
                 score_noise_factor=noise_value(rng, config.score_noise_std_dev),
             )
         )
-    return GeneratedGames(
+    return SimulatedMatchGames(
         team_one_games_won=team_one_games_won,
         team_two_games_won=team_two_games_won,
-        games=games,
+        games=tuple(games),
+    )
+
+
+def generate_match_games(
+    rng: random.Random,
+    *,
+    match: Match,
+    expected_team_one_win_probability: Decimal,
+    match_type: str,
+    config: GameGenerationConfig,
+) -> GeneratedGames:
+    """Generate ORM game rows for one persisted monthly match."""
+    simulated = simulate_match_games(
+        rng,
+        expected_team_one_win_probability=expected_team_one_win_probability,
+        match_type=match_type,
+        config=config,
+    )
+    return GeneratedGames(
+        team_one_games_won=simulated.team_one_games_won,
+        team_two_games_won=simulated.team_two_games_won,
+        games=tuple(
+            match_game_from_result(match_id=match.id, result=result)
+            for result in simulated.games
+        ),
+    )
+
+
+def match_game_from_result(*, match_id: int, result: SimulatedGameResult) -> MatchGame:
+    """Convert a pure game result into the monthly-generation ORM row."""
+    return MatchGame(
+        match_id=match_id,
+        game_number=result.game_number,
+        team_one_score=result.team_one_score,
+        team_two_score=result.team_two_score,
+        winning_team_number=result.winning_team_number,
+        target_score=result.target_score,
+        win_by=result.win_by,
+        expected_team_one_score_share=result.expected_team_one_score_share,
+        actual_team_one_score_share=result.actual_team_one_score_share,
+        expected_team_one_score=result.expected_team_one_score,
+        expected_team_two_score=result.expected_team_two_score,
+        score_noise_factor=result.score_noise_factor,
     )
 
 

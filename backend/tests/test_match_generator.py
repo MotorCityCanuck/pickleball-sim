@@ -130,6 +130,7 @@ def session_factory():
                 id integer primary key autoincrement,
                 team_type varchar(50) not null,
                 team_status varchar(30) default 'active',
+                country_code varchar(2),
                 formation_date date not null,
                 dissolution_date date,
                 chemistry_score numeric(8, 4),

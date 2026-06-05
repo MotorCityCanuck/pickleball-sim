@@ -30,8 +30,12 @@ from app.models import (
     TeamMembership,
 )
 
-from .games import games_per_match, generate_match_games
-from .hidden_performance_bias import compute_hidden_team_adjustment_breakdown
+from .games import SimulatedGameResult, games_per_match, simulate_match_games
+from .match_outcome_probabilities import (
+    competitiveness,
+    expected_win_probability,
+    monthly_hidden_adjusted_win_probability,
+)
 from .players import WeightedSampler, _decimal
 
 
@@ -989,9 +993,8 @@ class MatchGenerator:
                 start=1,
             ):
                 detail_start = perf_counter()
-                generated_games = generate_match_games(
+                generated_games = simulate_match_games(
                     rng,
-                    match=match,
                     expected_team_one_win_probability=expected_prob,
                     match_type=match.match_type,
                     config=config,
@@ -1021,7 +1024,7 @@ class MatchGenerator:
                 )
                 scoring_detail_counts["scoring_build_match_teams"] += 2
                 detail_start = perf_counter()
-                game_rows.extend(_match_game_rows(generated_games.games))
+                game_rows.extend(_match_game_rows(match.id, generated_games.games))
                 match.total_points_played = sum(
                     game.team_one_score + game.team_two_score
                     for game in generated_games.games
@@ -1977,54 +1980,26 @@ def _hidden_adjusted_win_probability(
     config: MatchGenerationConfig,
     rng: random.Random,
 ) -> Decimal:
-    visible_probability = _expected_win_probability(
-        first_team.average_rating,
-        second_team.average_rating,
-    )
-    if not config.hidden_performance_bias.enabled:
-        return visible_probability
-
-    visible_competitiveness = _competitiveness(visible_probability)
-    match_context = {
-        "match_date": match_date,
-        "visible_team_one_rating": first_team.average_rating,
-        "visible_team_two_rating": second_team.average_rating,
-        "visible_probability": visible_probability,
-        "expected_competitiveness": visible_competitiveness,
-    }
-    first_breakdown = compute_hidden_team_adjustment_breakdown(
+    result = monthly_hidden_adjusted_win_probability(
         first_team,
         second_team,
-        match_context,
-        config.hidden_performance_bias,
-        rng,
+        match_date=match_date,
+        hidden_bias_config=config.hidden_performance_bias,
+        rng=rng,
     )
-    second_breakdown = compute_hidden_team_adjustment_breakdown(
-        second_team,
-        first_team,
-        match_context,
-        config.hidden_performance_bias,
-        rng,
-    )
-    team_one_effective_rating = first_team.average_rating + first_breakdown.total
-    team_two_effective_rating = second_team.average_rating + second_breakdown.total
-    adjusted_probability = _expected_win_probability(
-        team_one_effective_rating,
-        team_two_effective_rating,
-    )
-    if config.hidden_performance_bias.debug_enabled:
+    if result.applied_hidden_bias and config.hidden_performance_bias.debug_enabled:
         _log_hidden_performance_bias_debug(
             first_team=first_team,
             second_team=second_team,
             match_date=match_date,
-            visible_probability=visible_probability,
-            final_probability=adjusted_probability,
-            team_one_effective_rating=team_one_effective_rating,
-            team_two_effective_rating=team_two_effective_rating,
-            team_one_breakdown=first_breakdown,
-            team_two_breakdown=second_breakdown,
+            visible_probability=result.visible_probability,
+            final_probability=result.final_probability,
+            team_one_effective_rating=result.team_one_effective_rating,
+            team_two_effective_rating=result.team_two_effective_rating,
+            team_one_breakdown=result.team_one_breakdown,
+            team_two_breakdown=result.team_two_breakdown,
         )
-    return adjusted_probability
+    return result.final_probability
 
 
 def _log_hidden_performance_bias_debug(
@@ -2080,14 +2055,11 @@ def _debug_decimal(value: Decimal) -> str:
 
 
 def _expected_win_probability(rating_one: Decimal, rating_two: Decimal) -> Decimal:
-    exponent = float((rating_two - rating_one) / Decimal("400"))
-    probability = Decimal(str(1 / (1 + 10**exponent)))
-    return probability.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return expected_win_probability(rating_one, rating_two)
 
 
 def _competitiveness(expected_win_probability: Decimal) -> Decimal:
-    value = Decimal("1") - abs(expected_win_probability - Decimal("0.5")) * 2
-    return value.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    return competitiveness(expected_win_probability)
 
 
 def _noise_value(rng: random.Random, scale: Decimal) -> Decimal:
@@ -2112,10 +2084,13 @@ def _match_team_player_rows(
     ]
 
 
-def _match_game_rows(games: list[MatchGame]) -> list[dict[str, Any]]:
+def _match_game_rows(
+    match_id: int,
+    games: tuple[SimulatedGameResult, ...],
+) -> list[dict[str, Any]]:
     return [
         {
-            "match_id": game.match_id,
+            "match_id": match_id,
             "game_number": game.game_number,
             "team_one_score": game.team_one_score,
             "team_two_score": game.team_two_score,
