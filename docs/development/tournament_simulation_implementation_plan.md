@@ -170,6 +170,35 @@ Acceptance criteria:
 
 ### Increment 2.2: Add Pure Game Result DTOs
 
+DTO means Data Transfer Object.
+
+In this plan, a DTO is a small plain Python object used to move simulation
+inputs or results between modules without tying the simulation logic to
+SQLAlchemy ORM models or database persistence.
+
+Example:
+
+```python
+@dataclass(frozen=True)
+class SimulatedGameResult:
+    game_number: int
+    team_one_score: int
+    team_two_score: int
+    winning_team_number: int
+    expected_team_one_score_share: Decimal
+    actual_team_one_score_share: Decimal
+```
+
+The current monthly game simulation creates ORM objects such as `MatchGame`.
+Tournament simulation needs to reuse game outcome logic but must not write Monte
+Carlo games into historical `match_games`. Pure DTOs let the same simulation
+logic serve both paths:
+
+- Monthly generation converts DTOs into `MatchGame` ORM rows.
+- Tournament simulation keeps DTOs in memory or later persists them into
+  tournament-specific result tables.
+- Unit tests can exercise outcome logic without a database session.
+
 Work:
 
 - Define non-ORM game result DTOs.

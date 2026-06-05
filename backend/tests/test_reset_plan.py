@@ -28,6 +28,7 @@ from app.models import (  # noqa: E402
     RatingsUpdateLog,
     Region,
     StudentDatasetRelease,
+    TeamLifecycleEvent,
 )
 
 
@@ -54,7 +55,17 @@ def test_reset_plan_marks_generated_operational_tables_as_rebuildable():
     assert MatchTeamPlayer in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
     assert MatchTeam in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
     assert Match in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+    assert TeamLifecycleEvent in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
     assert Player in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+
+
+def test_generated_reset_plan_covers_all_generated_tables():
+    reset_tables = {
+        model.__tablename__ for model in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+    }
+
+    assert "team_lifecycle_events" in reset_tables
+    assert "teams" in reset_tables
 
 
 def test_reset_plan_separates_reference_and_raw_seed_domains():

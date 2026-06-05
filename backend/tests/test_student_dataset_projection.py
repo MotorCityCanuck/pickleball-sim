@@ -23,8 +23,8 @@ from app.models import Base  # noqa: E402
 from schema_expectations import EXPECTED_TABLES  # noqa: E402
 
 
-def test_student_dataset_schema_version_is_initial_contract():
-    assert STUDENT_DATASET_SCHEMA_VERSION == "1.0"
+def test_student_dataset_schema_version_tracks_current_projection_contract():
+    assert STUDENT_DATASET_SCHEMA_VERSION == "1.1"
 
 
 def test_projection_table_order_matches_documented_release_files():

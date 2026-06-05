@@ -132,7 +132,7 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
 
     assert manifest["release_name"] == "napa_student_release_initial_history"
     assert manifest["release_type"] == "historical_baseline"
-    assert manifest["student_dataset_schema_version"] == "1.0"
+    assert manifest["student_dataset_schema_version"] == "1.1"
     assert manifest["source_generation_run_id"] == 1
     assert manifest["included_batch_sequences"] == [1, 2]
     assert manifest["included_batch_months"] == ["2025-01-01", "2025-02-01"]
@@ -177,6 +177,9 @@ def test_write_staged_release_parquet_contains_snapshot_transformed_values(
     release_dir = result.releases[0].release_dir
 
     teams = pq.read_table(release_dir / "teams.parquet").to_pylist()
+    assert teams[0]["country_code"] == "US"
+    assert "chemistry_score" not in teams[0]
+    assert "persistence_probability" not in teams[0]
     assert teams[0]["team_status"] == "active"
     assert teams[0]["dissolution_date"] is None
 

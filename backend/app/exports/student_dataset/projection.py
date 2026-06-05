@@ -29,7 +29,7 @@ from app.models import (
 )
 
 
-STUDENT_DATASET_SCHEMA_VERSION = "1.0"
+STUDENT_DATASET_SCHEMA_VERSION = "1.1"
 
 STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "clubs",
@@ -751,6 +751,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "id",
             "team_type",
             "team_status",
+            "country_code",
             "formation_date",
             "dissolution_date",
             "chemistry_score",
@@ -763,12 +764,17 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "id",
             "team_type",
             "team_status",
+            "country_code",
             "formation_date",
             "dissolution_date",
+        ),
+        excluded_columns=(
             "chemistry_score",
             "persistence_probability",
+            "generation_run_id",
+            "created_at",
+            "updated_at",
         ),
-        excluded_columns=("generation_run_id", "created_at", "updated_at"),
         source_filter_key="teams_as_of_snapshot",
         source_filter_description=(
             "Teams for the selected run formed before snapshot end; future "

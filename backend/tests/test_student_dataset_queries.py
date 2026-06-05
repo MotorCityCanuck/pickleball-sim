@@ -225,17 +225,17 @@ def seed_snapshot_query_data(session):
         text(
             """
             INSERT INTO teams (
-                id, team_type, team_status, formation_date, dissolution_date,
+                id, team_type, team_status, country_code, formation_date, dissolution_date,
                 chemistry_score, persistence_probability, generation_run_id
             )
             VALUES
-                (1, 'mixed_doubles', 'retired', '2025-01-01', '2025-04-15',
+                (1, 'mixed_doubles', 'retired', 'US', '2025-01-01', '2025-04-15',
                  0.8, 0.9, 1),
-                (2, 'mixed_doubles', 'dormant', '2025-01-01', '2025-01-15',
+                (2, 'mixed_doubles', 'dormant', 'CA', '2025-01-01', '2025-01-15',
                  0.7, 0.8, 1),
-                (3, 'mixed_doubles', 'active', '2025-03-01', NULL,
+                (3, 'mixed_doubles', 'active', 'US', '2025-03-01', NULL,
                  0.6, 0.7, 1),
-                (4, 'mixed_doubles', 'active', '2025-01-01', NULL,
+                (4, 'mixed_doubles', 'active', 'CA', '2025-01-01', NULL,
                  0.5, 0.6, 2)
             """
         )
@@ -358,6 +358,9 @@ def test_team_queries_apply_as_of_lifecycle_transformations(session, query_conte
 
     team_rows = rows(session, "teams", query_context)
     assert [row["id"] for row in team_rows] == [1, 2]
+    assert [row["country_code"] for row in team_rows] == ["US", "CA"]
+    assert "chemistry_score" not in team_rows[0]
+    assert "persistence_probability" not in team_rows[0]
     assert team_rows[0]["team_status"] == "active"
     assert team_rows[0]["dissolution_date"] is None
     assert team_rows[1]["team_status"] == "dormant"
@@ -555,6 +558,7 @@ STUDENT_SOURCE_TABLES_SQL = (
         id integer primary key,
         team_type varchar(50) not null,
         team_status varchar(30),
+        country_code varchar(2),
         formation_date date not null,
         dissolution_date date,
         chemistry_score numeric(8, 4),

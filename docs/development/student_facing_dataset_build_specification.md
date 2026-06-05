@@ -592,10 +592,11 @@ student-facing decision.
 | `id` | Include | Primary key. |
 | `team_type` | Include | Public team classification. |
 | `team_status` | Include | Public lifecycle/status attribute. |
+| `country_code` | Include | Public team country identifier used for country/division tournament eligibility. |
 | `formation_date` | Include | Simulated business event date. |
 | `dissolution_date` | Include | Simulated business event date. |
-| `chemistry_score` | Include | Public analytical team metric. |
-| `persistence_probability` | Include | Public analytical team metric. |
+| `chemistry_score` | Exclude | Hidden/proxy partnership signal; not student-facing. |
+| `persistence_probability` | Exclude | Hidden/proxy lifecycle persistence signal; not student-facing. |
 | `generation_run_id` | Exclude | Internal generation lineage. |
 | `created_at` | Exclude | Operational metadata. |
 | `updated_at` | Exclude | Operational metadata. |
@@ -878,10 +879,10 @@ must fail before writing.
 The student dataset schema must have its own version independent of application,
 database, configuration, and generation-run versions.
 
-Initial schema version:
+Current schema version:
 
 ```text
-student_dataset_schema_version = 1.0
+student_dataset_schema_version = 1.1
 ```
 
 The schema version must be included in every manifest. Any change to included

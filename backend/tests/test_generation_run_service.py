@@ -211,6 +211,21 @@ def session():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE team_lifecycle_events (
+                id integer primary key,
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                team_id bigint not null,
+                event_date date not null,
+                event_type varchar(30) not null,
+                foreign key(generation_run_id) references generation_runs(id),
+                foreign key(batch_id) references monthly_batches(id),
+                foreign key(team_id) references teams(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE tournaments (
                 id integer primary key,
                 tournament_name varchar(255) not null,

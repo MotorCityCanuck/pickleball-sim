@@ -205,10 +205,9 @@ Grain: one row per team.
 | `id` | BIGINT | no | none | Team identifier. Positive integer. |
 | `team_type` | VARCHAR | no | none | Team category such as mens doubles, womens doubles, mixed doubles, or open doubles. |
 | `team_status` | VARCHAR | no | none | Team lifecycle status such as active or dormant. |
+| `country_code` | VARCHAR | yes | none | Country code for the team, such as `US` or `CA`. Older generated records may be null. |
 | `formation_date` | DATE | no | none | Date the team formed. |
 | `dissolution_date` | DATE | yes | none | Date the team dissolved. Null means not dissolved. |
-| `chemistry_score` | DECIMAL(8,4) | yes | none | Public team chemistry metric. Expected range is generally `0` to `1`. |
-| `persistence_probability` | DECIMAL(5,4) | yes | none | Public estimate of team persistence. Expected range `0` to `1`. |
 
 ## `team_memberships`
 

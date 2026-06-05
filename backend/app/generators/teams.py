@@ -200,6 +200,9 @@ class TeamCandidatePool:
         self.ids_by_gender: dict[str, list[int]] = {}
         self.ids_by_region: dict[int, list[int]] = {}
         self.ids_by_country: dict[str, list[int]] = {}
+        self.ids_by_country_gender: dict[tuple[str, str], list[int]] = {}
+        self.ids_by_country_region: dict[tuple[str, int], list[int]] = {}
+        self.ids_by_country_club: dict[tuple[str, int], list[int]] = {}
         self.ids_by_club: dict[int, list[int]] = {}
 
         for candidate in candidates:
@@ -213,8 +216,23 @@ class TeamCandidatePool:
                 self.ids_by_country.setdefault(candidate.country_code, []).append(
                     candidate.id
                 )
+                if candidate.gender is not None:
+                    self.ids_by_country_gender.setdefault(
+                        (candidate.country_code, candidate.gender),
+                        [],
+                    ).append(candidate.id)
+                if candidate.home_region_id is not None:
+                    self.ids_by_country_region.setdefault(
+                        (candidate.country_code, candidate.home_region_id),
+                        [],
+                    ).append(candidate.id)
             for club_id in candidate.club_ids:
                 self.ids_by_club.setdefault(club_id, []).append(candidate.id)
+                if candidate.country_code is not None:
+                    self.ids_by_country_club.setdefault(
+                        (candidate.country_code, club_id),
+                        [],
+                    ).append(candidate.id)
 
     def __len__(self) -> int:
         return len(self.active_ids)
@@ -286,35 +304,72 @@ class TeamCandidatePool:
         require_same_region: bool,
         require_same_club: bool,
     ) -> list[int]:
-        source_ids = self.all_ids
-        if team_type == "mens_doubles":
-            source_ids = self.ids_by_gender.get("M", [])
-        elif team_type == "womens_doubles":
-            source_ids = self.ids_by_gender.get("F", [])
+        if first_player.country_code is None:
+            return []
+
+        source_ids = self._country_team_type_source_ids(
+            first_player.country_code,
+            team_type,
+        )
 
         if require_same_club and first_player.club_ids:
             club_ids = sorted(
                 first_player.club_ids,
-                key=lambda club_id: len(self.ids_by_club.get(club_id, [])),
+                key=lambda club_id: len(
+                    self.ids_by_country_club.get(
+                        (first_player.country_code, club_id),
+                        [],
+                    )
+                ),
             )
             club_source_ids = [
                 player_id
                 for club_id in club_ids
-                for player_id in self.ids_by_club.get(club_id, [])
+                for player_id in self.ids_by_country_club.get(
+                    (first_player.country_code, club_id),
+                    [],
+                )
             ]
             if club_source_ids:
-                source_ids = club_source_ids
+                return self._filter_team_type_ids(club_source_ids, team_type)
         elif (
             require_same_region
             and first_player.home_region_id is not None
-            and first_player.home_region_id in self.ids_by_region
+            and (
+                first_player.country_code,
+                first_player.home_region_id,
+            )
+            in self.ids_by_country_region
         ):
-            source_ids = self.ids_by_region[first_player.home_region_id]
+            return self._filter_team_type_ids(
+                self.ids_by_country_region[
+                    (first_player.country_code, first_player.home_region_id)
+                ],
+                team_type,
+            )
 
-        if first_player.country_code is None:
-            return []
-        country_ids = set(self.ids_by_country.get(first_player.country_code, []))
-        return [player_id for player_id in source_ids if player_id in country_ids]
+        return source_ids
+
+    def _country_team_type_source_ids(
+        self,
+        country_code: str,
+        team_type: str,
+    ) -> list[int]:
+        if team_type == "mens_doubles":
+            return self.ids_by_country_gender.get((country_code, "M"), [])
+        if team_type == "womens_doubles":
+            return self.ids_by_country_gender.get((country_code, "F"), [])
+        return self.ids_by_country.get(country_code, [])
+
+    def _filter_team_type_ids(self, source_ids: list[int], team_type: str) -> list[int]:
+        if team_type not in {"mens_doubles", "womens_doubles"}:
+            return source_ids
+        required_gender = "M" if team_type == "mens_doubles" else "F"
+        return [
+            player_id
+            for player_id in source_ids
+            if self.by_id[player_id].gender == required_gender
+        ]
 
     def _sample_partner_candidates(
         self,
@@ -356,8 +411,10 @@ class TeamCandidatePool:
         if sampled:
             return list(sampled.values())
 
-        # Fallback for small or highly constrained pools.
-        for player_id in source_ids:
+        # Fallback for small or highly constrained pools. Keep it bounded for
+        # large generations so one unlucky first player cannot scan a whole run.
+        fallback_limit = min(len(source_ids), max(sample_size * 20, 100))
+        for player_id in source_ids[:fallback_limit]:
             candidate = self.by_id[player_id]
             if self._valid_partner(
                 first_player,
