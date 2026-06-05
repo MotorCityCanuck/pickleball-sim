@@ -1,6 +1,8 @@
 """Route tests for the read-only control panel shell."""
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+import json
 import re
 import sys
 
@@ -249,6 +251,40 @@ def session_factory():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE tournament_events (
+                id integer primary key autoincrement,
+                event_name varchar(255) not null,
+                generation_run_id bigint not null,
+                source_batch_id bigint not null,
+                tournament_date date not null,
+                config_snapshot json not null,
+                status varchar(30) not null default 'draft',
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_simulation_runs (
+                id integer primary key autoincrement,
+                event_id bigint not null,
+                run_type varchar(30) not null,
+                status varchar(30) not null default 'pending',
+                seed bigint,
+                iteration_count integer,
+                config_snapshot json not null,
+                job_status_id bigint,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE student_dataset_releases (
                 id integer primary key autoincrement,
                 release_name varchar(255) not null,
@@ -427,6 +463,55 @@ def _seed_completed_generation_state(session_factory):
                 ) VALUES
                     (201, 2, 2, 21, 'players', 1, 'succeeded', 1, 1, 'stage', 100.00, 'players succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
                     (202, 2, 2, 22, 'matches', 4, 'succeeded', 1, 1, 'stage', 100.00, 'matches succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _seed_tournament_event_state(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_events (
+                    id, event_name, generation_run_id, source_batch_id,
+                    tournament_date, config_snapshot, status, created_at, updated_at
+                ) VALUES (
+                    301, 'Saved Class Tournament', 2, 22,
+                    '2026-02-01', '{}', 'ready', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, created_at, updated_at
+                ) VALUES (
+                    302, 'tournament_monte_carlo', 'tournament-mc-302',
+                    'succeeded', 'completed', 100.00,
+                    'Monte Carlo completed.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_simulation_runs (
+                    id, event_id, run_type, status, seed, iteration_count,
+                    config_snapshot, job_status_id, created_at, updated_at
+                ) VALUES (
+                    303, 301, 'monte_carlo', 'succeeded', 7, 250,
+                    '{}', 302, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
                 """
             )
         )
@@ -736,6 +821,55 @@ class FakeBackgroundRunner:
         return object()
 
 
+class _FakeTournamentService:
+    def __init__(self) -> None:
+        self.created_event_name: str | None = None
+        self.submission_count = 0
+        self.registered_event_id: int | None = None
+        self.registered_iterations: int | None = None
+        self.registered_seed: int | None = None
+
+    def create_event(self, **kwargs):
+        self.created_event_name = kwargs["event_name"]
+        self.submission_count = len(kwargs["submissions"])
+        return SimpleNamespace(event=SimpleNamespace(id=777))
+
+    def validate_event(self, **kwargs):
+        return SimpleNamespace(is_valid=True, issues=())
+
+    def register_monte_carlo_run(self, **kwargs):
+        self.registered_event_id = kwargs["event_id"]
+        self.registered_iterations = kwargs["iterations"]
+        self.registered_seed = kwargs["seed"]
+        return SimpleNamespace(
+            simulation_run=SimpleNamespace(id=888),
+            job_status=SimpleNamespace(id=889),
+        )
+
+    def execute_run_in_background(self, **kwargs):
+        return kwargs
+
+
+def _full_tournament_payload_json() -> str:
+    team_ids = {}
+    team_id = 100
+    for group_index in range(1, routes_module.TOURNAMENT_GROUP_COUNT + 1):
+        for slot in routes_module.TOURNAMENT_PORTFOLIO_SLOTS:
+            team_ids[
+                f"group_{group_index}_{slot.country_code}_{slot.division}"
+            ] = str(team_id)
+            team_id += 1
+    return json.dumps(
+        {
+            "group_names": {
+                str(index): f"Group {index}"
+                for index in range(1, routes_module.TOURNAMENT_GROUP_COUNT + 1)
+            },
+            "team_ids": team_ids,
+        }
+    )
+
+
 def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     _seed_snapshot_state(session_factory)
     app = create_app()
@@ -757,16 +891,21 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
     assert "/control/partials/config/export" in routes
+    assert "/control/partials/tournament" in routes
+    assert "/control/tournaments/submissions/save" in routes
+    assert "/control/tournaments/monte-carlo/start" in routes
     assert "/control/partials/overall-progress" in routes
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
     assert "Export Configuration" in body
     assert "Orchestration" in body
+    assert "Tournament" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
     assert 'data-tab-url="/control/partials/config/export"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
+    assert 'data-tab-url="/control/partials/tournament"' in body
     assert "window.loadControlPanelTab" in body
     assert "window.htmx?.process?.(target)" in body
     assert "Read only config" in body
@@ -805,6 +944,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         )
         export_config = routes["/control/partials/config/export"](
             request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        tournament = routes["/control/partials/tournament"](
+            request=_request("/control/partials/tournament"),
             session=session,
             queries=ControlPanelQueries(),
         )
@@ -878,6 +1022,193 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
     assert "Start Student Dataset Export" in export_config.body.decode()
     assert "copyControlPanelText" in export_config.body.decode()
+
+    assert tournament.status_code == 200
+    assert "Instructor tournament workflow" in tournament.body.decode()
+    assert "No completed generated history is available" in tournament.body.decode()
+    assert "Open Orchestration" in tournament.body.decode()
+
+
+def test_tournament_partial_renders_empty_state_without_generation_run(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/tournament"](
+            request=_request("/control/partials/tournament"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "No completed generated history is available" in body
+    assert "Open Orchestration" in body
+
+
+def test_tournament_partial_renders_ready_state_for_completed_generation(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/tournament"](
+            request=_request("/control/partials/tournament"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Source Run" in body
+    assert "Completed UI run" in body
+    assert "Submission form" in body
+    assert 'hx-post="/control/tournaments/submissions/save"' in body
+    assert "Validate and Save Submissions" in body
+    assert "Student Group 6" in body
+    assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
+    assert 'data-tournament-team-id="group_6_US_mixed_doubles"' in body
+    assert "serializeTournamentSubmissionForm" in body
+    assert "Simulation controls" in body
+    assert "Save and validate submissions" in body
+
+
+def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session_factory):
+    _seed_tournament_event_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/tournament"](
+            request=_request("/control/partials/tournament"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Saved Class Tournament" in body
+    assert "Start Monte Carlo" in body
+    assert 'hx-post="/control/tournaments/monte-carlo/start"' in body
+    assert 'name="event_id" value="301"' in body
+    assert "Run 303" in body
+    assert "250 iterations | seed 7" in body
+    assert "Monte Carlo completed." in body
+
+
+def test_tournament_monte_carlo_start_queues_background_run(session_factory):
+    _seed_tournament_event_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    fake_service = _FakeTournamentService()
+    background_runner = FakeBackgroundRunner()
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/monte-carlo/start"](
+            request=_request("/control/tournaments/monte-carlo/start", method="POST"),
+            event_id=301,
+            iterations=500,
+            seed=42,
+            session=session,
+            queries=ControlPanelQueries(),
+            tournament_service=fake_service,
+            background_runner=background_runner,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Monte Carlo run 888 queued." in body
+    assert fake_service.registered_event_id == 301
+    assert fake_service.registered_iterations == 500
+    assert fake_service.registered_seed == 42
+    assert len(background_runner.submissions) == 1
+    assert background_runner.submissions[0][2] == {"simulation_run_id": 888}
+
+
+def test_tournament_submission_save_renders_field_errors(session_factory, monkeypatch):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    slot = routes_module.PortfolioSlot(country_code="CA", division="mens_doubles")
+
+    monkeypatch.setattr(
+        routes_module,
+        "load_validated_tournament_input",
+        lambda *args, **kwargs: SimpleNamespace(
+            is_valid=False,
+            issues=(
+                SimpleNamespace(
+                    group_id=1,
+                    slot=slot,
+                    team_id=999,
+                    field="team_id",
+                    code="team_not_found",
+                    message="Team 999 does not exist.",
+                ),
+            ),
+        ),
+    )
+
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/save"](
+            request=_request("/control/tournaments/submissions/save", method="POST"),
+            event_name="Class Tournament",
+            tournament_date="2026-02-01",
+            tournament_payload_json=_full_tournament_payload_json(),
+            session=session,
+            queries=ControlPanelQueries(),
+            tournament_service=_FakeTournamentService(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Fix the highlighted team submissions" in body
+    assert "Team 999 does not exist." in body
+
+
+def test_tournament_submission_save_persists_valid_event(session_factory, monkeypatch):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    fake_service = _FakeTournamentService()
+
+    monkeypatch.setattr(
+        routes_module,
+        "load_validated_tournament_input",
+        lambda *args, **kwargs: SimpleNamespace(is_valid=True, issues=()),
+    )
+
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/save"](
+            request=_request("/control/tournaments/submissions/save", method="POST"),
+            event_name="Class Tournament",
+            tournament_date="2026-02-01",
+            tournament_payload_json=_full_tournament_payload_json(),
+            session=session,
+            queries=ControlPanelQueries(),
+            tournament_service=fake_service,
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Tournament event 777 saved and validated." in body
+    assert fake_service.created_event_name == "Class Tournament"
+    assert fake_service.submission_count == 36
 
 
 def test_orchestration_partial_renders_raw_load_duration_column(session_factory):

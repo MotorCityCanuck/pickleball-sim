@@ -1,0 +1,288 @@
+{% set generation_complete = (
+    snapshot.generation_run_summary
+    and snapshot.generation_run_summary.status == 'succeeded'
+    and snapshot.generation_run_summary.batch_count > 0
+    and snapshot.generation_run_summary.pending_batch_count == 0
+    and snapshot.generation_run_summary.running_batch_count == 0
+    and snapshot.generation_run_summary.failed_batch_count == 0
+    and tournament_source_batch
+) %}
+
+<section id="tournament-tab-panel" style="display:grid; gap:16px;">
+    <div class="panel-section {% if generation_complete %}state-card-ready{% else %}state-card-blocked{% endif %}">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Tournament Simulation</div>
+                <div style="margin-top:6px; font-size:20px;">Instructor tournament workflow</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    Create a tournament event from completed generated history, validate student team submissions, then run Monte Carlo or official simulations.
+                </div>
+            </div>
+            {% if generation_complete %}
+                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    Ready
+                </div>
+            {% else %}
+                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                    Waiting
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if generation_complete %}
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+            <div class="info-card state-card-ready">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Source Run</div>
+                <div style="margin-top:8px; font-size:18px;">{{ snapshot.generation_run_summary.generation_name }}</div>
+                <div style="margin-top:6px; color:#5a6477;">Run ID {{ snapshot.generation_run_summary.generation_run_id }}</div>
+            </div>
+            <div class="info-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Generated History</div>
+                <div style="margin-top:8px; color:#1d2433;">Batches: {{ snapshot.generation_run_summary.batch_count }}</div>
+                <div style="margin-top:6px; color:#1d2433;">Matches: {{ snapshot.generation_run_summary.match_count or 0 }}</div>
+                <div style="margin-top:6px; color:#5a6477;">Student submissions can be validated against this completed run.</div>
+            </div>
+            <div class="info-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Next Step</div>
+                <div style="margin-top:8px; font-size:18px;">Submission form</div>
+                <div style="margin-top:6px; color:#5a6477;">Enter each student group's portfolio team IDs and validate them against generated history.</div>
+            </div>
+        </div>
+
+        {% if tournament_save_message %}
+            <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                {{ tournament_save_message }}
+            </div>
+        {% endif %}
+        {% if tournament_save_error %}
+            <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                {{ tournament_save_error }}
+            </div>
+        {% endif %}
+        {% if tournament_monte_carlo_message %}
+            <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                {{ tournament_monte_carlo_message }}
+            </div>
+        {% endif %}
+        {% if tournament_monte_carlo_error %}
+            <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                {{ tournament_monte_carlo_error }}
+            </div>
+        {% endif %}
+
+        <form
+            id="tournament-submission-form"
+            hx-post="/control/tournaments/submissions/save"
+            hx-target="#control-tab-content"
+            hx-swap="innerHTML"
+            onsubmit="return window.serializeTournamentSubmissionForm(this)"
+            style="display:grid; gap:16px;"
+        >
+            <input type="hidden" name="tournament_payload_json" value="">
+            <div class="panel-section" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Event Name</span>
+                    <input
+                        name="event_name"
+                        value="{{ tournament_form_state.event_name }}"
+                        style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                    >
+                </label>
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Tournament Date</span>
+                    <input
+                        name="tournament_date"
+                        type="date"
+                        value="{{ tournament_form_state.tournament_date }}"
+                        style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                    >
+                </label>
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Source Batch</div>
+                    <div style="margin-top:8px; color:#1d2433;">{{ tournament_source_batch.batch_month }} | Batch ID {{ tournament_source_batch.id }}</div>
+                </div>
+            </div>
+
+            <div style="display:grid; gap:14px;">
+                {% for group_index in tournament_group_indexes %}
+                    <section class="panel-section" style="display:grid; gap:12px;">
+                        <label style="display:grid; gap:6px; max-width:360px;">
+                            <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Group {{ group_index }}</span>
+                            <input
+                                data-tournament-group-name="{{ group_index }}"
+                                value="{{ tournament_form_state.group_names.get(group_index|string, 'Group ' ~ group_index) }}"
+                                style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                            >
+                        </label>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+                            {% for slot in tournament_slots %}
+                                {% set field_key = 'group_' ~ group_index ~ '_' ~ slot.country_code ~ '_' ~ slot.division %}
+                                {% set field_issues = tournament_issue_map.get(field_key, ()) %}
+                                <label style="display:grid; gap:6px;">
+                                    <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">
+                                        {{ slot.country_code }} {{ slot.division.replace('_', ' ') }}
+                                    </span>
+                                    <input
+                                        data-tournament-team-id="{{ field_key }}"
+                                        inputmode="numeric"
+                                        value="{{ tournament_form_state.team_ids.get(field_key, '') }}"
+                                        style="border:1px solid {% if field_issues %}#b42318{% else %}#d6d9df{% endif %}; border-radius:8px; padding:9px 10px; font-size:14px;"
+                                    >
+                                    {% if field_issues %}
+                                        <span style="color:#8f1d18; font-size:12px;">
+                                            {{ field_issues | map(attribute='message') | join(' ') }}
+                                        </span>
+                                    {% endif %}
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </section>
+                {% endfor %}
+            </div>
+
+            <div style="display:flex; justify-content:flex-end;">
+                <button
+                    type="submit"
+                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                >
+                    Validate and Save Submissions
+                </button>
+            </div>
+        </form>
+
+        {% set monte_carlo_event_id = saved_tournament_event_id or (tournament_event_summary.event_id if tournament_event_summary else None) %}
+        <section
+            class="panel-section"
+            style="display:grid; gap:14px;"
+            {% if tournament_event_summary and tournament_event_summary.latest_monte_carlo_run and tournament_event_summary.latest_monte_carlo_run.status in ('pending', 'running') %}
+                hx-get="/control/partials/tournament"
+                hx-trigger="every 2s"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+            {% endif %}
+        >
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Monte Carlo</div>
+                    <div style="margin-top:6px; font-size:18px;">Simulation controls</div>
+                    {% if tournament_event_summary %}
+                        <div style="margin-top:6px; color:#5a6477;">
+                            {{ tournament_event_summary.event_name }} | {{ tournament_event_summary.tournament_date }}
+                        </div>
+                    {% endif %}
+                </div>
+                {% if tournament_event_summary %}
+                    <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                        Event {{ tournament_event_summary.event_id }} {{ tournament_event_summary.event_status }}
+                    </div>
+                {% else %}
+                    <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                        Save event first
+                    </div>
+                {% endif %}
+            </div>
+
+            {% if monte_carlo_event_id %}
+                <form
+                    hx-post="/control/tournaments/monte-carlo/start"
+                    hx-target="#control-tab-content"
+                    hx-swap="innerHTML"
+                    style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end;"
+                >
+                    <input type="hidden" name="event_id" value="{{ monte_carlo_event_id }}">
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Iterations</span>
+                        <input
+                            name="iterations"
+                            type="number"
+                            min="1"
+                            value="{{ tournament_monte_carlo_state.iterations }}"
+                            style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                        >
+                    </label>
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed</span>
+                        <input
+                            name="seed"
+                            type="number"
+                            value="{{ tournament_monte_carlo_state.seed }}"
+                            style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                        >
+                    </label>
+                    <button
+                        type="submit"
+                        style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                    >
+                        Start Monte Carlo
+                    </button>
+                </form>
+            {% else %}
+                <div style="color:#5a6477;">
+                    Save and validate submissions to create a tournament event before starting Monte Carlo simulation.
+                </div>
+            {% endif %}
+
+            {% if tournament_event_summary and tournament_event_summary.latest_monte_carlo_run %}
+                {% set monte_run = tournament_event_summary.latest_monte_carlo_run %}
+                <div class="info-card" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Run</div>
+                        <div style="margin-top:6px;">Run {{ monte_run.simulation_run_id }}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Status</div>
+                        <div style="margin-top:6px;">{{ monte_run.status }}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Progress</div>
+                        <div style="margin-top:6px;">{{ monte_run.percent_complete or 0 }}%</div>
+                    </div>
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Config</div>
+                        <div style="margin-top:6px;">{{ monte_run.iteration_count }} iterations | seed {{ monte_run.seed }}</div>
+                    </div>
+                    {% if monte_run.current_message %}
+                        <div style="grid-column:1 / -1; color:#5a6477;">{{ monte_run.current_message }}</div>
+                    {% endif %}
+                    {% if monte_run.error_message %}
+                        <div style="grid-column:1 / -1; color:#8f1d18;">{{ monte_run.error_message }}</div>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </section>
+
+        <script>
+            window.serializeTournamentSubmissionForm = function serializeTournamentSubmissionForm(form) {
+                const groupNames = {};
+                const teamIds = {};
+                form.querySelectorAll("[data-tournament-group-name]").forEach((input) => {
+                    groupNames[input.dataset.tournamentGroupName] = input.value;
+                });
+                form.querySelectorAll("[data-tournament-team-id]").forEach((input) => {
+                    teamIds[input.dataset.tournamentTeamId] = input.value;
+                });
+                form.querySelector('input[name="tournament_payload_json"]').value = JSON.stringify({
+                    group_names: groupNames,
+                    team_ids: teamIds,
+                });
+                return true;
+            };
+        </script>
+    {% else %}
+        <div class="info-card state-card-blocked">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Empty State</div>
+            <div style="margin-top:8px; font-size:18px;">No completed generated history is available</div>
+            <div style="margin-top:6px; color:#5a6477;">
+                Complete a generation run before creating tournament events. Tournament simulation reads generated teams, memberships, ratings, and lifecycle history from a succeeded source run.
+            </div>
+            <button
+                type="button"
+                onclick="window.loadControlPanelTab(document.getElementById('control-tab-button-orchestration'))"
+                style="margin-top:12px; border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
+            >
+                Open Orchestration
+            </button>
+        </div>
+    {% endif %}
+</section>

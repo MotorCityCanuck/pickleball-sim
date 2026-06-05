@@ -1,5 +1,6 @@
 """Route registration tests for tournament API endpoints."""
 from pathlib import Path
+import json
 import sys
 
 
@@ -8,6 +9,10 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.web.routes import (  # noqa: E402
+    TOURNAMENT_GROUP_COUNT,
+    TOURNAMENT_PORTFOLIO_SLOTS,
+    _tournament_form_payload_objects,
+    _tournament_form_state_from_json,
     _student_groups_from_payload,
     _team_submissions_from_payload,
     build_control_panel_router,
@@ -55,3 +60,25 @@ def test_tournament_event_payload_helpers_parse_groups_and_submissions():
     assert submissions[0].slot.country_code == "US"
     assert submissions[0].slot.division == "mens_doubles"
     assert submissions[0].team_id == 10
+
+
+def test_tournament_form_payload_builds_required_group_slot_submissions():
+    team_ids = {}
+    team_id = 100
+    for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1):
+        for slot in TOURNAMENT_PORTFOLIO_SLOTS:
+            team_ids[f"group_{group_index}_{slot.country_code}_{slot.division}"] = str(team_id)
+            team_id += 1
+    state = _tournament_form_state_from_json(
+        '{"group_names":{"1":"Alpha"},"team_ids":' + json.dumps(team_ids) + "}",
+        event_name="Event",
+        tournament_date="2025-03-15",
+    )
+
+    groups, submissions = _tournament_form_payload_objects(state)
+
+    assert len(groups) == 6
+    assert groups[0].name == "Alpha"
+    assert len(submissions) == 36
+    assert submissions[0].slot.country_code == "CA"
+    assert submissions[-1].slot.division == "mixed_doubles"

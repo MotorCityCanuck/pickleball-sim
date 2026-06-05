@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.background_jobs import (
@@ -29,11 +30,14 @@ from app.core import (
 from app.db.session import get_session
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
+from app.models import JobStatus, TournamentEvent, TournamentSimulationRun
 from app.tournament_simulation import (
     PortfolioSlot,
     StudentGroup,
     TeamSubmission,
     TournamentService,
+    latest_completed_source_batch,
+    load_validated_tournament_input,
 )
 
 from .control_panel_queries import (
@@ -50,6 +54,15 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_CONFIG_SCOPE = "seed"
+TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
+    PortfolioSlot(country_code="CA", division="mens_doubles"),
+    PortfolioSlot(country_code="CA", division="womens_doubles"),
+    PortfolioSlot(country_code="CA", division="mixed_doubles"),
+    PortfolioSlot(country_code="US", division="mens_doubles"),
+    PortfolioSlot(country_code="US", division="womens_doubles"),
+    PortfolioSlot(country_code="US", division="mixed_doubles"),
+)
+TOURNAMENT_GROUP_COUNT = 6
 
 
 @lru_cache(maxsize=1)
@@ -251,6 +264,169 @@ def build_control_panel_router() -> APIRouter:
             "partials/control_orchestration_tab.html",
             _build_orchestration_template_context(snapshot),
         )
+
+    @router.get("/control/partials/tournament", response_class=HTMLResponse)
+    def control_panel_tournament_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_tournament_tab.html",
+            _build_tournament_template_context(session, snapshot=snapshot),
+        )
+
+    @router.post("/control/tournaments/submissions/save", response_class=HTMLResponse)
+    def control_panel_tournament_submissions_save(
+        request: Request,
+        event_name: str = Form(""),
+        tournament_date: str = Form(""),
+        tournament_payload_json: str = Form("{}"),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        context = _build_tournament_template_context(
+            session,
+            snapshot=snapshot,
+            form_state=_tournament_form_state_from_json(
+                tournament_payload_json,
+                event_name=event_name,
+                tournament_date=tournament_date,
+            ),
+        )
+        source_batch = context["tournament_source_batch"]
+        if source_batch is None or snapshot.generation_run_summary is None:
+            context["tournament_save_error"] = (
+                "A completed generation run is required before saving tournament submissions."
+            )
+            return templates.TemplateResponse(
+                request,
+                "partials/control_tournament_tab.html",
+                context,
+            )
+
+        try:
+            parsed_date = _parse_iso_date(tournament_date)
+            student_groups, submissions = _tournament_form_payload_objects(
+                context["tournament_form_state"],
+            )
+            validation = load_validated_tournament_input(
+                session,
+                submissions=submissions,
+                tournament_date=parsed_date,
+                source_batch_id=source_batch.id,
+                generation_run_id=snapshot.generation_run_summary.generation_run_id,
+            )
+            if not validation.is_valid:
+                context["tournament_validation_issues"] = validation.issues
+                context["tournament_issue_map"] = _tournament_issue_map(validation.issues)
+                context["tournament_save_error"] = (
+                    "Fix the highlighted team submissions before saving this tournament event."
+                )
+                return templates.TemplateResponse(
+                    request,
+                    "partials/control_tournament_tab.html",
+                    context,
+                )
+
+            creation = tournament_service.create_event(
+                event_name=event_name.strip() or "Class Tournament",
+                source_batch_id=source_batch.id,
+                tournament_date=parsed_date,
+                student_groups=student_groups,
+                submissions=submissions,
+                generation_run_id=snapshot.generation_run_summary.generation_run_id,
+                session=session,
+            )
+            tournament_service.validate_event(
+                event_id=creation.event.id,
+                session=session,
+            )
+            session.commit()
+            refreshed_snapshot = queries.get_control_panel_snapshot(session)
+            refreshed_context = _build_tournament_template_context(
+                session,
+                snapshot=refreshed_snapshot,
+                form_state=context["tournament_form_state"],
+            )
+            refreshed_context["tournament_save_message"] = (
+                f"Tournament event {creation.event.id} saved and validated."
+            )
+            refreshed_context["saved_tournament_event_id"] = creation.event.id
+            return templates.TemplateResponse(
+                request,
+                "partials/control_tournament_tab.html",
+                refreshed_context,
+            )
+        except Exception as exc:
+            session.rollback()
+            context["tournament_save_error"] = str(exc)
+            return templates.TemplateResponse(
+                request,
+                "partials/control_tournament_tab.html",
+                context,
+            )
+
+    @router.post("/control/tournaments/monte-carlo/start", response_class=HTMLResponse)
+    def control_panel_tournament_monte_carlo_start_partial(
+        request: Request,
+        event_id: int = Form(...),
+        iterations: int = Form(1000),
+        seed: int = Form(1),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        tournament_service: TournamentService = Depends(get_tournament_service),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        context = _build_tournament_template_context(session, snapshot=snapshot)
+        context["tournament_monte_carlo_state"] = {
+            "event_id": event_id,
+            "iterations": iterations,
+            "seed": seed,
+        }
+        try:
+            start = tournament_service.register_monte_carlo_run(
+                event_id=event_id,
+                iterations=iterations,
+                seed=seed,
+                session=session,
+            )
+            session.commit()
+            background_runner.submit(
+                tournament_service.execute_run_in_background,
+                simulation_run_id=start.simulation_run.id,
+            )
+            refreshed_snapshot = queries.get_control_panel_snapshot(session)
+            refreshed_context = _build_tournament_template_context(
+                session,
+                snapshot=refreshed_snapshot,
+            )
+            refreshed_context["tournament_monte_carlo_state"] = {
+                "event_id": event_id,
+                "iterations": iterations,
+                "seed": seed,
+            }
+            refreshed_context["tournament_monte_carlo_message"] = (
+                f"Monte Carlo run {start.simulation_run.id} queued."
+            )
+            return templates.TemplateResponse(
+                request,
+                "partials/control_tournament_tab.html",
+                refreshed_context,
+            )
+        except Exception as exc:
+            session.rollback()
+            context["tournament_monte_carlo_error"] = str(exc)
+            return templates.TemplateResponse(
+                request,
+                "partials/control_tournament_tab.html",
+                context,
+            )
 
     @router.post("/control/seed/load", response_class=HTMLResponse)
     def control_panel_seed_load_start(
@@ -1533,6 +1709,214 @@ def _team_submissions_from_payload(payload: dict[str, Any]) -> tuple[TeamSubmiss
         )
         for row in payload.get("submissions", ())
     )
+
+
+def _build_tournament_template_context(
+    session: Session,
+    *,
+    snapshot: ControlPanelSnapshot,
+    form_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    generation_run_id = (
+        snapshot.generation_run_summary.generation_run_id
+        if snapshot.generation_run_summary is not None
+        else None
+    )
+    source_batch = (
+        latest_completed_source_batch(session, generation_run_id=generation_run_id)
+        if generation_run_id is not None
+        else None
+    )
+    resolved_form_state = form_state or _default_tournament_form_state(
+        snapshot,
+        source_batch=source_batch,
+    )
+    event_summary = _latest_tournament_event_summary(
+        session,
+        generation_run_id=generation_run_id,
+        source_batch_id=getattr(source_batch, "id", None),
+    )
+    return {
+        "snapshot": snapshot,
+        "tournament_slots": TOURNAMENT_PORTFOLIO_SLOTS,
+        "tournament_group_indexes": tuple(range(1, TOURNAMENT_GROUP_COUNT + 1)),
+        "tournament_source_batch": source_batch,
+        "tournament_event_summary": event_summary,
+        "tournament_form_state": resolved_form_state,
+        "tournament_monte_carlo_state": {
+            "event_id": event_summary["event_id"] if event_summary else None,
+            "iterations": 1000,
+            "seed": 1,
+        },
+        "tournament_issue_map": {},
+        "tournament_validation_issues": (),
+        "tournament_save_message": None,
+        "tournament_save_error": None,
+        "tournament_monte_carlo_message": None,
+        "tournament_monte_carlo_error": None,
+        "saved_tournament_event_id": None,
+    }
+
+
+def _default_tournament_form_state(
+    snapshot: ControlPanelSnapshot,
+    *,
+    source_batch: object | None,
+) -> dict[str, Any]:
+    event_name = "Class Tournament"
+    if snapshot.generation_run_summary is not None:
+        event_name = f"{snapshot.generation_run_summary.generation_name} Tournament"
+    source_month = getattr(source_batch, "batch_month", None)
+    tournament_date = source_month.isoformat() if source_month is not None else ""
+    return {
+        "event_name": event_name,
+        "tournament_date": tournament_date,
+        "group_names": {
+            str(group_index): f"Group {group_index}"
+            for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
+        },
+        "team_ids": {},
+    }
+
+
+def _tournament_form_state_from_json(
+    payload_json: str,
+    *,
+    event_name: str,
+    tournament_date: str,
+) -> dict[str, Any]:
+    try:
+        payload = json.loads(payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return {
+        "event_name": event_name,
+        "tournament_date": tournament_date,
+        "group_names": {
+            str(key): str(value)
+            for key, value in (payload.get("group_names") or {}).items()
+        },
+        "team_ids": {
+            str(key): str(value)
+            for key, value in (payload.get("team_ids") or {}).items()
+        },
+    }
+
+
+def _tournament_form_payload_objects(
+    form_state: dict[str, Any],
+) -> tuple[tuple[StudentGroup, ...], tuple[TeamSubmission, ...]]:
+    group_names = form_state.get("group_names") or {}
+    team_ids = form_state.get("team_ids") or {}
+    groups = tuple(
+        StudentGroup(
+            id=group_index,
+            name=str(group_names.get(str(group_index)) or f"Group {group_index}"),
+        )
+        for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
+    )
+    submissions: list[TeamSubmission] = []
+    for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1):
+        for slot in TOURNAMENT_PORTFOLIO_SLOTS:
+            key = _tournament_team_field_key(group_index, slot)
+            raw_team_id = str(team_ids.get(key) or "").strip()
+            if not raw_team_id:
+                raise ValueError(
+                    f"Team ID is required for group {group_index} "
+                    f"{slot.country_code} {slot.division}."
+                )
+            try:
+                team_id = int(raw_team_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Team ID must be a whole number for group {group_index} "
+                    f"{slot.country_code} {slot.division}."
+                ) from exc
+            submissions.append(
+                TeamSubmission(
+                    group_id=group_index,
+                    slot=slot,
+                    team_id=team_id,
+                )
+            )
+    return groups, tuple(submissions)
+
+
+def _tournament_issue_map(issues: tuple[object, ...]) -> dict[str, tuple[object, ...]]:
+    mapped: dict[str, list[object]] = {}
+    for issue in issues:
+        slot = getattr(issue, "slot")
+        key = _tournament_team_field_key(
+            int(getattr(issue, "group_id")),
+            PortfolioSlot(
+                country_code=slot.country_code,
+                division=slot.division,
+            ),
+        )
+        mapped.setdefault(key, []).append(issue)
+    return {key: tuple(value) for key, value in mapped.items()}
+
+
+def _tournament_team_field_key(group_index: int, slot: PortfolioSlot) -> str:
+    return f"group_{group_index}_{slot.country_code}_{slot.division}"
+
+
+def _latest_tournament_event_summary(
+    session: Session,
+    *,
+    generation_run_id: int | None,
+    source_batch_id: int | None,
+) -> dict[str, Any] | None:
+    if generation_run_id is None or source_batch_id is None:
+        return None
+    event = session.execute(
+        select(TournamentEvent)
+        .where(
+            TournamentEvent.generation_run_id == generation_run_id,
+            TournamentEvent.source_batch_id == source_batch_id,
+        )
+        .order_by(TournamentEvent.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if event is None:
+        return None
+
+    latest_run = session.execute(
+        select(TournamentSimulationRun, JobStatus)
+        .outerjoin(JobStatus, TournamentSimulationRun.job_status_id == JobStatus.id)
+        .where(
+            TournamentSimulationRun.event_id == event.id,
+            TournamentSimulationRun.run_type == "monte_carlo",
+        )
+        .order_by(TournamentSimulationRun.id.desc())
+        .limit(1)
+    ).one_or_none()
+    run_summary = None
+    if latest_run is not None:
+        simulation_run, job_status = latest_run
+        run_summary = {
+            "simulation_run_id": simulation_run.id,
+            "status": simulation_run.status,
+            "job_status_id": simulation_run.job_status_id,
+            "job_status": job_status.status if job_status is not None else None,
+            "current_phase": job_status.current_phase if job_status is not None else None,
+            "percent_complete": job_status.percent_complete if job_status is not None else None,
+            "current_message": (
+                job_status.current_message if job_status is not None else None
+            ),
+            "iteration_count": simulation_run.iteration_count,
+            "seed": simulation_run.seed,
+            "error_message": simulation_run.error_message,
+        }
+
+    return {
+        "event_id": event.id,
+        "event_name": event.event_name,
+        "event_status": event.status,
+        "tournament_date": event.tournament_date,
+        "source_batch_id": event.source_batch_id,
+        "latest_monte_carlo_run": run_summary,
+    }
 
 
 def _validation_issue_payload(issue: object) -> dict[str, Any]:
