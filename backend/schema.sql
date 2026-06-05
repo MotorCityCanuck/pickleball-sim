@@ -2,8 +2,8 @@
 -- Pickleball Simulation Platform - Database Schema
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
--- Total Tables: 39
--- Explicit Indexes: 106
+-- Total Tables: 48
+-- Explicit Indexes: 128
 -- PostgreSQL 16+
 -- ============================================
 
@@ -657,6 +657,22 @@ CREATE TABLE team_memberships (
 	FOREIGN KEY(player_id) REFERENCES players (id)
 );
 
+CREATE TABLE tournament_events (
+	id BIGSERIAL NOT NULL, 
+	event_name VARCHAR(255) NOT NULL, 
+	generation_run_id BIGINT NOT NULL, 
+	source_batch_id BIGINT NOT NULL, 
+	tournament_date DATE NOT NULL, 
+	config_snapshot JSONB NOT NULL, 
+	status VARCHAR(30) DEFAULT 'draft' NOT NULL, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_tournament_event_status CHECK (status IN ('draft', 'ready', 'running', 'completed', 'cancelled')), 
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(source_batch_id) REFERENCES monthly_batches (id)
+);
+
 CREATE TABLE validation_results (
 	id BIGSERIAL NOT NULL, 
 	batch_id BIGINT, 
@@ -717,6 +733,41 @@ CREATE TABLE match_teams (
 	FOREIGN KEY(match_id) REFERENCES matches (id)
 );
 
+CREATE TABLE tournament_simulation_runs (
+	id BIGSERIAL NOT NULL, 
+	event_id BIGINT NOT NULL, 
+	run_type VARCHAR(30) NOT NULL, 
+	status VARCHAR(30) DEFAULT 'pending' NOT NULL, 
+	seed BIGINT, 
+	iteration_count INTEGER, 
+	config_snapshot JSONB NOT NULL, 
+	job_status_id BIGINT, 
+	started_at TIMESTAMP WITHOUT TIME ZONE, 
+	completed_at TIMESTAMP WITHOUT TIME ZONE, 
+	error_message TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_tournament_simulation_run_type CHECK (run_type IN ('monte_carlo', 'official')), 
+	CONSTRAINT chk_tournament_simulation_run_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed')), 
+	CONSTRAINT chk_tournament_simulation_iterations CHECK (iteration_count IS NULL OR iteration_count >= 1), 
+	FOREIGN KEY(event_id) REFERENCES tournament_events (id), 
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id)
+);
+
+CREATE TABLE tournament_student_groups (
+	id BIGSERIAL NOT NULL, 
+	event_id BIGINT NOT NULL, 
+	group_name VARCHAR(255) NOT NULL, 
+	external_group_key VARCHAR(255), 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_group_name UNIQUE (event_id, group_name), 
+	CONSTRAINT uq_tournament_group_external_key UNIQUE (event_id, external_group_key), 
+	FOREIGN KEY(event_id) REFERENCES tournament_events (id)
+);
+
 CREATE TABLE match_team_players (
 	id BIGSERIAL NOT NULL, 
 	match_team_id BIGINT NOT NULL, 
@@ -774,6 +825,151 @@ CREATE TABLE ratings_update_log (
 	FOREIGN KEY(match_id) REFERENCES matches (id), 
 	FOREIGN KEY(player_id) REFERENCES players (id), 
 	FOREIGN KEY(match_team_id) REFERENCES match_teams (id)
+);
+
+CREATE TABLE tournament_division_results (
+	id BIGSERIAL NOT NULL, 
+	simulation_run_id BIGINT NOT NULL, 
+	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_division VARCHAR(50) NOT NULL, 
+	iteration_count INTEGER, 
+	unique_team_count INTEGER NOT NULL, 
+	match_count INTEGER NOT NULL, 
+	champion_team_id BIGINT, 
+	summary_payload JSONB, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_division_result UNIQUE (simulation_run_id, slot_country_code, slot_division), 
+	CONSTRAINT chk_tournament_division_result_country CHECK (slot_country_code IN ('US', 'CA')), 
+	CONSTRAINT chk_tournament_division_result_division CHECK (slot_division IN ('mens_doubles', 'womens_doubles', 'mixed_doubles')), 
+	CONSTRAINT chk_tournament_division_team_count CHECK (unique_team_count >= 0), 
+	CONSTRAINT chk_tournament_division_match_count CHECK (match_count >= 0), 
+	FOREIGN KEY(simulation_run_id) REFERENCES tournament_simulation_runs (id), 
+	FOREIGN KEY(champion_team_id) REFERENCES teams (id)
+);
+
+CREATE TABLE tournament_group_results (
+	id BIGSERIAL NOT NULL, 
+	simulation_run_id BIGINT NOT NULL, 
+	student_group_id BIGINT NOT NULL, 
+	expected_score NUMERIC(10, 3), 
+	official_score NUMERIC(10, 3), 
+	average_rank NUMERIC(8, 3), 
+	final_rank INTEGER, 
+	champion_count INTEGER, 
+	runner_up_count INTEGER, 
+	top_four_count INTEGER, 
+	match_wins INTEGER, 
+	rank_distribution JSONB, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_group_result UNIQUE (simulation_run_id, student_group_id), 
+	CONSTRAINT chk_tournament_group_result_rank CHECK (final_rank IS NULL OR final_rank >= 1), 
+	FOREIGN KEY(simulation_run_id) REFERENCES tournament_simulation_runs (id), 
+	FOREIGN KEY(student_group_id) REFERENCES tournament_student_groups (id)
+);
+
+CREATE TABLE tournament_official_matches (
+	id BIGSERIAL NOT NULL, 
+	simulation_run_id BIGINT NOT NULL, 
+	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_division VARCHAR(50) NOT NULL, 
+	match_number INTEGER NOT NULL, 
+	team_one_id BIGINT NOT NULL, 
+	team_two_id BIGINT NOT NULL, 
+	winning_team_id BIGINT NOT NULL, 
+	team_one_games_won INTEGER NOT NULL, 
+	team_two_games_won INTEGER NOT NULL, 
+	team_one_points INTEGER NOT NULL, 
+	team_two_points INTEGER NOT NULL, 
+	visible_team_one_win_probability NUMERIC(8, 4), 
+	final_team_one_win_probability NUMERIC(8, 4), 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_official_match_number UNIQUE (simulation_run_id, match_number), 
+	CONSTRAINT chk_tournament_official_match_country CHECK (slot_country_code IN ('US', 'CA')), 
+	CONSTRAINT chk_tournament_official_match_division CHECK (slot_division IN ('mens_doubles', 'womens_doubles', 'mixed_doubles')), 
+	CONSTRAINT chk_tournament_official_match_number CHECK (match_number >= 1), 
+	CONSTRAINT chk_tournament_official_match_distinct_teams CHECK (team_one_id <> team_two_id), 
+	FOREIGN KEY(simulation_run_id) REFERENCES tournament_simulation_runs (id), 
+	FOREIGN KEY(team_one_id) REFERENCES teams (id), 
+	FOREIGN KEY(team_two_id) REFERENCES teams (id), 
+	FOREIGN KEY(winning_team_id) REFERENCES teams (id)
+);
+
+CREATE TABLE tournament_submissions (
+	id BIGSERIAL NOT NULL, 
+	event_id BIGINT NOT NULL, 
+	student_group_id BIGINT NOT NULL, 
+	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_division VARCHAR(50) NOT NULL, 
+	team_id BIGINT NOT NULL, 
+	validation_status VARCHAR(30) DEFAULT 'pending' NOT NULL, 
+	validation_message TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_submission_slot UNIQUE (event_id, student_group_id, slot_country_code, slot_division), 
+	CONSTRAINT chk_tournament_submission_country CHECK (slot_country_code IN ('US', 'CA')), 
+	CONSTRAINT chk_tournament_submission_division CHECK (slot_division IN ('mens_doubles', 'womens_doubles', 'mixed_doubles')), 
+	CONSTRAINT chk_tournament_submission_validation_status CHECK (validation_status IN ('pending', 'valid', 'invalid')), 
+	FOREIGN KEY(event_id) REFERENCES tournament_events (id), 
+	FOREIGN KEY(student_group_id) REFERENCES tournament_student_groups (id), 
+	FOREIGN KEY(team_id) REFERENCES teams (id)
+);
+
+CREATE TABLE tournament_team_results (
+	id BIGSERIAL NOT NULL, 
+	simulation_run_id BIGINT NOT NULL, 
+	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_division VARCHAR(50) NOT NULL, 
+	team_id BIGINT NOT NULL, 
+	championship_probability NUMERIC(8, 5), 
+	top_three_probability NUMERIC(8, 5), 
+	average_finish NUMERIC(8, 3), 
+	win_percentage NUMERIC(8, 5), 
+	upset_count INTEGER, 
+	final_rank INTEGER, 
+	match_wins INTEGER, 
+	match_losses INTEGER, 
+	games_won INTEGER, 
+	games_lost INTEGER, 
+	point_differential INTEGER, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_team_result UNIQUE (simulation_run_id, slot_country_code, slot_division, team_id), 
+	CONSTRAINT chk_tournament_team_result_country CHECK (slot_country_code IN ('US', 'CA')), 
+	CONSTRAINT chk_tournament_team_result_division CHECK (slot_division IN ('mens_doubles', 'womens_doubles', 'mixed_doubles')), 
+	CONSTRAINT chk_tournament_team_result_rank CHECK (final_rank IS NULL OR final_rank >= 1), 
+	FOREIGN KEY(simulation_run_id) REFERENCES tournament_simulation_runs (id), 
+	FOREIGN KEY(team_id) REFERENCES teams (id)
+);
+
+CREATE TABLE tournament_official_games (
+	id BIGSERIAL NOT NULL, 
+	official_match_id BIGINT NOT NULL, 
+	game_number INTEGER NOT NULL, 
+	team_one_score INTEGER NOT NULL, 
+	team_two_score INTEGER NOT NULL, 
+	winning_team_number INTEGER NOT NULL, 
+	target_score INTEGER DEFAULT 11 NOT NULL, 
+	win_by INTEGER DEFAULT 2 NOT NULL, 
+	expected_team_one_score_share NUMERIC(8, 4), 
+	actual_team_one_score_share NUMERIC(8, 4), 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_tournament_official_game_number UNIQUE (official_match_id, game_number), 
+	CONSTRAINT chk_tournament_official_game_number CHECK (game_number >= 1), 
+	CONSTRAINT chk_tournament_official_game_winner CHECK (winning_team_number IN (1, 2)), 
+	CONSTRAINT chk_tournament_official_game_scores CHECK (team_one_score >= 0 AND team_two_score >= 0), 
+	CONSTRAINT chk_tournament_official_game_target CHECK (target_score IN (11, 15, 21)), 
+	CONSTRAINT chk_tournament_official_game_win_by CHECK (win_by >= 1), 
+	FOREIGN KEY(official_match_id) REFERENCES tournament_official_matches (id)
 );
 
 -- ============================================
@@ -878,6 +1074,28 @@ CREATE INDEX idx_teams_country ON teams (country_code);
 CREATE INDEX idx_teams_formation_date ON teams (formation_date);
 CREATE INDEX idx_teams_status ON teams (team_status);
 CREATE INDEX idx_teams_type ON teams (team_type);
+CREATE INDEX idx_tournament_division_results_division ON tournament_division_results (slot_country_code, slot_division);
+CREATE INDEX idx_tournament_division_results_run ON tournament_division_results (simulation_run_id);
+CREATE INDEX idx_tournament_events_date ON tournament_events (tournament_date);
+CREATE INDEX idx_tournament_events_generation_run ON tournament_events (generation_run_id);
+CREATE INDEX idx_tournament_events_source_batch ON tournament_events (source_batch_id);
+CREATE INDEX idx_tournament_events_status ON tournament_events (status);
+CREATE INDEX idx_tournament_group_results_group ON tournament_group_results (student_group_id);
+CREATE INDEX idx_tournament_group_results_run ON tournament_group_results (simulation_run_id);
+CREATE INDEX idx_tournament_official_games_match ON tournament_official_games (official_match_id);
+CREATE INDEX idx_tournament_official_matches_division ON tournament_official_matches (slot_country_code, slot_division);
+CREATE INDEX idx_tournament_official_matches_run ON tournament_official_matches (simulation_run_id);
+CREATE INDEX idx_tournament_simulation_runs_event ON tournament_simulation_runs (event_id);
+CREATE INDEX idx_tournament_simulation_runs_job ON tournament_simulation_runs (job_status_id);
+CREATE INDEX idx_tournament_simulation_runs_status ON tournament_simulation_runs (status);
+CREATE INDEX idx_tournament_simulation_runs_type ON tournament_simulation_runs (run_type);
+CREATE INDEX idx_tournament_student_groups_event ON tournament_student_groups (event_id);
+CREATE INDEX idx_tournament_submissions_event ON tournament_submissions (event_id);
+CREATE INDEX idx_tournament_submissions_group ON tournament_submissions (student_group_id);
+CREATE INDEX idx_tournament_submissions_team ON tournament_submissions (team_id);
+CREATE INDEX idx_tournament_team_results_division ON tournament_team_results (slot_country_code, slot_division);
+CREATE INDEX idx_tournament_team_results_run ON tournament_team_results (simulation_run_id);
+CREATE INDEX idx_tournament_team_results_team ON tournament_team_results (team_id);
 CREATE INDEX idx_tournaments_region ON tournaments (region_id);
 CREATE INDEX idx_tournaments_start_date ON tournaments (tournament_start_date);
 CREATE INDEX idx_uploaded_files_status ON uploaded_files (validation_status);

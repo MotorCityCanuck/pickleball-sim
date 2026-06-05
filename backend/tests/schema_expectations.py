@@ -40,6 +40,15 @@ EXPECTED_TABLES = {
     "student_dataset_releases",
     "student_dataset_release_files",
     "team_lifecycle_events",
+    "tournament_division_results",
+    "tournament_events",
+    "tournament_group_results",
+    "tournament_official_games",
+    "tournament_official_matches",
+    "tournament_simulation_runs",
+    "tournament_student_groups",
+    "tournament_submissions",
+    "tournament_team_results",
 }
 
 STALE_SPLIT_NAME_TABLES = {
@@ -150,6 +159,28 @@ EXPECTED_INDEXES = {
     "idx_teams_type",
     "idx_tournaments_region",
     "idx_tournaments_start_date",
+    "idx_tournament_division_results_division",
+    "idx_tournament_division_results_run",
+    "idx_tournament_events_date",
+    "idx_tournament_events_generation_run",
+    "idx_tournament_events_source_batch",
+    "idx_tournament_events_status",
+    "idx_tournament_group_results_group",
+    "idx_tournament_group_results_run",
+    "idx_tournament_official_games_match",
+    "idx_tournament_official_matches_division",
+    "idx_tournament_official_matches_run",
+    "idx_tournament_simulation_runs_event",
+    "idx_tournament_simulation_runs_job",
+    "idx_tournament_simulation_runs_status",
+    "idx_tournament_simulation_runs_type",
+    "idx_tournament_student_groups_event",
+    "idx_tournament_submissions_event",
+    "idx_tournament_submissions_group",
+    "idx_tournament_submissions_team",
+    "idx_tournament_team_results_division",
+    "idx_tournament_team_results_run",
+    "idx_tournament_team_results_team",
     "idx_uploaded_files_status",
     "idx_uploaded_files_timestamp",
     "idx_validation_results_batch",
@@ -240,6 +271,42 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "chk_team_type",
     },
     "team_lifecycle_events": {"chk_team_lifecycle_event_type"},
+    "tournament_division_results": {
+        "chk_tournament_division_match_count",
+        "chk_tournament_division_result_country",
+        "chk_tournament_division_result_division",
+        "chk_tournament_division_team_count",
+    },
+    "tournament_events": {"chk_tournament_event_status"},
+    "tournament_group_results": {"chk_tournament_group_result_rank"},
+    "tournament_official_games": {
+        "chk_tournament_official_game_number",
+        "chk_tournament_official_game_scores",
+        "chk_tournament_official_game_target",
+        "chk_tournament_official_game_win_by",
+        "chk_tournament_official_game_winner",
+    },
+    "tournament_official_matches": {
+        "chk_tournament_official_match_country",
+        "chk_tournament_official_match_distinct_teams",
+        "chk_tournament_official_match_division",
+        "chk_tournament_official_match_number",
+    },
+    "tournament_simulation_runs": {
+        "chk_tournament_simulation_iterations",
+        "chk_tournament_simulation_run_status",
+        "chk_tournament_simulation_run_type",
+    },
+    "tournament_submissions": {
+        "chk_tournament_submission_country",
+        "chk_tournament_submission_division",
+        "chk_tournament_submission_validation_status",
+    },
+    "tournament_team_results": {
+        "chk_tournament_team_result_country",
+        "chk_tournament_team_result_division",
+        "chk_tournament_team_result_rank",
+    },
     "tournaments": {"chk_tournament_dates"},
     "uploaded_files": {"chk_file_size"},
     "student_dataset_releases": {
@@ -267,6 +334,22 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "raw_pickleball_club_names": {("load_run_id", "club_seed")},
     "regions": {("country_code", "state_province_code", "region_name")},
     "team_memberships": {("team_id", "player_id", "joined_date")},
+    "tournament_division_results": {
+        ("simulation_run_id", "slot_country_code", "slot_division"),
+    },
+    "tournament_group_results": {("simulation_run_id", "student_group_id")},
+    "tournament_official_games": {("official_match_id", "game_number")},
+    "tournament_official_matches": {("simulation_run_id", "match_number")},
+    "tournament_student_groups": {
+        ("event_id", "external_group_key"),
+        ("event_id", "group_name"),
+    },
+    "tournament_submissions": {
+        ("event_id", "student_group_id", "slot_country_code", "slot_division"),
+    },
+    "tournament_team_results": {
+        ("simulation_run_id", "slot_country_code", "slot_division", "team_id"),
+    },
 }
 
 EXPECTED_FOREIGN_KEYS = {
@@ -344,6 +427,41 @@ EXPECTED_FOREIGN_KEYS = {
     },
     "team_memberships": {"player_id->players.id", "team_id->teams.id"},
     "teams": {"generation_run_id->generation_runs.id"},
+    "tournament_division_results": {
+        "champion_team_id->teams.id",
+        "simulation_run_id->tournament_simulation_runs.id",
+    },
+    "tournament_events": {
+        "generation_run_id->generation_runs.id",
+        "source_batch_id->monthly_batches.id",
+    },
+    "tournament_group_results": {
+        "simulation_run_id->tournament_simulation_runs.id",
+        "student_group_id->tournament_student_groups.id",
+    },
+    "tournament_official_games": {
+        "official_match_id->tournament_official_matches.id",
+    },
+    "tournament_official_matches": {
+        "simulation_run_id->tournament_simulation_runs.id",
+        "team_one_id->teams.id",
+        "team_two_id->teams.id",
+        "winning_team_id->teams.id",
+    },
+    "tournament_simulation_runs": {
+        "event_id->tournament_events.id",
+        "job_status_id->job_status.id",
+    },
+    "tournament_student_groups": {"event_id->tournament_events.id"},
+    "tournament_submissions": {
+        "event_id->tournament_events.id",
+        "student_group_id->tournament_student_groups.id",
+        "team_id->teams.id",
+    },
+    "tournament_team_results": {
+        "simulation_run_id->tournament_simulation_runs.id",
+        "team_id->teams.id",
+    },
     "tournaments": {"generation_run_id->generation_runs.id", "region_id->regions.id"},
     "validation_results": {"batch_id->monthly_batches.id"},
 }
@@ -372,4 +490,11 @@ EXPECTED_SERVER_DEFAULTS = {
     "regions": {"competitiveness_multiplier": "1.0"},
     "raw_seed_load_runs": {"status": "'pending'"},
     "student_dataset_releases": {"status": "'pending'"},
+    "tournament_events": {"status": "'draft'"},
+    "tournament_official_games": {
+        "target_score": "11",
+        "win_by": "2",
+    },
+    "tournament_simulation_runs": {"status": "'pending'"},
+    "tournament_submissions": {"validation_status": "'pending'"},
 }

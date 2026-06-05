@@ -13,6 +13,17 @@ from .club_memberships import ClubMembership
 from .teams import Team
 from .team_memberships import TeamMembership
 from .team_lifecycle_events import TeamLifecycleEvent
+from .tournament_simulation import (
+    TournamentDivisionResult,
+    TournamentEvent,
+    TournamentGroupResult,
+    TournamentOfficialGame,
+    TournamentOfficialMatch,
+    TournamentSimulationRun,
+    TournamentStudentGroup,
+    TournamentSubmission,
+    TournamentTeamResult,
+)
 from .tournaments import Tournament
 from .matches import Match
 from .match_games import MatchGame
@@ -57,6 +68,15 @@ __all__ = [
     'Team',
     'TeamMembership',
     'TeamLifecycleEvent',
+    'TournamentDivisionResult',
+    'TournamentEvent',
+    'TournamentGroupResult',
+    'TournamentOfficialGame',
+    'TournamentOfficialMatch',
+    'TournamentSimulationRun',
+    'TournamentStudentGroup',
+    'TournamentSubmission',
+    'TournamentTeamResult',
     'Tournament',
     'Match',
     'MatchGame',
