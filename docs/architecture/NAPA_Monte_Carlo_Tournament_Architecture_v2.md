@@ -4,7 +4,7 @@
 
 The NAPA Olympic Team Selection Project is designed to challenge student consulting teams to develop a more sophisticated team recommendation methodology than NAPA's existing rating system.
 
-Students will receive historical match data, player information, team information, and NAPA ratings. Their objective is to recommend one Men's Doubles team, one Women's Doubles team, and one Mixed Doubles team for Olympic competition.
+Students will receive historical match data, player information, team information, and NAPA ratings. Their objective is to recommend one Men's Doubles team, one Women's Doubles team, and one Mixed Doubles team for each Olympic country delegation included in the exercise.
 
 The final class will feature a live tournament simulation and student competition.
 
@@ -23,7 +23,7 @@ NAPA's published ratings are intentionally positioned as:
 - Useful
 - Credible
 - Data-driven
-- Incomplete
+- Basic
 
 The ratings primarily reflect score-based historical match outcomes and serve as a baseline indicator of team strength.
 
@@ -84,6 +84,12 @@ Students must infer useful predictors through data analysis.
 ## Tournament Engine
 
 The tournament simulation will utilize hidden factors when determining match outcomes.
+
+The tournament engine must reuse the same `hidden_performance_bias` configuration
+section and the same hidden-bias application logic used by generated match
+outcomes. Tournament-specific match and game simulation may be implemented in a
+separate application module, but the rating adjustment semantics should remain
+consistent with the synthetic match generator.
 
 Potential hidden factors include:
 
@@ -173,6 +179,65 @@ Fatigue should accumulate throughout tournament play.
 
 # Tournament Simulation Architecture
 
+## System Boundary
+
+The tournament simulation is an instructor-facing application feature, not part
+of monthly synthetic data generation.
+
+The tournament simulation must remain independent from:
+
+- monthly batch orchestration
+- generated historical `matches` and `match_games`
+- rating update generation
+- student dataset export workflows
+
+Tournament simulation may read generated historical data as source context, but
+it must not mutate historical matches, generated games, player ratings, monthly
+batches, or student export release data.
+
+The only intended shared behavior is match and game outcome determination:
+tournament simulation should reuse the existing hidden-bias configuration and
+outcome logic rather than inventing a separate probability model.
+
+## Data Source Snapshot
+
+Tournament team strength should be based on the latest
+`player_rating_history` records as of the selected tournament source batch.
+
+For the initial application version, the selected source batch should normally
+be the latest completed batch in the selected generation run. The tournament
+date will be after the final generated batch date.
+
+Teams are eligible only if active as of the tournament date.
+
+Eligibility should use the most accurate lifecycle source available:
+
+- Prefer immutable team lifecycle history when available.
+- Fall back to current team status and dissolution date only when lifecycle
+  history is unavailable.
+
+## Country Eligibility
+
+The team formation model must be extended to assign and persist a country
+identifier on each generated team.
+
+Tournament submissions must use teams whose persisted country identifier matches
+the requested delegation country.
+
+Cross-country teams are prohibited.
+
+Team formation should therefore prevent player pairings that would create a
+team spanning multiple countries, or explicitly reject those pairings before
+persisting teams.
+
+The initial supported countries for the Olympic selection exercise are:
+
+- Canada
+- USA
+
+The persisted team country identifier should use a stable machine-readable code
+such as `CA` and `US`, with display labels handled separately.
+
 ## Simulation Levels
 
 ### Game Level
@@ -188,13 +253,13 @@ Fatigue should accumulate throughout tournament play.
 
 ### Tournament Level
 
-- Round-robin and/or bracket play
+- Round-robin play for the initial implementation
 - Determine champions
 - Track standings and statistics
 
 ### Monte Carlo Level
 
-Run tournament repeatedly:
+Provide the option to run tournament repeatedly:
 
 - 1,000 iterations
 - 5,000 iterations
@@ -240,21 +305,39 @@ The official tournament outcome represents only one realization of a probabilist
 
 # Student Competition Structure
 
-Each student group submits:
+There will be six student groups.
 
-- One Men's Doubles Team ID
-- One Women's Doubles Team ID
-- One Mixed Doubles Team ID
+Each student group submits six existing NAPA teams:
 
-Only existing NAPA teams may be submitted.
+- Canada Men's Doubles Team ID
+- Canada Women's Doubles Team ID
+- Canada Mixed Doubles Team ID
+- USA Men's Doubles Team ID
+- USA Women's Doubles Team ID
+- USA Mixed Doubles Team ID
+
+Only existing NAPA teams may be submitted.  Teams must be identified using their NAPA Team ID numbers.
 
 No ad hoc team formation is permitted.
+
+Submitted teams must be active as of the tournament date and must match the
+required country and division.
 
 ---
 
 # Portfolio Construction
 
-Student teams are responsible for selecting a balanced portfolio consisting of one men's doubles team, one women's doubles team, and one mixed doubles team.
+Student teams are responsible for selecting a balanced portfolio consisting of
+one team for each country/division combination.
+
+The six portfolio slots are:
+
+- Canada Men's Doubles
+- Canada Women's Doubles
+- Canada Mixed Doubles
+- USA Men's Doubles
+- USA Women's Doubles
+- USA Mixed Doubles
 
 Success is measured across the entire portfolio rather than any individual category.
 
@@ -264,7 +347,7 @@ This encourages strategic portfolio optimization rather than isolated team selec
 
 # Duplicate Team Selections
 
-Duplicate submissions are allowed.
+Duplicate submissions are allowed.  A team may be submitted by more than one student group.
 
 If multiple student groups select the same team:
 
@@ -277,13 +360,18 @@ This avoids duplicate entries while preserving fairness.
 
 # Determining the Winning Student Group
 
-Categories:
+Tournament divisions:
 
-- Men's Doubles
-- Women's Doubles
-- Mixed Doubles
+- Canada Men's Doubles
+- Canada Women's Doubles
+- Canada Mixed Doubles
+- USA Men's Doubles
+- USA Women's Doubles
+- USA Mixed Doubles
 
-Example scoring:
+Student scoring should be configurable without code changes.
+
+Default scoring:
 
 | Result | Points |
 |----------|----------|
@@ -293,24 +381,48 @@ Example scoring:
 | Match Win | 1 |
 
 Total Group Score =
-    Men's Points
-  + Women's Points
-  + Mixed Points
+    Canada Men's Points
+  + Canada Women's Points
+  + Canada Mixed Points
+  + USA Men's Points
+  + USA Women's Points
+  + USA Mixed Points
+
+For the initial round-robin format, champion and runner-up points are awarded
+from final standings. Match-win points are awarded directly from round-robin
+match results.
+
+The semifinalist score value is retained as a configurable result level for
+future elimination or hybrid formats. If no semifinal or top-four concept is
+configured for round robin, semifinalist points are not awarded.
 
 ---
 
 # Tournament Format
 
-To Be Finalized
+Initial format:
 
-Future specification items:
+- Six student groups submit teams.
+- Each country/division combination is simulated as its own round-robin division.
+- Duplicate team selections collapse to one tournament entry per division.
+- All student groups selecting a duplicated team receive credit for that team's results.
+- Each unique team plays every other unique team in its division once.
+- Champion, runner-up, medal/top-three, win percentage, match wins, and average finish are derived from division standings.
 
-- Number of participating teams
+Tie-break order:
+
+1. Match wins
+2. Head-to-head result among tied teams
+3. Game differential
+4. Point differential
+5. Deterministic seeded tiebreak
+
+Future format extensions:
+
+- Larger fields, including up to 36 unique teams per country/division
 - Seeding methodology
-- Round-robin format
-- Elimination format
-- Tie-break procedures
-- Medal determination rules
+- Elimination or hybrid round-robin plus playoff format
+- Semifinal and medal-match rules
 
 Tournament format decisions may materially influence team-selection strategy.
 
@@ -323,15 +435,21 @@ Tournament format decisions may materially influence team-selection strategy.
 Collect:
 
 - Group Name
-- Men's Team ID
-- Women's Team ID
-- Mixed Team ID
+- Canada Men's Team ID
+- Canada Women's Team ID
+- Canada Mixed Team ID
+- USA Men's Team ID
+- USA Women's Team ID
+- USA Mixed Team ID
 
 ## Tournament Control Panel
 
 Features:
 
-- Run Tournament
+- Select generation run and source batch
+- Select tournament date
+- Run Monte Carlo prediction
+- Run official live tournament
 - Select Iteration Count
 - View Results
 - View Portfolio Summary
@@ -340,11 +458,57 @@ Features:
 
 Display:
 
-- Category Winners
+- Division Winners
 - Overall Student Leaderboard
 - Championship Probabilities
 - Medal Probabilities
 - Final Tournament Results
+- Official match and game results
+
+---
+
+# Persistence Strategy
+
+Tournament simulation output should use dedicated tournament simulation tables,
+not monthly generation tables.
+
+Do not write Monte Carlo trial matches to the historical `matches`,
+`match_games`, `match_teams`, or `match_team_players` tables.
+
+Do not trigger `ratings_update_log` generation from tournament simulation.
+
+Recommended persistence split:
+
+- Student submissions: durable rows keyed by tournament event/run and student group.
+- Monte Carlo runs: durable run metadata, config snapshot, source generation run, source batch, tournament date, iteration count, seed, and aggregate results.
+- Monte Carlo aggregate outputs: per-team and per-student probabilities, average finish, win percentage, medal probability, championship probability, and upset frequency.
+- Official live tournament run: durable match-level and game-level result rows for replay and display.
+
+Official live tournament results should persist complete round-robin match and
+game results for every division.
+
+Monte Carlo simulation should persist aggregate outputs by default. Persisting
+every simulated trial match is not recommended because it would create high
+storage volume without improving the classroom workflow.
+
+Tournament simulation tables should be excluded from student dataset export
+unless a future instructor-facing results package is intentionally added.
+
+---
+
+# Student Dataset Visibility
+
+Student-facing exports should not expose hidden simulation formulas, factor
+weights, hidden factor values, or tournament internals.
+
+The existing team fields `chemistry_score` and `persistence_probability` should
+be omitted from student-exposed data. These values are too close to hidden
+partnership and persistence signals and may weaken the intended analytical
+challenge.
+
+Students should receive enough visible data to construct defensible analytical
+features, including team membership, historical results, visible ratings,
+rating confidence, geography, age, and match history.
 
 ---
 
@@ -363,38 +527,70 @@ Examples:
 
 # Suggested Software Architecture
 
-simulation/
+tournament_simulation/
     config.py
+    eligibility.py
     factors.py
     probability.py
     game_simulator.py
     match_simulator.py
+    round_robin.py
     tournament_simulator.py
     student_scoring.py
     results_summary.py
+    persistence.py
+    service.py
+
+The implementation should extract or wrap reusable match outcome behavior from
+the existing match generator so tournament simulation and monthly match
+generation share the same hidden-bias semantics.
+
+The tournament simulation package should not depend on monthly pipeline
+orchestration.
 
 ---
 
 # Configurable Parameters
 
+The tournament configuration should be added as another configuration tab in the control panel.
+
 Examples:
 
-- use_partnership_quality
-- use_fatigue
-- use_age_effects
-- use_travel
-- use_recent_form
+- tournament date
+- source generation run
+- source batch
+- iteration count
+- random seed
+- use hidden performance bias
+- champion points
+- runner-up points
+- semifinalist/top-four points
+- match-win points
+- medal cutoff
+- tie-break configuration
 
-Weights should be configurable without code changes.
+The tournament should use the existing `hidden_performance_bias` configuration
+for factor weights and enablement. Tournament-specific scoring and execution
+settings should be configurable without code changes.
 
 ---
 
 # Performance Targets
 
-Target workload:
+Initial classroom workload:
 
-- 16 teams per category
-- 3 tournament categories
+- 6 student groups
+- 6 submitted teams per student group
+- 36 submitted team slots
+- 6 country/division round-robin tournaments
+- Up to 6 unique teams per country/division after duplicate selections collapse
+- 10,000 Monte Carlo iterations
+- One live tournament execution
+
+Future stress target:
+
+- Up to 36 unique teams per country/division
+- 6 country/division tournaments
 - 10,000 Monte Carlo iterations
 
 Target execution:
