@@ -23,6 +23,7 @@ from app.models import (  # noqa: E402
     MonthlyBatch,
     Player,
     PlayerRatingHistory,
+    Region,
     Team,
     TeamLifecycleEvent,
     TeamMembership,
@@ -83,6 +84,24 @@ def session_factory():
                 started_at datetime,
                 completed_at datetime,
                 error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE regions (
+                id integer primary key autoincrement,
+                country_code varchar(10) not null,
+                region_type varchar(20),
+                region_name varchar(255) not null,
+                state_province_code varchar(10),
+                population bigint,
+                selection_probability numeric(12, 8),
+                competitiveness_multiplier numeric(8, 4) default 1.0,
+                latitude numeric(10, 6),
+                longitude numeric(10, 6),
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -169,6 +188,7 @@ def session_factory():
                 id integer primary key autoincrement,
                 team_type varchar(50) not null,
                 team_status varchar(30) default 'active',
+                country_code varchar(2),
                 formation_date date not null,
                 dissolution_date date,
                 chemistry_score numeric(8, 4),
@@ -244,6 +264,26 @@ def seed_team_data(
     )
     session.add(batch)
     session.flush()
+    if not session.get(Region, 1):
+        session.add_all(
+            [
+                Region(
+                    id=1,
+                    country_code="US",
+                    region_type="metro",
+                    region_name="Test USA",
+                    state_province_code="FL",
+                ),
+                Region(
+                    id=2,
+                    country_code="CA",
+                    region_type="metro",
+                    region_name="Test Canada",
+                    state_province_code="ON",
+                ),
+            ]
+        )
+        session.flush()
     clubs = [
         Club(
             club_name=f"Club {region_id}",
@@ -314,6 +354,7 @@ def test_generate_for_batch_creates_teams_and_memberships(session):
     assert result.membership_rows_loaded == session.query(TeamMembership).count()
     assert result.membership_rows_loaded == result.rows_loaded * 2
     assert {team.team_status for team in session.query(Team)} == {"active"}
+    assert {team.country_code for team in session.query(Team)} == {"US", "CA"}
     assert {team.formation_date for team in session.query(Team)} == {
         date(2024, 1, 1)
     }
@@ -322,6 +363,7 @@ def test_generate_for_batch_creates_teams_and_memberships(session):
     } == {"formed"}
     assert _all_teams_have_two_players(session)
     assert _no_duplicate_players(session)
+    assert _no_cross_country_teams(session)
 
 
 def test_generate_for_batch_enforces_team_type_gender_constraints(session):
@@ -578,6 +620,7 @@ def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
     assert session.query(Team).count() == 11
     new_team = session.query(Team).order_by(Team.id.desc()).first()
     assert new_team.formation_date == date(2024, 2, 1)
+    assert new_team.country_code == "US"
     assert {membership.player_id for membership in new_team.memberships} == {
         new_players[0].id,
         new_players[1].id,
@@ -726,11 +769,26 @@ def _no_duplicate_players(session):
     return len(player_ids) == len(set(player_ids))
 
 
+def _no_cross_country_teams(session):
+    country_by_region_id = {
+        region.id: region.country_code for region in session.query(Region).all()
+    }
+    for team in session.query(Team):
+        member_countries = {
+            country_by_region_id[session.get(Player, membership.player_id).home_region_id]
+            for membership in team.memberships
+        }
+        if member_countries != {team.country_code}:
+            return False
+    return True
+
+
 def _team_snapshot(session):
     return [
         (
             team.team_type,
             team.team_status,
+            team.country_code,
             team.formation_date,
             str(team.chemistry_score),
             str(team.persistence_probability),

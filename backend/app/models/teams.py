@@ -15,6 +15,7 @@ class Team(Base, TimestampMixin):
     id = Column(BigInteger, primary_key=True)
     team_type = Column(String(50), nullable=False)
     team_status = Column(String(30), default='active')
+    country_code = Column(String(2))
     formation_date = Column(Date, nullable=False)
     dissolution_date = Column(Date)
     chemistry_score = Column(Numeric(8, 4))
@@ -28,7 +29,12 @@ class Team(Base, TimestampMixin):
     __table_args__ = (
         Index('idx_teams_type', 'team_type'),
         Index('idx_teams_status', 'team_status'),
+        Index('idx_teams_country', 'country_code'),
         Index('idx_teams_formation_date', 'formation_date'),
+        CheckConstraint(
+            "country_code IS NULL OR country_code IN ('US', 'CA')",
+            name='chk_team_country',
+        ),
         CheckConstraint(
             "team_type IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')",
             name='chk_team_type'

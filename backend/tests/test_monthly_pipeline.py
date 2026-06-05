@@ -137,11 +137,26 @@ def session_factory():
                 id integer primary key,
                 team_type varchar(50) not null,
                 team_status varchar(30),
+                country_code varchar(2),
                 formation_date date not null,
                 dissolution_date date,
                 chemistry_score numeric(8, 4),
                 persistence_probability numeric(5, 4),
                 generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE team_lifecycle_events (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                team_id bigint not null,
+                event_date date not null,
+                event_type varchar(30) not null,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -400,6 +415,7 @@ class FakeTeamGenerator:
             Team(
                 team_type="open_doubles",
                 team_status="active",
+                country_code="US",
                 formation_date=date(2024, 1, 1),
                 generation_run_id=generation_run_id,
             )

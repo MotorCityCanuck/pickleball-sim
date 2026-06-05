@@ -3,7 +3,7 @@
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
 -- Total Tables: 39
--- Explicit Indexes: 105
+-- Explicit Indexes: 106
 -- PostgreSQL 16+
 -- ============================================
 
@@ -258,6 +258,7 @@ CREATE TABLE teams (
 	id BIGSERIAL NOT NULL, 
 	team_type VARCHAR(50) NOT NULL, 
 	team_status VARCHAR(30), 
+	country_code VARCHAR(2), 
 	formation_date DATE NOT NULL, 
 	dissolution_date DATE, 
 	chemistry_score NUMERIC(8, 4), 
@@ -266,6 +267,7 @@ CREATE TABLE teams (
 	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	PRIMARY KEY (id), 
+	CONSTRAINT chk_team_country CHECK (country_code IS NULL OR country_code IN ('US', 'CA')), 
 	CONSTRAINT chk_team_type CHECK (team_type IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')), 
 	CONSTRAINT chk_team_status CHECK (team_status IN ('active', 'dormant', 'retired')), 
 	CONSTRAINT chk_team_dates CHECK (dissolution_date IS NULL OR dissolution_date >= formation_date), 
@@ -872,6 +874,7 @@ CREATE INDEX idx_team_lifecycle_events_team ON team_lifecycle_events (team_id);
 CREATE INDEX idx_team_memberships_dates ON team_memberships (joined_date, left_date);
 CREATE INDEX idx_team_memberships_player ON team_memberships (player_id);
 CREATE INDEX idx_team_memberships_team ON team_memberships (team_id);
+CREATE INDEX idx_teams_country ON teams (country_code);
 CREATE INDEX idx_teams_formation_date ON teams (formation_date);
 CREATE INDEX idx_teams_status ON teams (team_status);
 CREATE INDEX idx_teams_type ON teams (team_type);

@@ -19,6 +19,7 @@ from app.models import (
     MonthlyBatch,
     Player,
     PlayerRatingHistory,
+    Region,
     Team,
     TeamLifecycleEvent,
     TeamMembership,
@@ -183,6 +184,7 @@ class PlayerCandidate:
     id: int
     gender: str | None
     home_region_id: int | None
+    country_code: str | None
     rating_value: Decimal
     club_ids: frozenset[int]
     primary_club_competitiveness: str | None
@@ -197,6 +199,7 @@ class TeamCandidatePool:
         self.all_ids = [candidate.id for candidate in candidates]
         self.ids_by_gender: dict[str, list[int]] = {}
         self.ids_by_region: dict[int, list[int]] = {}
+        self.ids_by_country: dict[str, list[int]] = {}
         self.ids_by_club: dict[int, list[int]] = {}
 
         for candidate in candidates:
@@ -204,6 +207,10 @@ class TeamCandidatePool:
                 self.ids_by_gender.setdefault(candidate.gender, []).append(candidate.id)
             if candidate.home_region_id is not None:
                 self.ids_by_region.setdefault(candidate.home_region_id, []).append(
+                    candidate.id
+                )
+            if candidate.country_code is not None:
+                self.ids_by_country.setdefault(candidate.country_code, []).append(
                     candidate.id
                 )
             for club_id in candidate.club_ids:
@@ -303,7 +310,11 @@ class TeamCandidatePool:
             and first_player.home_region_id in self.ids_by_region
         ):
             source_ids = self.ids_by_region[first_player.home_region_id]
-        return source_ids
+
+        if first_player.country_code is None:
+            return []
+        country_ids = set(self.ids_by_country.get(first_player.country_code, []))
+        return [player_id for player_id in source_ids if player_id in country_ids]
 
     def _sample_partner_candidates(
         self,
@@ -393,6 +404,7 @@ class TeamCandidatePool:
             candidate.id != first_player.id
             and candidate.id in self.active_ids
             and _team_type_pair_allowed(first_player, candidate, team_type)
+            and _same_country_pair_allowed(first_player, candidate)
             and abs(first_player.rating_value - candidate.rating_value)
             <= config.rating_gap_max
             and (
@@ -525,6 +537,7 @@ class TeamGenerator:
             team = Team(
                 team_type=team_type,
                 team_status="active",
+                country_code=first_player.country_code,
                 formation_date=batch.batch_month,
                 chemistry_score=_initial_chemistry(rng, config),
                 persistence_probability=_assigned_team_persistence_probability(
@@ -637,9 +650,11 @@ def _eligible_players(
             Player.id,
             Player.gender,
             Player.home_region_id,
+            Region.country_code,
             latest_ratings.c.rating_value,
         )
         .join(latest_ratings, latest_ratings.c.player_id == Player.id)
+        .outerjoin(Region, Region.id == Player.home_region_id)
         .where(latest_ratings.c.rating_rank == 1)
         .order_by(Player.id)
     )
@@ -648,11 +663,12 @@ def _eligible_players(
             id=player_id,
             gender=gender,
             home_region_id=home_region_id,
+            country_code=country_code,
             rating_value=_decimal(rating_value),
             club_ids=frozenset(club_ids_by_player.get(player_id, set())),
             primary_club_competitiveness=primary_competitiveness_by_player.get(player_id),
         )
-        for player_id, gender, home_region_id, rating_value in player_rows
+        for player_id, gender, home_region_id, country_code, rating_value in player_rows
         if exclude_player_ids is None or player_id not in exclude_player_ids
     ]
     if not candidates and exclude_player_ids is None:
@@ -915,6 +931,16 @@ def _team_type_pair_allowed(
     if team_type == "mixed_doubles":
         return {first_player.gender, second_player.gender} == {"M", "F"}
     return True
+
+
+def _same_country_pair_allowed(
+    first_player: PlayerCandidate,
+    second_player: PlayerCandidate,
+) -> bool:
+    return (
+        first_player.country_code is not None
+        and first_player.country_code == second_player.country_code
+    )
 
 
 def _mark_player_used(
