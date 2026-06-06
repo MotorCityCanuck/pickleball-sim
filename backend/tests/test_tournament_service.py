@@ -84,6 +84,7 @@ def test_monte_carlo_run_persists_aggregate_results_and_summary(session):
     assert session.scalar(select(func.count()).select_from(TournamentDivisionResult)) == 1
     assert summary["simulation_run_id"] == start.simulation_run.id
     assert summary["run_type"] == "monte_carlo"
+    assert summary["division_results"][0]["slot_country_code"] == "ALL"
 
 
 def test_official_run_persists_match_and_game_results(session):
@@ -104,8 +105,10 @@ def test_official_run_persists_match_and_game_results(session):
 
     assert start.simulation_run.status == "succeeded"
     assert official_match.simulation_run_id == start.simulation_run.id
+    assert official_match.slot_country_code == "ALL"
     assert session.scalar(select(func.count()).select_from(TournamentOfficialGame)) == 3
     assert detail["match_number"] == 1
+    assert detail["slot_country_code"] == "ALL"
     assert len(detail["games"]) == 3
 
 
@@ -139,11 +142,11 @@ def _seed_two_valid_teams(session) -> None:
         team_id=20,
         player_ids=(201, 202),
         ratings=(Decimal("1500"), Decimal("1550")),
+        country_code="CA",
     )
 
 
 def _create_event(service: TournamentService, session):
-    slot = PortfolioSlot(country_code="US", division="mens_doubles")
     return service.create_event(
         event_name="Class Tournament",
         source_batch_id=2,
@@ -153,8 +156,16 @@ def _create_event(service: TournamentService, session):
             StudentGroup(id=2, name="Group 2"),
         ),
         submissions=(
-            TeamSubmission(group_id=1, slot=slot, team_id=10),
-            TeamSubmission(group_id=2, slot=slot, team_id=20),
+            TeamSubmission(
+                group_id=1,
+                slot=PortfolioSlot(country_code="US", division="mens_doubles"),
+                team_id=10,
+            ),
+            TeamSubmission(
+                group_id=2,
+                slot=PortfolioSlot(country_code="CA", division="mens_doubles"),
+                team_id=20,
+            ),
         ),
         session=session,
     )

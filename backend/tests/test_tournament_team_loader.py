@@ -74,15 +74,32 @@ def test_latest_completed_source_batch_uses_latest_succeeded_batch(session):
 
 def test_load_validated_tournament_input_builds_divisions_and_collapses_duplicates(session):
     _seed_valid_team(session, team_id=10, player_ids=(101, 102), ratings=(Decimal("1600"), Decimal("1700")))
-    _seed_valid_team(session, team_id=20, player_ids=(201, 202), ratings=(Decimal("1500"), Decimal("1550")))
-    slot = PortfolioSlot(country_code="US", division="mens_doubles")
+    _seed_valid_team(
+        session,
+        team_id=20,
+        player_ids=(201, 202),
+        ratings=(Decimal("1500"), Decimal("1550")),
+        country_code="CA",
+    )
 
     result = load_validated_tournament_input(
         session,
         submissions=(
-            TeamSubmission(group_id=1, slot=slot, team_id=10),
-            TeamSubmission(group_id=2, slot=slot, team_id=10),
-            TeamSubmission(group_id=3, slot=slot, team_id=20),
+            TeamSubmission(
+                group_id=1,
+                slot=PortfolioSlot(country_code="US", division="mens_doubles"),
+                team_id=10,
+            ),
+            TeamSubmission(
+                group_id=2,
+                slot=PortfolioSlot(country_code="US", division="mens_doubles"),
+                team_id=10,
+            ),
+            TeamSubmission(
+                group_id=3,
+                slot=PortfolioSlot(country_code="CA", division="mens_doubles"),
+                team_id=20,
+            ),
         ),
         source_batch_id=2,
         tournament_date=date(2025, 3, 15),
@@ -91,6 +108,7 @@ def test_load_validated_tournament_input_builds_divisions_and_collapses_duplicat
     assert result.is_valid
     assert result.source_batch_id == 2
     assert len(result.divisions) == 1
+    assert result.divisions[0].slot.country_code == "ALL"
     entries = result.divisions[0].entries
     assert [entry.id for entry in entries] == [10, 20]
     assert entries[0].selected_by_group_ids == (1, 2)

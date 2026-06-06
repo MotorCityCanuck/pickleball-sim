@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from typing import Any
 import zipfile
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -30,7 +31,13 @@ from app.core import (
 from app.db.session import get_session
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
-from app.models import JobStatus, TournamentEvent, TournamentSimulationRun
+from app.models import (
+    JobStatus,
+    TournamentEvent,
+    TournamentSimulationRun,
+    TournamentStudentGroup,
+    TournamentSubmission,
+)
 from app.tournament_simulation import (
     PortfolioSlot,
     StudentGroup,
@@ -63,6 +70,56 @@ TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="US", division="mixed_doubles"),
 )
 TOURNAMENT_GROUP_COUNT = 6
+TOURNAMENT_DEFAULT_TEAM_IDS: dict[int, dict[tuple[str, str], int]] = {
+    1: {
+        ("CA", "mens_doubles"): 39134,
+        ("CA", "womens_doubles"): 32013,
+        ("CA", "mixed_doubles"): 37055,
+        ("US", "mens_doubles"): 37242,
+        ("US", "womens_doubles"): 34754,
+        ("US", "mixed_doubles"): 29371,
+    },
+    2: {
+        ("CA", "mens_doubles"): 31302,
+        ("CA", "womens_doubles"): 37757,
+        ("CA", "mixed_doubles"): 10964,
+        ("US", "mens_doubles"): 37323,
+        ("US", "womens_doubles"): 38747,
+        ("US", "mixed_doubles"): 37197,
+    },
+    3: {
+        ("CA", "mens_doubles"): 38323,
+        ("CA", "womens_doubles"): 37009,
+        ("CA", "mixed_doubles"): 38840,
+        ("US", "mens_doubles"): 31005,
+        ("US", "womens_doubles"): 27931,
+        ("US", "mixed_doubles"): 37262,
+    },
+    4: {
+        ("CA", "mens_doubles"): 30048,
+        ("CA", "womens_doubles"): 36128,
+        ("CA", "mixed_doubles"): 39104,
+        ("US", "mens_doubles"): 37199,
+        ("US", "womens_doubles"): 38188,
+        ("US", "mixed_doubles"): 31839,
+    },
+    5: {
+        ("CA", "mens_doubles"): 36963,
+        ("CA", "womens_doubles"): 29447,
+        ("CA", "mixed_doubles"): 27182,
+        ("US", "mens_doubles"): 34334,
+        ("US", "womens_doubles"): 38530,
+        ("US", "mixed_doubles"): 32143,
+    },
+    6: {
+        ("CA", "mens_doubles"): 37911,
+        ("CA", "womens_doubles"): 34914,
+        ("CA", "mixed_doubles"): 36550,
+        ("US", "mens_doubles"): 24564,
+        ("US", "womens_doubles"): 38378,
+        ("US", "mixed_doubles"): 34722,
+    },
+}
 
 
 @lru_cache(maxsize=1)
@@ -1736,12 +1793,18 @@ def _build_tournament_template_context(
         generation_run_id=generation_run_id,
         source_batch_id=getattr(source_batch, "id", None),
     )
+    results_summary = (
+        _tournament_results_summary(session, event_id=event_summary["event_id"])
+        if event_summary
+        else None
+    )
     return {
         "snapshot": snapshot,
         "tournament_slots": TOURNAMENT_PORTFOLIO_SLOTS,
         "tournament_group_indexes": tuple(range(1, TOURNAMENT_GROUP_COUNT + 1)),
         "tournament_source_batch": source_batch,
         "tournament_event_summary": event_summary,
+        "tournament_results_summary": results_summary,
         "tournament_form_state": resolved_form_state,
         "tournament_monte_carlo_state": {
             "event_id": event_summary["event_id"] if event_summary else None,
@@ -1775,7 +1838,18 @@ def _default_tournament_form_state(
             str(group_index): f"Group {group_index}"
             for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
         },
-        "team_ids": {},
+        "team_ids": _default_tournament_team_ids(),
+    }
+
+
+def _default_tournament_team_ids() -> dict[str, str]:
+    return {
+        _tournament_team_field_key(
+            group_index,
+            PortfolioSlot(country_code=country_code, division=division),
+        ): str(team_id)
+        for group_index, group_slots in TOURNAMENT_DEFAULT_TEAM_IDS.items()
+        for (country_code, division), team_id in group_slots.items()
     }
 
 
@@ -1917,6 +1991,128 @@ def _latest_tournament_event_summary(
         "source_batch_id": event.source_batch_id,
         "latest_monte_carlo_run": run_summary,
     }
+
+
+def _tournament_results_summary(
+    session: Session,
+    *,
+    event_id: int,
+) -> dict[str, Any] | None:
+    summary = TournamentService().latest_summary(event_id=event_id, session=session)
+    if summary is None or summary["status"] != "succeeded":
+        return None
+
+    group_names = {
+        int(group_id): str(group_name)
+        for group_id, group_name in session.execute(
+            select(TournamentStudentGroup.id, TournamentStudentGroup.group_name).where(
+                TournamentStudentGroup.event_id == event_id,
+            )
+        ).all()
+    }
+    submissions = session.execute(
+        select(
+            TournamentSubmission.team_id,
+            TournamentSubmission.slot_country_code,
+            TournamentSubmission.slot_division,
+            TournamentStudentGroup.group_name,
+        )
+        .join(
+            TournamentStudentGroup,
+            TournamentSubmission.student_group_id == TournamentStudentGroup.id,
+        )
+        .where(TournamentSubmission.event_id == event_id)
+    ).all()
+
+    submitted_groups_by_team_slot: dict[tuple[int, str, str], set[str]] = {}
+    for team_id, country_code, division, group_name in submissions:
+        key = (int(team_id), str(country_code), str(division))
+        submitted_groups_by_team_slot.setdefault(key, set()).add(str(group_name))
+
+    team_results = sorted(
+        summary["team_results"],
+        key=lambda row: (
+            str(row["slot_division"]),
+            -_decimal_value(row["championship_probability"]),
+            str(row["slot_country_code"]),
+            row["team_id"],
+        ),
+    )
+    for row in team_results:
+        key = (
+            int(row["team_id"]),
+            str(row["slot_country_code"]),
+            str(row["slot_division"]),
+        )
+        credited_groups = tuple(sorted(submitted_groups_by_team_slot.get(key, ())))
+        row["credited_groups"] = credited_groups
+        row["credit_count"] = len(credited_groups)
+        row["championship_probability_display"] = _percentage_display(
+            row["championship_probability"]
+        )
+        row["top_three_probability_display"] = _percentage_display(
+            row["top_three_probability"]
+        )
+
+    division_results = sorted(
+        summary["division_results"],
+        key=lambda row: str(row["slot_division"]),
+    )
+    group_results = sorted(
+        summary["group_results"],
+        key=lambda row: (
+            -_decimal_value(row["expected_score"] or row["official_score"]),
+            _decimal_value(row["average_rank"] or row["final_rank"] or 999),
+            row["student_group_id"],
+        ),
+    )
+    for row in group_results:
+        row["group_name"] = group_names.get(row["student_group_id"], "Group")
+
+    duplicate_credits = [
+        {
+            "team_id": team_id,
+            "slot_country_code": country_code,
+            "slot_division": division,
+            "credited_groups": tuple(sorted(group_names_for_team)),
+            "credit_count": len(group_names_for_team),
+        }
+        for (
+            team_id,
+            country_code,
+            division,
+        ), group_names_for_team in submitted_groups_by_team_slot.items()
+        if len(group_names_for_team) > 1
+    ]
+    duplicate_credits.sort(
+        key=lambda row: (
+            str(row["slot_country_code"]),
+            str(row["slot_division"]),
+            int(row["team_id"]),
+        )
+    )
+
+    return {
+        **summary,
+        "team_results": team_results,
+        "division_results": division_results,
+        "group_results": group_results,
+        "duplicate_credits": duplicate_credits,
+    }
+
+
+def _decimal_value(value: object) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _percentage_display(value: object) -> str:
+    percent = (_decimal_value(value) * Decimal("100")).quantize(Decimal("0.1"))
+    return f"{percent}%"
 
 
 def _validation_issue_payload(issue: object) -> dict[str, Any]:

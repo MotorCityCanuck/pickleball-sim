@@ -116,7 +116,7 @@ def load_validated_tournament_input(
             entries_by_id[loaded.entry.id] = loaded.entry
 
     divisions: list[TournamentDivision] = []
-    submissions_by_slot: dict[PortfolioSlot, dict[int, int]] = defaultdict(dict)
+    submissions_by_division: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for submission in submissions:
         if any(
             issue.group_id == submission.group_id
@@ -125,16 +125,18 @@ def load_validated_tournament_input(
             for issue in issues
         ):
             continue
-        submissions_by_slot[submission.slot][submission.group_id] = submission.team_id
+        submissions_by_division[submission.slot.division].append(
+            (submission.group_id, submission.team_id)
+        )
 
-    for slot, group_submissions in sorted(
-        submissions_by_slot.items(),
+    for division, submitted_group_team_ids in sorted(
+        submissions_by_division.items(),
         key=lambda item: item[0],
     ):
         divisions.append(
             build_division_from_submissions(
-                slot=slot,
-                submissions_by_group_id=group_submissions,
+                slot=PortfolioSlot(country_code="ALL", division=division),
+                submitted_group_team_ids=submitted_group_team_ids,
                 teams_by_id=entries_by_id,
             )
         )

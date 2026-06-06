@@ -285,6 +285,95 @@ def session_factory():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE tournament_student_groups (
+                id integer primary key autoincrement,
+                event_id bigint not null,
+                group_name varchar(255) not null,
+                external_group_key varchar(255),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_submissions (
+                id integer primary key autoincrement,
+                event_id bigint not null,
+                student_group_id bigint not null,
+                slot_country_code varchar(2) not null,
+                slot_division varchar(50) not null,
+                team_id bigint not null,
+                validation_status varchar(30) not null default 'pending',
+                validation_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_team_results (
+                id integer primary key autoincrement,
+                simulation_run_id bigint not null,
+                slot_country_code varchar(2) not null,
+                slot_division varchar(50) not null,
+                team_id bigint not null,
+                championship_probability numeric(8, 5),
+                top_three_probability numeric(8, 5),
+                average_finish numeric(8, 3),
+                win_percentage numeric(8, 5),
+                upset_count integer,
+                final_rank integer,
+                match_wins integer,
+                match_losses integer,
+                games_won integer,
+                games_lost integer,
+                point_differential integer,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_group_results (
+                id integer primary key autoincrement,
+                simulation_run_id bigint not null,
+                student_group_id bigint not null,
+                expected_score numeric(10, 3),
+                official_score numeric(10, 3),
+                average_rank numeric(8, 3),
+                final_rank integer,
+                champion_count integer,
+                runner_up_count integer,
+                top_four_count integer,
+                match_wins integer,
+                rank_distribution json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_division_results (
+                id integer primary key autoincrement,
+                simulation_run_id bigint not null,
+                slot_country_code varchar(2) not null,
+                slot_division varchar(50) not null,
+                iteration_count integer,
+                unique_team_count integer not null,
+                match_count integer not null,
+                champion_team_id bigint,
+                summary_payload json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE student_dataset_releases (
                 id integer primary key autoincrement,
                 release_name varchar(255) not null,
@@ -512,6 +601,67 @@ def _seed_tournament_event_state(session_factory):
                     303, 301, 'monte_carlo', 'succeeded', 7, 250,
                     '{}', 302, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_student_groups (
+                    id, event_id, group_name, external_group_key, created_at, updated_at
+                ) VALUES
+                    (401, 301, 'Group 1', '1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (402, 301, 'Group 2', '2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_submissions (
+                    id, event_id, student_group_id, slot_country_code, slot_division,
+                    team_id, validation_status, created_at, updated_at
+                ) VALUES
+                    (501, 301, 401, 'CA', 'mens_doubles', 9001, 'valid', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (502, 301, 402, 'CA', 'mens_doubles', 9001, 'valid', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (503, 301, 401, 'US', 'mixed_doubles', 9002, 'valid', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_division_results (
+                    id, simulation_run_id, slot_country_code, slot_division,
+                    iteration_count, unique_team_count, match_count, created_at, updated_at
+                ) VALUES
+                    (601, 303, 'ALL', 'mens_doubles', 250, 5, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (602, 303, 'ALL', 'mixed_doubles', 250, 4, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_team_results (
+                    id, simulation_run_id, slot_country_code, slot_division, team_id,
+                    championship_probability, top_three_probability, average_finish,
+                    win_percentage, created_at, updated_at
+                ) VALUES
+                    (701, 303, 'CA', 'mens_doubles', 9001, 0.42000, 0.78000, 1.850, 0.62000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (702, 303, 'US', 'mixed_doubles', 9002, 0.18000, 0.51000, 3.200, 0.48000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_group_results (
+                    id, simulation_run_id, student_group_id, expected_score,
+                    average_rank, rank_distribution, created_at, updated_at
+                ) VALUES
+                    (801, 303, 401, 31.250, 1.400, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (802, 303, 402, 28.500, 2.100, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -1072,7 +1222,9 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert "Validate and Save Submissions" in body
     assert "Student Group 6" in body
     assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
+    assert 'value="39134"' in body
     assert 'data-tournament-team-id="group_6_US_mixed_doubles"' in body
+    assert 'value="34722"' in body
     assert "serializeTournamentSubmissionForm" in body
     assert "Simulation controls" in body
     assert "Save and validate submissions" in body
@@ -1101,6 +1253,15 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "Run 303" in body
     assert "250 iterations | seed 7" in body
     assert "Monte Carlo completed." in body
+    assert "Tournament summary" in body
+    assert "Championship and Medal Probabilities" in body
+    assert "Team 9001" in body
+    assert "42.0%" in body
+    assert "78.0%" in body
+    assert "Student Leaderboard" in body
+    assert "31.250" in body
+    assert "Duplicate-Team Credit" in body
+    assert "Team 9001 in CA mens doubles credits 2 groups: Group 1, Group 2." in body
 
 
 def test_tournament_monte_carlo_start_queues_background_run(session_factory):

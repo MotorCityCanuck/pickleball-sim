@@ -53,7 +53,7 @@ def replace_monte_carlo_results(
         session.add(
             TournamentDivisionResult(
                 simulation_run_id=simulation_run.id,
-                slot_country_code=division.slot.country_code,
+                slot_country_code="ALL",
                 slot_division=division.slot.division,
                 iteration_count=result.iterations,
                 unique_team_count=unique_team_count,
@@ -89,7 +89,7 @@ def replace_official_results(
         session.add(
             TournamentDivisionResult(
                 simulation_run_id=simulation_run.id,
-                slot_country_code=division_result.slot.country_code,
+                slot_country_code="ALL",
                 slot_division=division_result.slot.division,
                 iteration_count=1,
                 unique_team_count=len(division_result.standings),
@@ -128,7 +128,7 @@ def replace_official_results(
         for match in division_result.matches:
             official_match = TournamentOfficialMatch(
                 simulation_run_id=simulation_run.id,
-                slot_country_code=division_result.slot.country_code,
+                slot_country_code="ALL",
                 slot_division=division_result.slot.division,
                 match_number=match_number,
                 team_one_id=match.team_one_id,

@@ -23,18 +23,19 @@ def round_robin_pairings(
 def build_division_from_submissions(
     *,
     slot: PortfolioSlot,
-    submissions_by_group_id: Mapping[int, int],
+    submitted_group_team_ids: Iterable[tuple[int, int]],
     teams_by_id: Mapping[int, TournamentTeamEntry],
 ) -> TournamentDivision:
     """Collapse duplicate team selections into one entry with group credits."""
     selected_groups_by_team_id: dict[int, list[int]] = defaultdict(list)
-    for group_id, team_id in submissions_by_group_id.items():
+    for group_id, team_id in submitted_group_team_ids:
         selected_groups_by_team_id[team_id].append(group_id)
 
     entries: list[TournamentTeamEntry] = []
     for team_id, group_ids in selected_groups_by_team_id.items():
         team = teams_by_id[team_id]
-        if team.country_code != slot.country_code or team.division != slot.division:
+        country_matches = slot.country_code == "ALL" or team.country_code == slot.country_code
+        if not country_matches or team.division != slot.division:
             raise ValueError(
                 "submitted team does not match portfolio slot "
                 f"{slot.country_code}/{slot.division}: {team_id}"

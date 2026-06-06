@@ -380,7 +380,7 @@ class TournamentDivisionResult(Base, TimestampMixin):
             name="uq_tournament_division_result",
         ),
         CheckConstraint(
-            "slot_country_code IN ('US', 'CA')",
+            "slot_country_code IN ('US', 'CA', 'ALL')",
             name="chk_tournament_division_result_country",
         ),
         CheckConstraint(
@@ -447,7 +447,7 @@ class TournamentOfficialMatch(Base, TimestampMixin):
             name="uq_tournament_official_match_number",
         ),
         CheckConstraint(
-            "slot_country_code IN ('US', 'CA')",
+            "slot_country_code IN ('US', 'CA', 'ALL')",
             name="chk_tournament_official_match_country",
         ),
         CheckConstraint(

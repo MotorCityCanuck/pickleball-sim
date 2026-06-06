@@ -603,7 +603,7 @@ def _scoring_config(config_snapshot: dict[str, Any] | None) -> TournamentScoring
 
 def _team_slots(validation: ValidatedTournamentInput) -> dict[int, tuple[str, str]]:
     return {
-        entry.id: (division.slot.country_code, division.slot.division)
+        entry.id: (entry.country_code, entry.division)
         for division in validation.divisions
         for entry in division.entries
     }

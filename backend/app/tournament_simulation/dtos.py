@@ -44,7 +44,7 @@ class TournamentTeamEntry:
 
 @dataclass(frozen=True)
 class TournamentDivision:
-    """One country/division round-robin field."""
+    """One competitive tournament division field."""
 
     slot: PortfolioSlot
     entries: tuple[TournamentTeamEntry, ...]

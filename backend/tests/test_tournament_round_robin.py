@@ -51,12 +51,12 @@ def test_round_robin_pairings_generate_unique_pairs():
 
 
 def test_build_division_collapses_duplicate_team_submissions_and_preserves_credit():
-    slot = PortfolioSlot(country_code="US", division="mens")
+    slot = PortfolioSlot(country_code="ALL", division="mens")
     teams = {team_id: _team(team_id) for team_id in [10, 20]}
 
     division = build_division_from_submissions(
         slot=slot,
-        submissions_by_group_id={1: 10, 2: 10, 3: 20},
+        submitted_group_team_ids=((1, 10), (2, 10), (3, 20)),
         teams_by_id=teams,
     )
 
@@ -66,13 +66,13 @@ def test_build_division_collapses_duplicate_team_submissions_and_preserves_credi
 
 
 def test_build_division_rejects_team_for_wrong_slot():
-    slot = PortfolioSlot(country_code="CA", division="mens")
+    slot = PortfolioSlot(country_code="ALL", division="mens")
 
     try:
         build_division_from_submissions(
             slot=slot,
-            submissions_by_group_id={1: 10},
-            teams_by_id={10: _team(10, country_code="US")},
+            submitted_group_team_ids=((1, 10),),
+            teams_by_id={10: _team(10, division="womens")},
         )
     except ValueError as exc:
         assert "does not match portfolio slot" in str(exc)
