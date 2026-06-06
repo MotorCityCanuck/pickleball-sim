@@ -36,6 +36,7 @@ def test_tournament_api_routes_are_registered():
         "GET",
         "/control/tournaments/official-matches/{official_match_id}",
     ) in route_map
+    assert ("POST", "/control/tournaments/submissions/validate-field") in route_map
 
 
 def test_tournament_event_payload_helpers_parse_groups_and_submissions():

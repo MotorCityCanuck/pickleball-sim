@@ -22,6 +22,7 @@ from .team_loader import (
     ValidatedTournamentInput,
     latest_completed_source_batch,
     load_validated_tournament_input,
+    validate_tournament_submission,
 )
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "run_monte_carlo",
     "score_student_groups",
     "simulate_division_round_robin",
+    "validate_tournament_submission",
 ]

@@ -149,6 +149,28 @@ def load_validated_tournament_input(
     )
 
 
+def validate_tournament_submission(
+    session: Session,
+    *,
+    submission: TeamSubmission,
+    tournament_date: date,
+    source_batch_id: int | None = None,
+    generation_run_id: int | None = None,
+) -> tuple[SubmissionValidationIssue, ...]:
+    """Validate a single submitted team against tournament rules."""
+    source_batch = _resolve_source_batch(
+        session,
+        source_batch_id=source_batch_id,
+        generation_run_id=generation_run_id,
+    )
+    return _load_team_entry(
+        session,
+        submission=submission,
+        source_batch=source_batch,
+        tournament_date=tournament_date,
+    ).issues
+
+
 def _resolve_source_batch(
     session: Session,
     *,

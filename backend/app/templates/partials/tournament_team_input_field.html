@@ -1,0 +1,24 @@
+<label class="tournament-team-field" style="display:grid; gap:6px;">
+    <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">
+        {{ slot.country_code }} {{ slot.division.replace('_', ' ') }}
+    </span>
+    <input
+        name="team_id"
+        data-tournament-team-id="{{ field_key }}"
+        inputmode="numeric"
+        value="{{ field_value }}"
+        hx-post="/control/tournaments/submissions/validate-field"
+        hx-trigger="change delay:200ms"
+        hx-target="closest .tournament-team-field"
+        hx-swap="outerHTML"
+        hx-sync="closest form:replace"
+        hx-include="#tournament-submission-form [name='tournament_date']"
+        hx-vals='{"group_index": {{ group_index }}, "country_code": "{{ slot.country_code }}", "division": "{{ slot.division }}"}'
+        style="border:1px solid {% if field_issues %}#b42318{% else %}#d6d9df{% endif %}; border-radius:8px; padding:9px 10px; font-size:14px;"
+    >
+    {% if field_issues %}
+        <span style="color:#8f1d18; font-size:12px;">
+            {{ field_issues | map(attribute='message') | join(' ') }}
+        </span>
+    {% endif %}
+</label>

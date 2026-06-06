@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from types import SimpleNamespace
 from typing import Any
 import zipfile
 from decimal import Decimal, InvalidOperation
@@ -45,6 +46,7 @@ from app.tournament_simulation import (
     TournamentService,
     latest_completed_source_batch,
     load_validated_tournament_input,
+    validate_tournament_submission,
 )
 
 from .control_panel_queries import (
@@ -70,56 +72,6 @@ TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="US", division="mixed_doubles"),
 )
 TOURNAMENT_GROUP_COUNT = 6
-TOURNAMENT_DEFAULT_TEAM_IDS: dict[int, dict[tuple[str, str], int]] = {
-    1: {
-        ("CA", "mens_doubles"): 39134,
-        ("CA", "womens_doubles"): 32013,
-        ("CA", "mixed_doubles"): 37055,
-        ("US", "mens_doubles"): 37242,
-        ("US", "womens_doubles"): 34754,
-        ("US", "mixed_doubles"): 29371,
-    },
-    2: {
-        ("CA", "mens_doubles"): 31302,
-        ("CA", "womens_doubles"): 37757,
-        ("CA", "mixed_doubles"): 10964,
-        ("US", "mens_doubles"): 37323,
-        ("US", "womens_doubles"): 38747,
-        ("US", "mixed_doubles"): 37197,
-    },
-    3: {
-        ("CA", "mens_doubles"): 38323,
-        ("CA", "womens_doubles"): 37009,
-        ("CA", "mixed_doubles"): 38840,
-        ("US", "mens_doubles"): 31005,
-        ("US", "womens_doubles"): 27931,
-        ("US", "mixed_doubles"): 37262,
-    },
-    4: {
-        ("CA", "mens_doubles"): 30048,
-        ("CA", "womens_doubles"): 36128,
-        ("CA", "mixed_doubles"): 39104,
-        ("US", "mens_doubles"): 37199,
-        ("US", "womens_doubles"): 38188,
-        ("US", "mixed_doubles"): 31839,
-    },
-    5: {
-        ("CA", "mens_doubles"): 36963,
-        ("CA", "womens_doubles"): 29447,
-        ("CA", "mixed_doubles"): 27182,
-        ("US", "mens_doubles"): 34334,
-        ("US", "womens_doubles"): 38530,
-        ("US", "mixed_doubles"): 32143,
-    },
-    6: {
-        ("CA", "mens_doubles"): 37911,
-        ("CA", "womens_doubles"): 34914,
-        ("CA", "mixed_doubles"): 36550,
-        ("US", "mens_doubles"): 24564,
-        ("US", "womens_doubles"): 38378,
-        ("US", "mixed_doubles"): 34722,
-    },
-}
 
 
 @lru_cache(maxsize=1)
@@ -349,6 +301,88 @@ def build_control_panel_router() -> APIRouter:
             _build_tournament_template_context(session, snapshot=snapshot),
         )
 
+    @router.get("/control/partials/tournament/simulation", response_class=HTMLResponse)
+    def control_panel_tournament_simulation_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        return templates.TemplateResponse(
+            request,
+            "partials/tournament_simulation_panels.html",
+            _build_tournament_template_context(session, snapshot=snapshot),
+        )
+
+    @router.post(
+        "/control/tournaments/submissions/validate-field",
+        response_class=HTMLResponse,
+    )
+    def control_panel_tournament_submission_validate_field(
+        request: Request,
+        team_id: str = Form(""),
+        tournament_date: str = Form(""),
+        group_index: int = Form(...),
+        country_code: str = Form(""),
+        division: str = Form(""),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        slot = PortfolioSlot(
+            country_code=country_code,
+            division=division,
+        )
+        field_value = str(team_id).strip()
+        issues: tuple[object, ...] = ()
+
+        snapshot = queries.get_control_panel_snapshot(session)
+        generation_run_id = (
+            snapshot.generation_run_summary.generation_run_id
+            if snapshot.generation_run_summary is not None
+            else None
+        )
+        source_batch = (
+            latest_completed_source_batch(session, generation_run_id=generation_run_id)
+            if generation_run_id is not None
+            else None
+        )
+
+        if field_value:
+            try:
+                parsed_team_id = int(field_value)
+            except ValueError:
+                issues = (
+                    SimpleNamespace(message="Team ID must be a whole number."),
+                )
+            else:
+                try:
+                    parsed_date = _parse_iso_date(tournament_date)
+                except ValueError:
+                    parsed_date = None
+                if parsed_date is not None and source_batch is not None and generation_run_id is not None:
+                    issues = validate_tournament_submission(
+                        session,
+                        submission=TeamSubmission(
+                            group_id=group_index,
+                            slot=slot,
+                            team_id=parsed_team_id,
+                        ),
+                        tournament_date=parsed_date,
+                        source_batch_id=source_batch.id,
+                        generation_run_id=generation_run_id,
+                    )
+
+        return templates.TemplateResponse(
+            request,
+            "partials/tournament_team_input_field.html",
+            _tournament_team_field_context(
+                group_index=group_index,
+                slot=slot,
+                field_value=field_value,
+                field_issues=issues,
+            ),
+        )
+
     @router.post("/control/tournaments/submissions/save", response_class=HTMLResponse)
     def control_panel_tournament_submissions_save(
         request: Request,
@@ -487,7 +521,7 @@ def build_control_panel_router() -> APIRouter:
             )
             return templates.TemplateResponse(
                 request,
-                "partials/control_tournament_tab.html",
+                "partials/tournament_simulation_panels.html",
                 refreshed_context,
             )
         except Exception as exc:
@@ -495,7 +529,7 @@ def build_control_panel_router() -> APIRouter:
             context["tournament_monte_carlo_error"] = str(exc)
             return templates.TemplateResponse(
                 request,
-                "partials/control_tournament_tab.html",
+                "partials/tournament_simulation_panels.html",
                 context,
             )
 
@@ -1809,14 +1843,16 @@ def _build_tournament_template_context(
         if generation_run_id is not None
         else None
     )
-    resolved_form_state = form_state or _default_tournament_form_state(
-        snapshot,
-        source_batch=source_batch,
-    )
     event_summary = _latest_tournament_event_summary(
         session,
         generation_run_id=generation_run_id,
         source_batch_id=getattr(source_batch, "id", None),
+    )
+    resolved_form_state = form_state or _latest_tournament_form_state(
+        session,
+        snapshot=snapshot,
+        source_batch=source_batch,
+        event_id=event_summary["event_id"] if event_summary else None,
     )
     results_summary = (
         _tournament_results_summary(session, event_id=event_summary["event_id"])
@@ -1863,18 +1899,71 @@ def _default_tournament_form_state(
             str(group_index): f"Group {group_index}"
             for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
         },
-        "team_ids": _default_tournament_team_ids(),
+        "team_ids": {},
     }
 
 
-def _default_tournament_team_ids() -> dict[str, str]:
-    return {
+def _latest_tournament_form_state(
+    session: Session,
+    *,
+    snapshot: ControlPanelSnapshot,
+    source_batch: object | None,
+    event_id: int | None,
+) -> dict[str, Any]:
+    default_state = _default_tournament_form_state(
+        snapshot,
+        source_batch=source_batch,
+    )
+    if event_id is None:
+        return default_state
+
+    event = session.get(TournamentEvent, event_id)
+    if event is None:
+        return default_state
+
+    group_rows = session.execute(
+        select(TournamentStudentGroup)
+        .where(TournamentStudentGroup.event_id == event_id)
+        .order_by(TournamentStudentGroup.id)
+    ).scalars().all()
+    group_names = {
+        str(int(group.external_group_key or group.id)): group.group_name
+        for group in group_rows
+    }
+    group_input_ids_by_student_group_id = {
+        int(group.id): int(group.external_group_key or group.id)
+        for group in group_rows
+    }
+    submission_rows = session.execute(
+        select(TournamentSubmission)
+        .where(TournamentSubmission.event_id == event_id)
+        .order_by(TournamentSubmission.id)
+    ).scalars()
+    team_ids = {
         _tournament_team_field_key(
-            group_index,
-            PortfolioSlot(country_code=country_code, division=division),
-        ): str(team_id)
-        for group_index, group_slots in TOURNAMENT_DEFAULT_TEAM_IDS.items()
-        for (country_code, division), team_id in group_slots.items()
+            group_input_id,
+            PortfolioSlot(
+                country_code=submission.slot_country_code,
+                division=submission.slot_division,
+            ),
+        ): str(submission.team_id)
+        for submission in submission_rows
+        if (
+            group_input_id := group_input_ids_by_student_group_id.get(
+                int(submission.student_group_id)
+            )
+        )
+        is not None
+    }
+
+    return {
+        "event_name": event.event_name,
+        "tournament_date": event.tournament_date.isoformat(),
+        "group_names": {
+            **default_state["group_names"],
+            **group_names,
+        },
+        "team_ids": team_ids,
     }
 
 
@@ -1954,6 +2043,22 @@ def _tournament_issue_map(issues: tuple[object, ...]) -> dict[str, tuple[object,
         )
         mapped.setdefault(key, []).append(issue)
     return {key: tuple(value) for key, value in mapped.items()}
+
+
+def _tournament_team_field_context(
+    *,
+    group_index: int,
+    slot: PortfolioSlot,
+    field_value: str,
+    field_issues: tuple[object, ...],
+) -> dict[str, Any]:
+    return {
+        "group_index": group_index,
+        "slot": slot,
+        "field_key": _tournament_team_field_key(group_index, slot),
+        "field_value": field_value,
+        "field_issues": field_issues,
+    }
 
 
 def _tournament_team_field_key(group_index: int, slot: PortfolioSlot) -> str:

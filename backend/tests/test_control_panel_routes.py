@@ -1045,6 +1045,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config/export" in routes
     assert "/control/partials/config/tournament" in routes
     assert "/control/partials/tournament" in routes
+    assert "/control/partials/tournament/simulation" in routes
     assert "/control/tournaments/submissions/save" in routes
     assert "/control/tournaments/monte-carlo/start" in routes
     assert "/control/partials/overall-progress" in routes
@@ -1239,9 +1240,10 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert "Validate and Save Submissions" in body
     assert "Student Group 6" in body
     assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
-    assert 'value="39134"' in body
+    assert 'hx-sync="closest form:replace"' in body
     assert 'data-tournament-team-id="group_6_US_mixed_doubles"' in body
-    assert 'value="34722"' in body
+    assert 'value="39134"' not in body
+    assert 'value="34722"' not in body
     assert "serializeTournamentSubmissionForm" in body
     assert "Simulation controls" in body
     assert "Save and validate submissions" in body
@@ -1270,6 +1272,9 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "Run 303" in body
     assert "250 iterations | seed 7" in body
     assert "Monte Carlo completed." in body
+    assert 'value="9001"' in body
+    assert 'value="9002"' in body
+    assert 'value="39134"' not in body
     assert "Tournament summary" in body
     assert "Championship and Medal Probabilities" in body
     assert "Team 9001" in body
@@ -1284,6 +1289,72 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "31.250" in body
     assert "Duplicate-Team Credit" in body
     assert "Team 9001 in CA mens doubles credits 2 groups: Group 1, Group 2." in body
+
+
+def test_tournament_team_field_validation_shows_error_for_invalid_team_id(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/validate-field"](
+            request=_request(
+                "/control/tournaments/submissions/validate-field",
+                method="POST",
+            ),
+            team_id="not-a-number",
+            tournament_date="2026-02-01",
+            group_index=1,
+            country_code="CA",
+            division="mens_doubles",
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
+    assert 'value="not-a-number"' in body
+    assert "Team ID must be a whole number." in body
+    assert "#b42318" in body
+
+
+def test_tournament_team_field_validation_is_silent_for_valid_team(session_factory, monkeypatch):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+
+    def _fake_validation(*args, **kwargs):
+        return ()
+
+    monkeypatch.setattr(routes_module, "validate_tournament_submission", _fake_validation)
+
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/validate-field"](
+            request=_request(
+                "/control/tournaments/submissions/validate-field",
+                method="POST",
+            ),
+            team_id="39134",
+            tournament_date="2026-02-01",
+            group_index=1,
+            country_code="CA",
+            division="mens_doubles",
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
+    assert 'value="39134"' in body
+    assert "Team ID must be a whole number." not in body
+    assert "#b42318" not in body
 
 
 def test_tournament_monte_carlo_start_queues_background_run(session_factory):
@@ -1309,6 +1380,8 @@ def test_tournament_monte_carlo_start_queues_background_run(session_factory):
 
     body = response.body.decode()
     assert response.status_code == 200
+    assert 'id="tournament-simulation-panels"' in body
+    assert 'id="tournament-submission-form"' not in body
     assert "Monte Carlo run 888 queued." in body
     assert fake_service.registered_event_id == 301
     assert fake_service.registered_iterations == 500
