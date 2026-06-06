@@ -3,7 +3,7 @@
         {{ slot.country_code }} {{ slot.division.replace('_', ' ') }}
     </span>
     <input
-        name="team_id"
+        name="{{ field_key }}"
         data-tournament-team-id="{{ field_key }}"
         inputmode="numeric"
         value="{{ field_value }}"
@@ -12,8 +12,9 @@
         hx-target="closest .tournament-team-field"
         hx-swap="outerHTML"
         hx-sync="closest form:replace"
-        hx-include="#tournament-submission-form [name='tournament_date']"
-        hx-vals='{"group_index": {{ group_index }}, "country_code": "{{ slot.country_code }}", "division": "{{ slot.division }}"}'
+        hx-include="closest .tournament-team-field, #tournament-submission-form [name='tournament_date']"
+        hx-params="{{ field_key }},tournament_date,field_key,group_index,country_code,division"
+        hx-vals='{"field_key": "{{ field_key }}", "group_index": {{ group_index }}, "country_code": "{{ slot.country_code }}", "division": "{{ slot.division }}"}'
         style="border:1px solid {% if field_issues %}#b42318{% else %}#d6d9df{% endif %}; border-radius:8px; padding:9px 10px; font-size:14px;"
     >
     {% if field_issues %}

@@ -1,4 +1,5 @@
 {% set monte_carlo_event_id = saved_tournament_event_id or (tournament_event_summary.event_id if tournament_event_summary else None) %}
+{% set monte_carlo_locked = tournament_submission_dirty and monte_carlo_event_id %}
 <div id="tournament-simulation-panels" style="display:grid; gap:16px;">
     {% if tournament_monte_carlo_message %}
         <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
@@ -11,8 +12,15 @@
         </div>
     {% endif %}
     <section
-        class="panel-section {% if monte_carlo_event_id %}state-card-ready{% else %}state-card-blocked{% endif %}"
-        style="display:grid; gap:14px;"
+        id="tournament-monte-carlo-panel"
+        class="panel-section {% if monte_carlo_event_id and not monte_carlo_locked %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-tournament-locked="{{ 'true' if monte_carlo_locked else 'false' }}"
+        style="
+            display:grid;
+            gap:14px;
+            border:1px solid {{ '#f1b2ad' if monte_carlo_locked else 'transparent' }};
+            background:{{ '#fef3f2' if monte_carlo_locked else 'transparent' }};
+        "
         {% if tournament_event_summary and tournament_event_summary.latest_monte_carlo_run and tournament_event_summary.latest_monte_carlo_run.status in ('pending', 'running') %}
             hx-get="/control/partials/tournament/simulation"
             hx-trigger="every 2s"
@@ -31,11 +39,23 @@
                 {% endif %}
             </div>
             {% if tournament_event_summary %}
-                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
-                    Event {{ tournament_event_summary.event_id }} {{ tournament_event_summary.event_status }}
-                </div>
+                {% if monte_carlo_locked %}
+                    <div
+                        id="tournament-monte-carlo-badge"
+                        style="border:1px solid #f1b2ad; border-radius:999px; padding:6px 10px; font-size:12px; color:#8f1d18; background:#fef3f2;"
+                    >
+                        Revalidate submissions
+                    </div>
+                {% else %}
+                    <div
+                        id="tournament-monte-carlo-badge"
+                        style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;"
+                    >
+                        Event {{ tournament_event_summary.event_id }} {{ tournament_event_summary.event_status }}
+                    </div>
+                {% endif %}
             {% else %}
-                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                <div id="tournament-monte-carlo-badge" style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
                     Save event first
                 </div>
             {% endif %}
@@ -43,6 +63,7 @@
 
         {% if monte_carlo_event_id %}
             <form
+                id="tournament-monte-carlo-form"
                 hx-post="/control/tournaments/monte-carlo/start"
                 hx-target="#tournament-simulation-panels"
                 hx-swap="outerHTML"
@@ -52,31 +73,51 @@
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Iterations</span>
                     <input
+                        data-tournament-monte-carlo-control="true"
                         name="iterations"
                         type="number"
                         min="1"
                         value="{{ tournament_monte_carlo_state.iterations }}"
+                        {% if monte_carlo_locked %}disabled{% endif %}
                         style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
                     >
                 </label>
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Seed</span>
                     <input
+                        data-tournament-monte-carlo-control="true"
                         name="seed"
                         type="number"
                         value="{{ tournament_monte_carlo_state.seed }}"
+                        {% if monte_carlo_locked %}disabled{% endif %}
                         style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
                     >
                 </label>
                 <button
+                    id="tournament-monte-carlo-button"
+                    data-tournament-monte-carlo-control="true"
                     type="submit"
-                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                    {% if monte_carlo_locked %}disabled{% endif %}
+                    style="
+                        border:1px solid {{ '#f1b2ad' if monte_carlo_locked else '#1857c2' }};
+                        background:{{ '#f6d3d1' if monte_carlo_locked else '#1857c2' }};
+                        color:{{ '#8f1d18' if monte_carlo_locked else 'white' }};
+                        border-radius:8px;
+                        padding:10px 14px;
+                        cursor:{{ 'not-allowed' if monte_carlo_locked else 'pointer' }};
+                        opacity:{{ '0.75' if monte_carlo_locked else '1' }};
+                    "
                 >
                     Start Monte Carlo
                 </button>
             </form>
+            {% if monte_carlo_locked %}
+                <div id="tournament-monte-carlo-lock-message" style="color:#8f1d18;">
+                    Validate and save the updated team submissions before starting Monte Carlo simulation.
+                </div>
+            {% endif %}
         {% else %}
-            <div style="color:#5a6477;">
+            <div id="tournament-monte-carlo-lock-message" style="color:#5a6477;">
                 Save and validate submissions to create a tournament event before starting Monte Carlo simulation.
             </div>
         {% endif %}

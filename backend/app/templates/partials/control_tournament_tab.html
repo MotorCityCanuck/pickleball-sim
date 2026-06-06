@@ -81,6 +81,12 @@
             style="display:grid; gap:16px;"
         >
             <input type="hidden" name="tournament_payload_json" value="">
+            <div
+                id="tournament-save-status"
+                style="display:none; border:1px solid #9eb7e5; background:#eef4ff; color:#1849a9; border-radius:8px; padding:10px 12px;"
+            >
+                Validation in progress.
+            </div>
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
                 <label style="display:grid; gap:6px;">
                     <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Event Name</span>
@@ -105,7 +111,18 @@
                 </div>
             </div>
 
-            <div style="display:grid; gap:14px;">
+            <div
+                id="tournament-team-grid-shell"
+                data-tournament-dirty="{{ 'true' if tournament_submission_dirty else 'false' }}"
+                style="
+                    display:grid;
+                    gap:14px;
+                    border:1px solid {{ '#f1b2ad' if tournament_submission_dirty else 'transparent' }};
+                    background:{{ '#fef3f2' if tournament_submission_dirty else 'transparent' }};
+                    border-radius:8px;
+                    padding:12px;
+                "
+            >
                 {% for group_index in tournament_group_indexes %}
                     <section class="info-card state-card-ready" style="display:grid; gap:12px;">
                         <label style="display:grid; gap:6px; max-width:360px;">
@@ -116,7 +133,7 @@
                                 style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
                             >
                         </label>
-                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
                             {% for slot in tournament_slots %}
                                 {% set field_key = 'group_' ~ group_index ~ '_' ~ slot.country_code ~ '_' ~ slot.division %}
                                 {% set field_value = tournament_form_state.team_ids.get(field_key, '') %}
@@ -130,6 +147,7 @@
 
             <div style="display:flex; justify-content:flex-end;">
                 <button
+                    id="tournament-save-button"
                     type="submit"
                     style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; cursor:pointer;"
                 >
@@ -156,6 +174,126 @@
                 });
                 return true;
             };
+
+            (function initializeTournamentSubmissionForm() {
+                const form = document.getElementById("tournament-submission-form");
+                if (!form || form.dataset.tournamentUiBound === "true") {
+                    return;
+                }
+                form.dataset.tournamentUiBound = "true";
+
+                const dirtyShell = document.getElementById("tournament-team-grid-shell");
+                const saveStatus = document.getElementById("tournament-save-status");
+                const saveButton = document.getElementById("tournament-save-button");
+                const defaultButtonLabel = saveButton ? saveButton.textContent : "";
+
+                function setDirtyState(isDirty) {
+                    if (!dirtyShell) {
+                        return;
+                    }
+                    dirtyShell.dataset.tournamentDirty = isDirty ? "true" : "false";
+                    dirtyShell.style.borderColor = isDirty ? "#f1b2ad" : "transparent";
+                    dirtyShell.style.background = isDirty ? "#fef3f2" : "transparent";
+                    setSimulationLockState(isDirty);
+                }
+
+                function setSimulationLockState(isLocked) {
+                    const simulationPanel = document.getElementById("tournament-monte-carlo-panel");
+                    const simulationBadge = document.getElementById("tournament-monte-carlo-badge");
+                    const simulationControls = document.querySelectorAll("[data-tournament-monte-carlo-control='true']");
+                    const simulationMessage = document.getElementById("tournament-monte-carlo-lock-message");
+                    if (!simulationPanel || !simulationBadge || simulationControls.length === 0) {
+                        return;
+                    }
+                    simulationPanel.dataset.tournamentLocked = isLocked ? "true" : "false";
+                    simulationPanel.style.borderColor = isLocked ? "#f1b2ad" : "transparent";
+                    simulationPanel.style.background = isLocked ? "#fef3f2" : "transparent";
+                    simulationBadge.textContent = isLocked
+                        ? "Revalidate submissions"
+                        : simulationBadge.dataset.tournamentEventLabel || simulationBadge.textContent;
+                    simulationBadge.style.borderColor = isLocked ? "#f1b2ad" : "#b7dfc2";
+                    simulationBadge.style.background = isLocked ? "#fef3f2" : "#edf8f0";
+                    simulationBadge.style.color = isLocked ? "#8f1d18" : "#1f5f30";
+                    simulationControls.forEach((control) => {
+                        control.disabled = isLocked;
+                        if (control instanceof HTMLButtonElement) {
+                            control.style.borderColor = isLocked ? "#f1b2ad" : "#1857c2";
+                            control.style.background = isLocked ? "#f6d3d1" : "#1857c2";
+                            control.style.color = isLocked ? "#8f1d18" : "white";
+                            control.style.cursor = isLocked ? "not-allowed" : "pointer";
+                            control.style.opacity = isLocked ? "0.75" : "1";
+                        }
+                    });
+                    if (simulationMessage) {
+                        simulationMessage.style.display = isLocked ? "block" : "none";
+                    }
+                }
+
+                function markDirtyFromInput(event) {
+                    const target = event.target;
+                    if (!(target instanceof HTMLElement)) {
+                        return;
+                    }
+                    if (!target.closest("[data-tournament-team-id]")) {
+                        return;
+                    }
+                    setDirtyState(true);
+                }
+
+                function showSaveProgress() {
+                    if (saveStatus) {
+                        saveStatus.textContent = "Validation in progress.";
+                        saveStatus.style.display = "block";
+                    }
+                    if (saveButton) {
+                        saveButton.textContent = "Validation in progress...";
+                        saveButton.disabled = true;
+                        saveButton.style.opacity = "0.7";
+                        saveButton.style.cursor = "wait";
+                    }
+                }
+
+                form.addEventListener("input", markDirtyFromInput);
+                form.addEventListener("change", markDirtyFromInput);
+                const initialSimulationBadge = document.getElementById("tournament-monte-carlo-badge");
+                if (initialSimulationBadge && !initialSimulationBadge.dataset.tournamentEventLabel) {
+                    initialSimulationBadge.dataset.tournamentEventLabel = initialSimulationBadge.textContent;
+                }
+                form.addEventListener("htmx:beforeRequest", (event) => {
+                    if (event.target !== form) {
+                        return;
+                    }
+                    showSaveProgress();
+                });
+                form.addEventListener("htmx:responseError", (event) => {
+                    if (event.target !== form) {
+                        return;
+                    }
+                    if (saveStatus) {
+                        saveStatus.style.display = "none";
+                    }
+                    if (saveButton) {
+                        saveButton.textContent = defaultButtonLabel;
+                        saveButton.disabled = false;
+                        saveButton.style.opacity = "1";
+                        saveButton.style.cursor = "pointer";
+                    }
+                });
+                document.body.addEventListener("htmx:afterSwap", (event) => {
+                    if (!(event.target instanceof HTMLElement)) {
+                        return;
+                    }
+                    if (event.target.id !== "tournament-simulation-panels") {
+                        return;
+                    }
+                    const refreshedBadge = document.getElementById("tournament-monte-carlo-badge");
+                    if (refreshedBadge && !refreshedBadge.dataset.tournamentEventLabel) {
+                        refreshedBadge.dataset.tournamentEventLabel = refreshedBadge.textContent;
+                    }
+                    setSimulationLockState(dirtyShell?.dataset.tournamentDirty === "true");
+                });
+                setSimulationLockState(dirtyShell?.dataset.tournamentDirty === "true");
+            })();
         </script>
     {% else %}
         <div class="info-card state-card-blocked">

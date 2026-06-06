@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from datetime import timedelta
 import logging
 import json
 from pathlib import Path
@@ -318,9 +319,10 @@ def build_control_panel_router() -> APIRouter:
         "/control/tournaments/submissions/validate-field",
         response_class=HTMLResponse,
     )
-    def control_panel_tournament_submission_validate_field(
+    async def control_panel_tournament_submission_validate_field(
         request: Request,
         team_id: str = Form(""),
+        field_key: str = Form(""),
         tournament_date: str = Form(""),
         group_index: int = Form(...),
         country_code: str = Form(""),
@@ -333,6 +335,9 @@ def build_control_panel_router() -> APIRouter:
             division=division,
         )
         field_value = str(team_id).strip()
+        if not field_value and field_key:
+            form_data = await request.form()
+            field_value = str(form_data.get(field_key) or "").strip()
         issues: tuple[object, ...] = ()
 
         snapshot = queries.get_control_panel_snapshot(session)
@@ -405,6 +410,7 @@ def build_control_panel_router() -> APIRouter:
         )
         source_batch = context["tournament_source_batch"]
         if source_batch is None or snapshot.generation_run_summary is None:
+            context["tournament_submission_dirty"] = True
             context["tournament_save_error"] = (
                 "A completed generation run is required before saving tournament submissions."
             )
@@ -429,6 +435,7 @@ def build_control_panel_router() -> APIRouter:
             if not validation.is_valid:
                 context["tournament_validation_issues"] = validation.issues
                 context["tournament_issue_map"] = _tournament_issue_map(validation.issues)
+                context["tournament_submission_dirty"] = True
                 context["tournament_save_error"] = (
                     "Fix the highlighted team submissions before saving this tournament event."
                 )
@@ -459,7 +466,7 @@ def build_control_panel_router() -> APIRouter:
                 form_state=context["tournament_form_state"],
             )
             refreshed_context["tournament_save_message"] = (
-                f"Tournament event {creation.event.id} saved and validated."
+                f"Validation complete. Tournament event {creation.event.id} saved."
             )
             refreshed_context["saved_tournament_event_id"] = creation.event.id
             return templates.TemplateResponse(
@@ -469,6 +476,7 @@ def build_control_panel_router() -> APIRouter:
             )
         except Exception as exc:
             session.rollback()
+            context["tournament_submission_dirty"] = True
             context["tournament_save_error"] = str(exc)
             return templates.TemplateResponse(
                 request,
@@ -1879,6 +1887,7 @@ def _build_tournament_template_context(
         "tournament_monte_carlo_message": None,
         "tournament_monte_carlo_error": None,
         "saved_tournament_event_id": None,
+        "tournament_submission_dirty": False,
     }
 
 
@@ -2065,6 +2074,19 @@ def _tournament_team_field_key(group_index: int, slot: PortfolioSlot) -> str:
     return f"group_{group_index}_{slot.country_code}_{slot.division}"
 
 
+def _format_elapsed_duration(duration: timedelta | None) -> str | None:
+    if duration is None:
+        return None
+    total_seconds = max(int(duration.total_seconds()), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes > 0:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 def _latest_tournament_event_summary(
     session: Session,
     *,
@@ -2098,6 +2120,19 @@ def _latest_tournament_event_summary(
     run_summary = None
     if latest_run is not None:
         simulation_run, job_status = latest_run
+        current_message = job_status.current_message if job_status is not None else None
+        if (
+            job_status is not None
+            and job_status.status == "succeeded"
+            and job_status.started_at is not None
+            and job_status.completed_at is not None
+        ):
+            elapsed = _format_elapsed_duration(
+                job_status.completed_at - job_status.started_at
+            )
+            if elapsed:
+                base_message = current_message or "Tournament simulation completed."
+                current_message = f"{base_message} Elapsed time: {elapsed}."
         run_summary = {
             "simulation_run_id": simulation_run.id,
             "status": simulation_run.status,
@@ -2105,9 +2140,7 @@ def _latest_tournament_event_summary(
             "job_status": job_status.status if job_status is not None else None,
             "current_phase": job_status.current_phase if job_status is not None else None,
             "percent_complete": job_status.percent_complete if job_status is not None else None,
-            "current_message": (
-                job_status.current_message if job_status is not None else None
-            ),
+            "current_message": current_message,
             "iteration_count": simulation_run.iteration_count,
             "seed": simulation_run.seed,
             "error_message": simulation_run.error_message,

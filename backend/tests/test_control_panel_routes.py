@@ -2,6 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+import asyncio
 import json
 import re
 import sys
@@ -582,11 +583,12 @@ def _seed_tournament_event_state(session_factory):
                 """
                 INSERT INTO job_status (
                     id, job_type, job_id, status, current_phase, percent_complete,
-                    current_message, created_at, updated_at
+                    current_message, started_at, completed_at, created_at, updated_at
                 ) VALUES (
                     302, 'tournament_monte_carlo', 'tournament-mc-302',
                     'succeeded', 'completed', 100.00,
-                    'Monte Carlo completed.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    'Monte Carlo completed.', '2026-02-01 09:00:00', '2026-02-01 09:03:15',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -1240,6 +1242,12 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert "Validate and Save Submissions" in body
     assert "Student Group 6" in body
     assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
+    assert 'id="tournament-save-status"' in body
+    assert 'id="tournament-team-grid-shell"' in body
+    assert 'data-tournament-dirty="false"' in body
+    assert 'name="group_1_CA_mens_doubles"' in body
+    assert 'hx-include="closest .tournament-team-field, #tournament-submission-form [name=' in body
+    assert "field_key,group_index,country_code,division" in body
     assert 'hx-sync="closest form:replace"' in body
     assert 'data-tournament-team-id="group_6_US_mixed_doubles"' in body
     assert 'value="39134"' not in body
@@ -1247,6 +1255,8 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert "serializeTournamentSubmissionForm" in body
     assert "Simulation controls" in body
     assert "Save and validate submissions" in body
+    assert 'id="tournament-monte-carlo-panel"' in body
+    assert 'data-tournament-locked="false"' in body
 
 
 def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session_factory):
@@ -1267,11 +1277,12 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert response.status_code == 200
     assert "Saved Class Tournament" in body
     assert "Start Monte Carlo" in body
+    assert 'id="tournament-monte-carlo-button"' in body
     assert 'hx-post="/control/tournaments/monte-carlo/start"' in body
     assert 'name="event_id" value="301"' in body
     assert "Run 303" in body
     assert "250 iterations | seed 7" in body
-    assert "Monte Carlo completed." in body
+    assert "Monte Carlo completed. Elapsed time: 3m 15s." in body
     assert 'value="9001"' in body
     assert 'value="9002"' in body
     assert 'value="39134"' not in body
@@ -1297,18 +1308,20 @@ def test_tournament_team_field_validation_shows_error_for_invalid_team_id(sessio
     routes = _route_map(app)
     session = session_factory()
     try:
-        response = routes["/control/tournaments/submissions/validate-field"](
-            request=_request(
-                "/control/tournaments/submissions/validate-field",
-                method="POST",
-            ),
-            team_id="not-a-number",
-            tournament_date="2026-02-01",
-            group_index=1,
-            country_code="CA",
-            division="mens_doubles",
-            session=session,
-            queries=ControlPanelQueries(),
+        response = asyncio.run(
+            routes["/control/tournaments/submissions/validate-field"](
+                request=_request(
+                    "/control/tournaments/submissions/validate-field",
+                    method="POST",
+                ),
+                team_id="not-a-number",
+                tournament_date="2026-02-01",
+                group_index=1,
+                country_code="CA",
+                division="mens_doubles",
+                session=session,
+                queries=ControlPanelQueries(),
+            )
         )
     finally:
         session.close()
@@ -1333,18 +1346,20 @@ def test_tournament_team_field_validation_is_silent_for_valid_team(session_facto
 
     session = session_factory()
     try:
-        response = routes["/control/tournaments/submissions/validate-field"](
-            request=_request(
-                "/control/tournaments/submissions/validate-field",
-                method="POST",
-            ),
-            team_id="39134",
-            tournament_date="2026-02-01",
-            group_index=1,
-            country_code="CA",
-            division="mens_doubles",
-            session=session,
-            queries=ControlPanelQueries(),
+        response = asyncio.run(
+            routes["/control/tournaments/submissions/validate-field"](
+                request=_request(
+                    "/control/tournaments/submissions/validate-field",
+                    method="POST",
+                ),
+                team_id="39134",
+                tournament_date="2026-02-01",
+                group_index=1,
+                country_code="CA",
+                division="mens_doubles",
+                session=session,
+                queries=ControlPanelQueries(),
+            )
         )
     finally:
         session.close()
@@ -1432,6 +1447,7 @@ def test_tournament_submission_save_renders_field_errors(session_factory, monkey
     assert response.status_code == 200
     assert "Fix the highlighted team submissions" in body
     assert "Team 999 does not exist." in body
+    assert 'data-tournament-dirty="true"' in body
 
 
 def test_tournament_submission_save_persists_valid_event(session_factory, monkeypatch):
@@ -1462,7 +1478,8 @@ def test_tournament_submission_save_persists_valid_event(session_factory, monkey
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Tournament event 777 saved and validated." in body
+    assert "Validation complete. Tournament event 777 saved." in body
+    assert 'data-tournament-dirty="false"' in body
     assert fake_service.created_event_name == "Class Tournament"
     assert fake_service.submission_count == 36
 
