@@ -14,7 +14,7 @@ from typing import Any
 import zipfile
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Body, Depends, Form, Request
+from fastapi import APIRouter, Body, Depends, Form, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 from fastapi.templating import Jinja2Templates
@@ -305,6 +305,7 @@ def build_control_panel_router() -> APIRouter:
     @router.get("/control/partials/tournament/simulation", response_class=HTMLResponse)
     def control_panel_tournament_simulation_partial(
         request: Request,
+        event_id: int | None = Query(None),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
     ) -> HTMLResponse:
@@ -312,7 +313,11 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "partials/tournament_simulation_panels.html",
-            _build_tournament_template_context(session, snapshot=snapshot),
+            _build_tournament_template_context(
+                session,
+                snapshot=snapshot,
+                event_id=event_id,
+            ),
         )
 
     @router.post(
@@ -464,6 +469,7 @@ def build_control_panel_router() -> APIRouter:
                 session,
                 snapshot=refreshed_snapshot,
                 form_state=context["tournament_form_state"],
+                event_id=creation.event.id,
             )
             refreshed_context["tournament_save_message"] = (
                 f"Validation complete. Tournament event {creation.event.id} saved."
@@ -496,7 +502,11 @@ def build_control_panel_router() -> APIRouter:
         background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         snapshot = queries.get_control_panel_snapshot(session)
-        context = _build_tournament_template_context(session, snapshot=snapshot)
+        context = _build_tournament_template_context(
+            session,
+            snapshot=snapshot,
+            event_id=event_id,
+        )
         context["tournament_monte_carlo_state"] = {
             "event_id": event_id,
             "iterations": iterations,
@@ -518,6 +528,7 @@ def build_control_panel_router() -> APIRouter:
             refreshed_context = _build_tournament_template_context(
                 session,
                 snapshot=refreshed_snapshot,
+                event_id=event_id,
             )
             refreshed_context["tournament_monte_carlo_state"] = {
                 "event_id": event_id,
@@ -1840,6 +1851,7 @@ def _build_tournament_template_context(
     *,
     snapshot: ControlPanelSnapshot,
     form_state: dict[str, Any] | None = None,
+    event_id: int | None = None,
 ) -> dict[str, Any]:
     generation_run_id = (
         snapshot.generation_run_summary.generation_run_id
@@ -1855,6 +1867,7 @@ def _build_tournament_template_context(
         session,
         generation_run_id=generation_run_id,
         source_batch_id=getattr(source_batch, "id", None),
+        event_id=event_id,
     )
     resolved_form_state = form_state or _latest_tournament_form_state(
         session,
@@ -2092,18 +2105,30 @@ def _latest_tournament_event_summary(
     *,
     generation_run_id: int | None,
     source_batch_id: int | None,
+    event_id: int | None = None,
 ) -> dict[str, Any] | None:
     if generation_run_id is None or source_batch_id is None:
         return None
-    event = session.execute(
-        select(TournamentEvent)
-        .where(
-            TournamentEvent.generation_run_id == generation_run_id,
-            TournamentEvent.source_batch_id == source_batch_id,
-        )
-        .order_by(TournamentEvent.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    if event_id is not None:
+        event = session.get(TournamentEvent, event_id)
+        if (
+            event is not None
+            and (
+                event.generation_run_id != generation_run_id
+                or event.source_batch_id != source_batch_id
+            )
+        ):
+            event = None
+    else:
+        event = session.execute(
+            select(TournamentEvent)
+            .where(
+                TournamentEvent.generation_run_id == generation_run_id,
+                TournamentEvent.source_batch_id == source_batch_id,
+            )
+            .order_by(TournamentEvent.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
     if event is None:
         return None
 
@@ -2233,6 +2258,12 @@ def _tournament_results_summary(
         )
         for rank, row in enumerate(division_rows, start=1):
             row["probability_rank"] = rank
+    team_results.sort(
+        key=lambda row: (
+            str(row["slot_division"]),
+            int(row["probability_rank"] or 999),
+        )
+    )
 
     division_results = sorted(
         summary["division_results"],

@@ -23,7 +23,7 @@
             background:{{ '#fef3f2' if monte_carlo_locked else 'transparent' }};
         "
         {% if tournament_event_summary and tournament_event_summary.latest_monte_carlo_run and tournament_event_summary.latest_monte_carlo_run.status in ('pending', 'running') %}
-            hx-get="/control/partials/tournament/simulation"
+            hx-get="/control/partials/tournament/simulation?event_id={{ monte_carlo_event_id }}"
             hx-trigger="every 2s"
             hx-target="#tournament-simulation-panels"
             hx-swap="outerHTML"

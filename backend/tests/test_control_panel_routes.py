@@ -1291,6 +1291,7 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "Team 9001" in body
     assert "Student Group" in body
     assert "Group 1, Group 2" in body
+    assert body.index("Team 9001") < body.index("Team 9002")
     assert "42.0%" in body
     assert "78.0%" in body
     assert "#fff6d6" in body
@@ -1305,6 +1306,53 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "Aggregate score 31.250 | Avg rank 1.400" in body
     assert "Duplicate-Team Credit" in body
     assert "Team 9001 in CA mens doubles credits 2 groups: Group 1, Group 2." in body
+
+
+def test_tournament_running_monte_carlo_polling_is_pinned_to_event(session_factory):
+    _seed_tournament_event_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, created_at, updated_at
+                ) VALUES (
+                    309, 'tournament_monte_carlo', 'tournament-mc-309',
+                    'running', 'simulating', 50.00,
+                    'Tournament simulation running.', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO tournament_simulation_runs (
+                    id, event_id, run_type, status, seed, iteration_count,
+                    config_snapshot, job_status_id, created_at, updated_at
+                ) VALUES (
+                    309, 301, 'monte_carlo', 'running', 8, 500,
+                    '{}', 309, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/partials/tournament"](
+            request=_request("/control/partials/tournament"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'hx-get="/control/partials/tournament/simulation?event_id=301"' in body
 
 
 def test_tournament_team_field_validation_shows_error_for_invalid_team_id(session_factory):
