@@ -29,6 +29,12 @@ from app.tournament_simulation import (  # noqa: E402
     TeamSubmission,
     TournamentService,
 )
+from app.tournament_simulation.monte_carlo import (  # noqa: E402
+    MonteCarloGroupAggregate,
+    MonteCarloResult,
+    MonteCarloTeamAggregate,
+)
+import app.tournament_simulation.service as service_module  # noqa: E402
 from test_tournament_team_loader import _schema_ddls, _seed_valid_team  # noqa: E402
 
 
@@ -128,6 +134,82 @@ def test_register_run_creates_pending_job_for_background_execution(session):
     assert start.job_status.status == "pending"
     assert session.get(TournamentSimulationRun, start.simulation_run.id) is not None
     assert session.get(JobStatus, start.job_status.id) is not None
+
+
+def test_execute_run_commits_intermediate_monte_carlo_progress(session, session_factory, monkeypatch):
+    _seed_two_valid_teams(session)
+    service = TournamentService()
+    creation = _create_event(service, session)
+    start = service.register_monte_carlo_run(
+        event_id=creation.event.id,
+        iterations=10,
+        seed=7,
+        session=session,
+    )
+    session.commit()
+
+    observed_progress: list[tuple[str, str | None]] = []
+
+    def fake_run_monte_carlo(
+        divisions,
+        *,
+        simulation_config,
+        scoring_config,
+        iterations,
+        progress_callback=None,
+    ):
+        assert iterations == 10
+        assert progress_callback is not None
+        progress_callback(5, 10)
+        probe_session = session_factory()
+        try:
+            job = probe_session.get(JobStatus, start.job_status.id)
+            observed_progress.append((str(job.percent_complete), job.current_message))
+        finally:
+            probe_session.close()
+        return MonteCarloResult(
+            iterations=10,
+            team_results=(
+                MonteCarloTeamAggregate(
+                    team_id=10,
+                    championship_probability=Decimal("0.500"),
+                    top_three_probability=Decimal("1.000"),
+                    average_finish=Decimal("1.500"),
+                    win_percentage=Decimal("0.600"),
+                    upset_count=0,
+                ),
+                MonteCarloTeamAggregate(
+                    team_id=20,
+                    championship_probability=Decimal("0.500"),
+                    top_three_probability=Decimal("1.000"),
+                    average_finish=Decimal("1.500"),
+                    win_percentage=Decimal("0.400"),
+                    upset_count=0,
+                ),
+            ),
+            group_results=(
+                MonteCarloGroupAggregate(
+                    group_id=1,
+                    expected_score=Decimal("10.000"),
+                    average_rank=Decimal("1.000"),
+                    rank_distribution={1: 10},
+                ),
+                MonteCarloGroupAggregate(
+                    group_id=2,
+                    expected_score=Decimal("8.000"),
+                    average_rank=Decimal("2.000"),
+                    rank_distribution={2: 10},
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(service_module, "run_monte_carlo", fake_run_monte_carlo)
+
+    service._execute_run(simulation_run_id=start.simulation_run.id, session=session)
+
+    assert observed_progress == [
+        ("52.50", "Monte Carlo iteration 5/10 completed.")
+    ]
 
 
 def _seed_two_valid_teams(session) -> None:

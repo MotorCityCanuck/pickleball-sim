@@ -406,6 +406,8 @@ class TournamentService:
 
         try:
             _mark_run_running(simulation_run, job_status)
+            event.status = "running"
+            session.commit()
             validation = self._validate_event(event_id=event.id, session=session)
             if not validation.is_valid:
                 raise ValueError("Tournament event has invalid submissions")
@@ -425,7 +427,16 @@ class TournamentService:
                     simulation_config=simulation_config,
                     scoring_config=scoring_config,
                     iterations=int(simulation_run.iteration_count or 1),
+                    progress_callback=lambda completed, total: _update_monte_carlo_progress(
+                        session,
+                        simulation_run=simulation_run,
+                        job_status=job_status,
+                        completed_iterations=completed,
+                        total_iterations=total,
+                    ),
                 )
+                _mark_persisting_results(job_status)
+                session.commit()
                 replace_monte_carlo_results(
                     session,
                     simulation_run=simulation_run,
@@ -669,3 +680,35 @@ def _mark_run_failed_durable(simulation_run_id: int, error_message: str) -> None
             return
         job_status = session.get(JobStatus, simulation_run.job_status_id)
         _mark_run_failed(simulation_run, job_status, error_message)
+
+
+def _update_monte_carlo_progress(
+    session: Session,
+    *,
+    simulation_run: TournamentSimulationRun,
+    job_status: JobStatus | None,
+    completed_iterations: int,
+    total_iterations: int,
+) -> None:
+    if job_status is None or total_iterations < 1:
+        return
+    percent = Decimal("10") + (
+        Decimal("85") * Decimal(completed_iterations) / Decimal(total_iterations)
+    )
+    job_status.status = "running"
+    job_status.current_phase = "simulating"
+    job_status.percent_complete = percent.quantize(Decimal("0.01"))
+    job_status.current_message = (
+        f"Monte Carlo iteration {completed_iterations}/{total_iterations} completed."
+    )
+    simulation_run.status = "running"
+    session.commit()
+
+
+def _mark_persisting_results(job_status: JobStatus | None) -> None:
+    if job_status is None:
+        return
+    job_status.status = "running"
+    job_status.current_phase = "persisting_results"
+    job_status.percent_complete = Decimal("95.00")
+    job_status.current_message = "Persisting Monte Carlo results."

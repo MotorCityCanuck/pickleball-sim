@@ -314,6 +314,7 @@
                             <thead>
                                 <tr style="text-align:left; border-bottom:1px solid #d6d9df;">
                                     <th style="padding:7px 6px;">Team</th>
+                                    <th style="padding:7px 6px;">Student Group</th>
                                     <th style="padding:7px 6px;">Country</th>
                                     <th style="padding:7px 6px;">Division</th>
                                     <th style="padding:7px 6px;">Champ</th>
@@ -323,13 +324,25 @@
                             </thead>
                             <tbody>
                                 {% for team in tournament_results_summary.team_results %}
-                                    <tr style="border-bottom:1px solid #eef0f4;">
+                                    <tr
+                                        style="
+                                            border-bottom:1px solid #eef0f4;
+                                            {% if team.probability_rank == 1 %}
+                                                background:#fff6d6;
+                                            {% elif team.probability_rank == 2 %}
+                                                background:#e5e7eb;
+                                            {% elif team.probability_rank == 3 %}
+                                                background:#f6e3d3;
+                                            {% endif %}
+                                        "
+                                    >
                                         <td style="padding:7px 6px;">
                                             Team {{ team.team_id }}
                                             {% if team.credit_count > 1 %}
                                                 <span style="color:#6a5400;">({{ team.credit_count }} groups)</span>
                                             {% endif %}
                                         </td>
+                                        <td style="padding:7px 6px;">{{ team.credited_groups | join(', ') or 'n/a' }}</td>
                                         <td style="padding:7px 6px;">{{ team.slot_country_code }}</td>
                                         <td style="padding:7px 6px;">{{ team.slot_division.replace('_', ' ') }}</td>
                                         <td style="padding:7px 6px;">{{ team.championship_probability_display }}</td>

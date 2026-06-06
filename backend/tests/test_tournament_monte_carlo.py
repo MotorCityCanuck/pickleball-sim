@@ -83,6 +83,35 @@ def test_monte_carlo_rejects_zero_iterations():
         raise AssertionError("expected zero iterations to fail")
 
 
+def test_monte_carlo_reports_intermediate_progress():
+    divisions = (
+        TournamentDivision(
+            slot=PortfolioSlot(country_code="US", division="mens"),
+            entries=(
+                _team(1, rating=Decimal("1700"), group_ids=(1,)),
+                _team(2, rating=Decimal("1600"), group_ids=(2,)),
+                _team(3, rating=Decimal("1500"), group_ids=(3,)),
+            ),
+        ),
+    )
+    progress_updates: list[tuple[int, int]] = []
+
+    result = run_monte_carlo(
+        divisions,
+        simulation_config=_simulation_config(seed=99),
+        scoring_config=TournamentScoringConfig(),
+        iterations=25,
+        progress_callback=lambda completed, total: progress_updates.append(
+            (completed, total)
+        ),
+    )
+
+    assert result.iterations == 25
+    assert progress_updates
+    assert progress_updates[-1] == (25, 25)
+    assert all(total == 25 for _, total in progress_updates)
+
+
 def _simulation_config(*, seed: int) -> TournamentSimulationConfig:
     match_config = MatchGenerationConfig.from_payload(DEFAULT_CONFIG_PAYLOAD)
     return TournamentSimulationConfig(

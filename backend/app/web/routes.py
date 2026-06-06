@@ -241,6 +241,20 @@ def build_control_panel_router() -> APIRouter:
             },
         )
 
+    @router.get("/control/partials/config/tournament", response_class=HTMLResponse)
+    def control_panel_tournament_config_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        return _render_config_tab_response(
+            request,
+            session=session,
+            queries=queries,
+            templates=templates,
+            active_config_scope="tournament",
+        )
+
     @router.post("/control/config/validate", response_class=HTMLResponse)
     def control_panel_config_validate(
         request: Request,
@@ -1534,6 +1548,8 @@ def _split_editor_payloads(payload: dict[str, object]) -> tuple[str, str]:
 
 
 def _normalize_config_scope(scope: str | None) -> str:
+    if scope == "tournament":
+        return "tournament"
     if scope == "synthetic":
         return "synthetic"
     return "seed"
@@ -1590,6 +1606,12 @@ def _build_config_template_context(
         tab_description = (
             "Raw datasets, naming, regional distribution, and club baseline configuration."
         )
+    elif normalized_scope == "tournament":
+        tab_kicker = "Tournament Configuration"
+        tab_title = "Tournament Simulation Rules"
+        tab_description = (
+            "Scoring, tournament match structure, and hidden-bias settings used by tournament workflows."
+        )
     else:
         tab_kicker = "Synthetic Workload Configuration"
         tab_title = "Player and Match Generation"
@@ -1612,6 +1634,9 @@ def _build_config_template_context(
         ),
         "synthetic_sections": tuple(
             section for section in sections if section.definition.scope == "synthetic"
+        ),
+        "tournament_sections": tuple(
+            section for section in sections if section.definition.scope == "tournament"
         ),
     }
 
@@ -2053,6 +2078,23 @@ def _tournament_results_summary(
         row["top_three_probability_display"] = _percentage_display(
             row["top_three_probability"]
         )
+        row["probability_rank"] = None
+
+    for division in sorted({str(row["slot_division"]) for row in team_results}):
+        division_rows = [
+            row for row in team_results if str(row["slot_division"]) == division
+        ]
+        division_rows.sort(
+            key=lambda row: (
+                -_decimal_value(row["championship_probability"]),
+                -_decimal_value(row["top_three_probability"]),
+                _decimal_value(row["average_finish"] or 999),
+                str(row["slot_country_code"]),
+                int(row["team_id"]),
+            )
+        )
+        for rank, row in enumerate(division_rows, start=1):
+            row["probability_rank"] = rank
 
     division_results = sorted(
         summary["division_results"],

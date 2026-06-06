@@ -436,7 +436,11 @@
                     {% for section in config_sections %}
                         {% set advanced_count = section.fields | selectattr("definition.basic_or_advanced", "equalto", "advanced") | list | length %}
                         {% set field_count = section.fields | length %}
-                        {% set default_open = (active_config_scope == "seed" and loop.first) or (active_config_scope == "synthetic" and section.definition.id == "synthetic_simulation_identity") %}
+                        {% set default_open = (
+                            (active_config_scope == "seed" and loop.first)
+                            or (active_config_scope == "synthetic" and section.definition.id == "synthetic_simulation_identity")
+                            or (active_config_scope == "tournament" and section.definition.id == "tournament_match_structure")
+                        ) %}
                         {% set issue_count = section_issue_counts.get(section.definition.id, 0) %}
                         <details
                             class="config-section-card"

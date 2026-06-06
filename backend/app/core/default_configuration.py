@@ -377,6 +377,13 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "export_included_tables": [],
         "export_batch_on_completion": True,
     },
+    "tournament_scoring": {
+        "champion_points": 10,
+        "runner_up_points": 6,
+        "top_four_points": 3,
+        "match_win_points": 1,
+        "top_four_points_enabled": False,
+    },
     "future_extensions": {
         "tournament_bracket_structures": {},
         "partnership_chemistry_evolution_rate": 0.05,

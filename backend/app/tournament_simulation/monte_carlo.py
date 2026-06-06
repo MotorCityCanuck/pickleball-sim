@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import random
+from typing import Callable
 
 from .config import TournamentScoringConfig, TournamentSimulationConfig
 from .dtos import DivisionResult, StudentGroupScore, TournamentDivision
@@ -49,6 +50,7 @@ def run_monte_carlo(
     simulation_config: TournamentSimulationConfig,
     scoring_config: TournamentScoringConfig,
     iterations: int,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> MonteCarloResult:
     """Run repeated in-memory tournament simulations and aggregate results."""
     if iterations < 1:
@@ -59,6 +61,7 @@ def run_monte_carlo(
     group_score_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
     group_rank_sum: dict[int, int] = defaultdict(int)
     group_rank_counts: dict[int, Counter[int]] = defaultdict(Counter)
+    progress_step = max(1, iterations // 20)
 
     for iteration in range(iterations):
         rng = random.Random(simulation_config.seed + iteration)
@@ -81,6 +84,14 @@ def run_monte_carlo(
             group_score_sum[score.group_id] += score.score
             group_rank_sum[score.group_id] += rank
             group_rank_counts[score.group_id][rank] += 1
+
+        if progress_callback is not None:
+            completed_iterations = iteration + 1
+            if (
+                completed_iterations == iterations
+                or completed_iterations % progress_step == 0
+            ):
+                progress_callback(completed_iterations, iterations)
 
     return MonteCarloResult(
         iterations=iterations,

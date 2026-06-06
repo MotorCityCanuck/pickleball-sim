@@ -904,7 +904,7 @@ CREATE TABLE tournament_submissions (
 	id BIGSERIAL NOT NULL, 
 	event_id BIGINT NOT NULL, 
 	student_group_id BIGINT NOT NULL, 
-	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_country_code VARCHAR(3) NOT NULL, 
 	slot_division VARCHAR(50) NOT NULL, 
 	team_id BIGINT NOT NULL, 
 	validation_status VARCHAR(30) DEFAULT 'pending' NOT NULL, 
@@ -924,7 +924,7 @@ CREATE TABLE tournament_submissions (
 CREATE TABLE tournament_team_results (
 	id BIGSERIAL NOT NULL, 
 	simulation_run_id BIGINT NOT NULL, 
-	slot_country_code VARCHAR(2) NOT NULL, 
+	slot_country_code VARCHAR(3) NOT NULL, 
 	slot_division VARCHAR(50) NOT NULL, 
 	team_id BIGINT NOT NULL, 
 	championship_probability NUMERIC(8, 5), 

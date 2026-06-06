@@ -649,7 +649,9 @@ def _seed_tournament_event_state(session_factory):
                     win_percentage, created_at, updated_at
                 ) VALUES
                     (701, 303, 'CA', 'mens_doubles', 9001, 0.42000, 0.78000, 1.850, 0.62000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    (702, 303, 'US', 'mixed_doubles', 9002, 0.18000, 0.51000, 3.200, 0.48000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    (702, 303, 'US', 'mens_doubles', 9002, 0.33000, 0.74000, 2.100, 0.56000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (703, 303, 'US', 'mens_doubles', 9003, 0.25000, 0.68000, 2.700, 0.51000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (704, 303, 'US', 'mixed_doubles', 9004, 0.18000, 0.51000, 3.200, 0.48000, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -1041,6 +1043,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
     assert "/control/partials/config/export" in routes
+    assert "/control/partials/config/tournament" in routes
     assert "/control/partials/tournament" in routes
     assert "/control/tournaments/submissions/save" in routes
     assert "/control/tournaments/monte-carlo/start" in routes
@@ -1050,11 +1053,13 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Player and Match Config" in body
     assert "Export Configuration" in body
     assert "Orchestration" in body
+    assert "Tournament Config" in body
     assert "Tournament" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
     assert 'data-tab-url="/control/partials/config/export"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
+    assert 'data-tab-url="/control/partials/config/tournament"' in body
     assert 'data-tab-url="/control/partials/tournament"' in body
     assert "window.loadControlPanelTab" in body
     assert "window.htmx?.process?.(target)" in body
@@ -1094,6 +1099,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         )
         export_config = routes["/control/partials/config/export"](
             request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        tournament_config = routes["/control/partials/config/tournament"](
+            request=_request("/control/partials/config/tournament"),
             session=session,
             queries=ControlPanelQueries(),
         )
@@ -1172,6 +1182,13 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
     assert "Start Student Dataset Export" in export_config.body.decode()
     assert "copyControlPanelText" in export_config.body.decode()
+
+    assert tournament_config.status_code == 200
+    assert "Tournament Configuration" in tournament_config.body.decode()
+    assert "Tournament Simulation Rules" in tournament_config.body.decode()
+    assert "Student Leaderboard Scoring" in tournament_config.body.decode()
+    assert "Tournament Match Structure" in tournament_config.body.decode()
+    assert "Tournament Hidden Performance Bias" in tournament_config.body.decode()
 
     assert tournament.status_code == 200
     assert "Instructor tournament workflow" in tournament.body.decode()
@@ -1256,8 +1273,13 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "Tournament summary" in body
     assert "Championship and Medal Probabilities" in body
     assert "Team 9001" in body
+    assert "Student Group" in body
+    assert "Group 1, Group 2" in body
     assert "42.0%" in body
     assert "78.0%" in body
+    assert "#fff6d6" in body
+    assert "#e5e7eb" in body
+    assert "#f6e3d3" in body
     assert "Student Leaderboard" in body
     assert "31.250" in body
     assert "Duplicate-Team Credit" in body
@@ -2231,8 +2253,8 @@ def test_control_panel_player_match_config_partial_renders_current_values_in_con
     assert "Initial skill mean" in body
     assert "Games and Score Dynamics" in body
     assert "Games per match" in body
-    assert "Win-by-two extension rate" in body
-    assert "Upset probability boost" in body
+    assert "Win-by-two extension rate" not in body
+    assert "Upset probability boost" not in body
     assert "Rating Initialization and Updates" in body
     assert "New-player K factor" in body
     assert "Confidence increment per match" in body
@@ -2254,6 +2276,38 @@ def test_control_panel_player_match_config_partial_renders_current_values_in_con
     )
     assert "Simulation version" in body
     assert "Supported raw seed datasets" not in body
+
+
+def test_control_panel_tournament_config_partial_renders_current_values_in_controls(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/config/tournament"](
+            request=_request("/control/partials/config/tournament"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Tournament Configuration" in body
+    assert "Tournament Simulation Rules" in body
+    assert "Tournament Match Structure" in body
+    assert "Tournament games per match" in body
+    assert "Student Leaderboard Scoring" in body
+    assert "Champion points" in body
+    assert "Match win points" in body
+    assert "Tournament Hidden Performance Bias" in body
+    assert "Enable hidden performance bias" in body
+    assert 'data-config-section="tournament:tournament_match_structure"' in body
+    assert re.search(
+        r'<details[^>]*data-config-section="tournament:tournament_match_structure"[^>]*open',
+        body,
+    )
 
 
 def test_control_panel_generation_start_requires_destructive_confirmation(session_factory):

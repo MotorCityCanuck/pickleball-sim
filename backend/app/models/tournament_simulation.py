@@ -123,7 +123,7 @@ class TournamentSubmission(Base, TimestampMixin):
         ForeignKey("tournament_student_groups.id"),
         nullable=False,
     )
-    slot_country_code = Column(String(2), nullable=False)
+    slot_country_code = Column(String(3), nullable=False)
     slot_division = Column(String(50), nullable=False)
     team_id = Column(BigInteger, ForeignKey("teams.id"), nullable=False)
     validation_status = Column(
@@ -243,7 +243,7 @@ class TournamentTeamResult(Base, TimestampMixin):
         ForeignKey("tournament_simulation_runs.id"),
         nullable=False,
     )
-    slot_country_code = Column(String(2), nullable=False)
+    slot_country_code = Column(String(3), nullable=False)
     slot_division = Column(String(50), nullable=False)
     team_id = Column(BigInteger, ForeignKey("teams.id"), nullable=False)
     championship_probability = Column(Numeric(8, 5))
