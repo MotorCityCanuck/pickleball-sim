@@ -50,11 +50,6 @@
             </div>
         </div>
 
-        {% if tournament_save_message %}
-            <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
-                {{ tournament_save_message }}
-            </div>
-        {% endif %}
         {% if tournament_save_error %}
             <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
                 {{ tournament_save_error }}
@@ -145,7 +140,19 @@
                 {% endfor %}
             </div>
 
-            <div style="display:flex; justify-content:flex-end;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div
+                    style="
+                        visibility: {{ 'visible' if tournament_save_message else 'hidden' }};
+                        border:1px solid #b7dfc2;
+                        background:#edf8f0;
+                        color:#1f5f30;
+                        border-radius:8px;
+                        padding:10px 12px;
+                    "
+                >
+                    {{ tournament_save_message or 'Validation complete.' }}
+                </div>
                 <button
                     id="tournament-save-button"
                     type="submit"
