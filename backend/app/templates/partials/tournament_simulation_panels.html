@@ -1,5 +1,6 @@
 {% set monte_carlo_event_id = saved_tournament_event_id or (tournament_event_summary.event_id if tournament_event_summary else None) %}
 {% set monte_carlo_locked = tournament_submission_dirty and monte_carlo_event_id %}
+{% set results_stale = tournament_submission_dirty %}
 <div id="tournament-simulation-panels" style="display:grid; gap:16px;">
     {% if tournament_monte_carlo_message %}
         <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
@@ -151,29 +152,60 @@
         {% endif %}
     </section>
 
-    <section class="panel-section {% if tournament_results_summary %}state-card-ready{% else %}state-card-blocked{% endif %}" style="display:grid; gap:14px;">
+    <section
+        id="tournament-results-panel"
+        class="panel-section {% if tournament_results_summary and not results_stale %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-tournament-results-stale="{{ 'true' if results_stale else 'false' }}"
+        style="
+            display:grid;
+            gap:14px;
+            border:1px solid {{ '#f1b2ad' if results_stale else 'transparent' }};
+            background:{{ '#fef3f2' if results_stale else 'transparent' }};
+        "
+    >
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Results</div>
                 <div style="margin-top:6px; font-size:18px;">Tournament summary</div>
-                {% if tournament_results_summary %}
+                {% if tournament_results_summary and not results_stale %}
                     <div style="margin-top:6px; color:#5a6477;">
                         Run {{ tournament_results_summary.simulation_run_id }} | {{ tournament_results_summary.run_type.replace('_', ' ') }}
                     </div>
                 {% endif %}
             </div>
-            {% if tournament_results_summary %}
-                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+            {% if results_stale %}
+                <div
+                    id="tournament-results-badge"
+                    style="border:1px solid #f1b2ad; border-radius:999px; padding:6px 10px; font-size:12px; color:#8f1d18; background:#fef3f2;"
+                >
+                    Revalidate submissions
+                </div>
+            {% elif tournament_results_summary %}
+                <div
+                    id="tournament-results-badge"
+                    style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;"
+                >
                     Results ready
                 </div>
             {% else %}
-                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                <div
+                    id="tournament-results-badge"
+                    style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;"
+                >
                     No completed run
                 </div>
             {% endif %}
         </div>
 
-        {% if tournament_results_summary %}
+        <div
+            id="tournament-results-stale-message"
+            style="display:{{ 'block' if results_stale else 'none' }}; color:#8f1d18;"
+        >
+            Validate and save the updated team submissions before reviewing Monte Carlo results.
+        </div>
+
+        {% if tournament_results_summary and not results_stale %}
+            <div id="tournament-results-content" style="display:grid; gap:14px;">
             {% if tournament_results_summary.duplicate_credits %}
                 <div class="info-card" style="border-color:#d7c27a; background:#fff9e6;">
                     <div style="font-size:12px; color:#6a5400; text-transform:uppercase;">Duplicate-Team Credit</div>
@@ -274,7 +306,50 @@
                     </table>
                 </div>
             </div>
-        {% else %}
+
+            <div style="display:grid; gap:10px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Group Scoring Outcome</div>
+                {% for outcome in tournament_results_summary.group_outcomes %}
+                    <div class="info-card" style="display:grid; gap:10px;">
+                        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                            <div>
+                                <div style="font-size:16px; color:#1d2433;">{{ outcome.group_name }}</div>
+                                <div style="margin-top:4px; color:#5a6477;">
+                                    Aggregate score {{ outcome.aggregate_score or 'n/a' }} | Avg rank {{ outcome.average_rank or 'n/a' }}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="overflow:auto;">
+                            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                                <thead>
+                                    <tr style="text-align:left; border-bottom:1px solid #d6d9df;">
+                                        <th style="padding:7px 6px;">Team</th>
+                                        <th style="padding:7px 6px;">Country</th>
+                                        <th style="padding:7px 6px;">Division</th>
+                                        <th style="padding:7px 6px;">Champ</th>
+                                        <th style="padding:7px 6px;">Medal</th>
+                                        <th style="padding:7px 6px;">Avg Finish</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for selection in outcome.selections %}
+                                        <tr style="border-bottom:1px solid #eef0f4;">
+                                            <td style="padding:7px 6px;">Team {{ selection.team_id }}</td>
+                                            <td style="padding:7px 6px;">{{ selection.slot_country_code }}</td>
+                                            <td style="padding:7px 6px;">{{ selection.slot_division.replace('_', ' ') }}</td>
+                                            <td style="padding:7px 6px;">{{ selection.championship_probability_display }}</td>
+                                            <td style="padding:7px 6px;">{{ selection.top_three_probability_display }}</td>
+                                            <td style="padding:7px 6px;">{{ selection.average_finish or 'n/a' }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            </div>
+        {% elif not results_stale %}
             <div style="color:#5a6477;">
                 Start a Monte Carlo run and wait for it to complete before reviewing probabilities and student scores.
             </div>

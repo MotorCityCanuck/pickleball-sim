@@ -1297,7 +1297,12 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     assert "#e5e7eb" in body
     assert "#f6e3d3" in body
     assert "Student Leaderboard" in body
+    assert "Student Group Scoring Outcome" in body
+    assert 'id="tournament-results-content"' in body
+    assert 'data-tournament-results-stale="false"' in body
     assert "31.250" in body
+    assert body.index("Group 1") < body.index("Group 2")
+    assert "Aggregate score 31.250 | Avg rank 1.400" in body
     assert "Duplicate-Team Credit" in body
     assert "Team 9001 in CA mens doubles credits 2 groups: Group 1, Group 2." in body
 
@@ -1448,6 +1453,55 @@ def test_tournament_submission_save_renders_field_errors(session_factory, monkey
     assert "Fix the highlighted team submissions" in body
     assert "Team 999 does not exist." in body
     assert 'data-tournament-dirty="true"' in body
+
+
+def test_tournament_submission_save_clears_saved_results_when_revalidation_is_required(
+    session_factory,
+    monkeypatch,
+):
+    _seed_tournament_event_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    slot = routes_module.PortfolioSlot(country_code="CA", division="mens_doubles")
+
+    monkeypatch.setattr(
+        routes_module,
+        "load_validated_tournament_input",
+        lambda *args, **kwargs: SimpleNamespace(
+            is_valid=False,
+            issues=(
+                SimpleNamespace(
+                    group_id=1,
+                    slot=slot,
+                    team_id=999,
+                    field="team_id",
+                    code="team_not_found",
+                    message="Team 999 does not exist.",
+                ),
+            ),
+        ),
+    )
+
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/save"](
+            request=_request("/control/tournaments/submissions/save", method="POST"),
+            event_name="Saved Class Tournament",
+            tournament_date="2026-02-01",
+            tournament_payload_json=_full_tournament_payload_json(),
+            session=session,
+            queries=ControlPanelQueries(),
+            tournament_service=_FakeTournamentService(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'data-tournament-results-stale="true"' in body
+    assert "Validate and save the updated team submissions before reviewing Monte Carlo results." in body
+    assert "Student Leaderboard" not in body
+    assert "Student Group Scoring Outcome" not in body
 
 
 def test_tournament_submission_save_persists_valid_event(session_factory, monkeypatch):

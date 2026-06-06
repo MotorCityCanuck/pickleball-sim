@@ -2249,6 +2249,81 @@ def _tournament_results_summary(
     for row in group_results:
         row["group_name"] = group_names.get(row["student_group_id"], "Group")
 
+    team_result_by_team_slot = {
+        (
+            int(row["team_id"]),
+            str(row["slot_country_code"]),
+            str(row["slot_division"]),
+        ): row
+        for row in team_results
+    }
+    group_outcomes: list[dict[str, Any]] = []
+    for row in group_results:
+        group_name = str(row["group_name"])
+        selections = []
+        for team_id, country_code, division, submission_group_name in submissions:
+            if str(submission_group_name) != group_name:
+                continue
+            linked_team_result = team_result_by_team_slot.get(
+                (int(team_id), str(country_code), str(division))
+            )
+            selections.append(
+                {
+                    "team_id": int(team_id),
+                    "slot_country_code": str(country_code),
+                    "slot_division": str(division),
+                    "championship_probability": (
+                        linked_team_result["championship_probability"]
+                        if linked_team_result is not None
+                        else None
+                    ),
+                    "top_three_probability": (
+                        linked_team_result["top_three_probability"]
+                        if linked_team_result is not None
+                        else None
+                    ),
+                    "championship_probability_display": (
+                        linked_team_result["championship_probability_display"]
+                        if linked_team_result is not None
+                        else "n/a"
+                    ),
+                    "top_three_probability_display": (
+                        linked_team_result["top_three_probability_display"]
+                        if linked_team_result is not None
+                        else "n/a"
+                    ),
+                    "average_finish": (
+                        linked_team_result["average_finish"]
+                        if linked_team_result is not None
+                        else None
+                    ),
+                }
+            )
+        selections.sort(
+            key=lambda selection: (
+                -_decimal_value(selection["championship_probability"] or 0),
+                -_decimal_value(selection["top_three_probability"] or 0),
+                _decimal_value(selection["average_finish"] or 999),
+                int(selection["team_id"]),
+            )
+        )
+        group_outcomes.append(
+            {
+                "student_group_id": row["student_group_id"],
+                "group_name": group_name,
+                "aggregate_score": row["expected_score"] or row["official_score"],
+                "average_rank": row["average_rank"] or row["final_rank"],
+                "selections": tuple(selections),
+            }
+        )
+    group_outcomes.sort(
+        key=lambda row: (
+            -_decimal_value(row["aggregate_score"] or 0),
+            _decimal_value(row["average_rank"] or 999),
+            int(row["student_group_id"]),
+        )
+    )
+
     duplicate_credits = [
         {
             "team_id": team_id,
@@ -2277,6 +2352,7 @@ def _tournament_results_summary(
         "team_results": team_results,
         "division_results": division_results,
         "group_results": group_results,
+        "group_outcomes": tuple(group_outcomes),
         "duplicate_credits": duplicate_credits,
     }
 

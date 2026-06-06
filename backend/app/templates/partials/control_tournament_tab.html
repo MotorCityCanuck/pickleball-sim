@@ -202,6 +202,10 @@
                     const simulationBadge = document.getElementById("tournament-monte-carlo-badge");
                     const simulationControls = document.querySelectorAll("[data-tournament-monte-carlo-control='true']");
                     const simulationMessage = document.getElementById("tournament-monte-carlo-lock-message");
+                    const resultsPanel = document.getElementById("tournament-results-panel");
+                    const resultsBadge = document.getElementById("tournament-results-badge");
+                    const resultsContent = document.getElementById("tournament-results-content");
+                    const resultsStaleMessage = document.getElementById("tournament-results-stale-message");
                     if (!simulationPanel || !simulationBadge || simulationControls.length === 0) {
                         return;
                     }
@@ -226,6 +230,28 @@
                     });
                     if (simulationMessage) {
                         simulationMessage.style.display = isLocked ? "block" : "none";
+                    }
+                    if (resultsPanel) {
+                        resultsPanel.dataset.tournamentResultsStale = isLocked ? "true" : "false";
+                        resultsPanel.style.borderColor = isLocked ? "#f1b2ad" : "transparent";
+                        resultsPanel.style.background = isLocked ? "#fef3f2" : "transparent";
+                    }
+                    if (resultsBadge) {
+                        if (!resultsBadge.dataset.tournamentDefaultLabel) {
+                            resultsBadge.dataset.tournamentDefaultLabel = resultsBadge.textContent;
+                        }
+                        resultsBadge.textContent = isLocked
+                            ? "Revalidate submissions"
+                            : resultsBadge.dataset.tournamentDefaultLabel;
+                        resultsBadge.style.borderColor = isLocked ? "#f1b2ad" : "#b7dfc2";
+                        resultsBadge.style.background = isLocked ? "#fef3f2" : "#edf8f0";
+                        resultsBadge.style.color = isLocked ? "#8f1d18" : "#1f5f30";
+                    }
+                    if (resultsContent) {
+                        resultsContent.style.display = isLocked ? "none" : "grid";
+                    }
+                    if (resultsStaleMessage) {
+                        resultsStaleMessage.style.display = isLocked ? "block" : "none";
                     }
                 }
 
@@ -259,6 +285,10 @@
                 if (initialSimulationBadge && !initialSimulationBadge.dataset.tournamentEventLabel) {
                     initialSimulationBadge.dataset.tournamentEventLabel = initialSimulationBadge.textContent;
                 }
+                const initialResultsBadge = document.getElementById("tournament-results-badge");
+                if (initialResultsBadge && !initialResultsBadge.dataset.tournamentDefaultLabel) {
+                    initialResultsBadge.dataset.tournamentDefaultLabel = initialResultsBadge.textContent;
+                }
                 form.addEventListener("htmx:beforeRequest", (event) => {
                     if (event.target !== form) {
                         return;
@@ -289,6 +319,10 @@
                     const refreshedBadge = document.getElementById("tournament-monte-carlo-badge");
                     if (refreshedBadge && !refreshedBadge.dataset.tournamentEventLabel) {
                         refreshedBadge.dataset.tournamentEventLabel = refreshedBadge.textContent;
+                    }
+                    const refreshedResultsBadge = document.getElementById("tournament-results-badge");
+                    if (refreshedResultsBadge && !refreshedResultsBadge.dataset.tournamentDefaultLabel) {
+                        refreshedResultsBadge.dataset.tournamentDefaultLabel = refreshedResultsBadge.textContent;
                     }
                     setSimulationLockState(dirtyShell?.dataset.tournamentDirty === "true");
                 });
