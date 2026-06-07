@@ -72,6 +72,7 @@ class TournamentService:
         submissions: tuple[TeamSubmission, ...],
         generation_run_id: int | None = None,
         config_snapshot: dict[str, Any] | None = None,
+        validation: ValidatedTournamentInput | None = None,
         session: Session | None = None,
     ) -> TournamentEventCreation:
         """Create event, groups, and normalized submissions."""
@@ -84,6 +85,7 @@ class TournamentService:
                 submissions=submissions,
                 generation_run_id=generation_run_id,
                 config_snapshot=config_snapshot,
+                validation=validation,
                 session=session,
             )
         with session_scope() as active_session:
@@ -95,6 +97,7 @@ class TournamentService:
                 submissions=submissions,
                 generation_run_id=generation_run_id,
                 config_snapshot=config_snapshot,
+                validation=validation,
                 session=active_session,
             )
 
@@ -261,6 +264,7 @@ class TournamentService:
         submissions: tuple[TeamSubmission, ...],
         generation_run_id: int | None,
         config_snapshot: dict[str, Any] | None,
+        validation: ValidatedTournamentInput | None,
         session: Session,
     ) -> TournamentEventCreation:
         from app.models import MonthlyBatch
@@ -314,6 +318,17 @@ class TournamentService:
             session.add(row)
             persisted_submissions.append(row)
         session.flush()
+        if validation is not None:
+            _apply_submission_validation_statuses(
+                submissions=tuple(persisted_submissions),
+                validation=validation,
+                group_db_id_by_input_id={
+                    input_id: group.id
+                    for input_id, group in groups_by_input_id.items()
+                },
+            )
+            event.status = "ready" if validation.is_valid else "draft"
+            session.flush()
         return TournamentEventCreation(
             event=event,
             student_groups=tuple(persisted_groups),
@@ -564,6 +579,19 @@ def _update_submission_validation_statuses(
     validation: ValidatedTournamentInput,
     group_db_id_by_input_id: dict[int, int],
 ) -> None:
+    _apply_submission_validation_statuses(
+        submissions=_event_submissions(session, event_id=event_id),
+        validation=validation,
+        group_db_id_by_input_id=group_db_id_by_input_id,
+    )
+
+
+def _apply_submission_validation_statuses(
+    *,
+    submissions: tuple[TournamentSubmission, ...],
+    validation: ValidatedTournamentInput,
+    group_db_id_by_input_id: dict[int, int],
+) -> None:
     issue_key: dict[tuple[int, str, str, int], list[SubmissionValidationIssue]] = {}
     for issue in validation.issues:
         key = (
@@ -574,7 +602,7 @@ def _update_submission_validation_statuses(
         )
         issue_key.setdefault(key, []).append(issue)
 
-    for row in _event_submissions(session, event_id=event_id):
+    for row in submissions:
         issues = issue_key.get(
             (row.student_group_id, row.slot_country_code, row.slot_division, row.team_id),
             [],

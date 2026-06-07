@@ -61,7 +61,7 @@ def run_monte_carlo(
     group_score_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
     group_rank_sum: dict[int, int] = defaultdict(int)
     group_rank_counts: dict[int, Counter[int]] = defaultdict(Counter)
-    progress_step = max(1, iterations // 20)
+    progress_step = max(1, (iterations + 9) // 10)
 
     for iteration in range(iterations):
         rng = random.Random(simulation_config.seed + iteration)

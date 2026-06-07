@@ -109,6 +109,7 @@ def test_monte_carlo_reports_intermediate_progress():
     assert result.iterations == 25
     assert progress_updates
     assert progress_updates[-1] == (25, 25)
+    assert len(progress_updates) <= 10
     assert all(total == 25 for _, total in progress_updates)
 
 

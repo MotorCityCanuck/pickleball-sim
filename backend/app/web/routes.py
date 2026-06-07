@@ -457,10 +457,7 @@ def build_control_panel_router() -> APIRouter:
                 student_groups=student_groups,
                 submissions=submissions,
                 generation_run_id=snapshot.generation_run_summary.generation_run_id,
-                session=session,
-            )
-            tournament_service.validate_event(
-                event_id=creation.event.id,
+                validation=validation,
                 session=session,
             )
             session.commit()

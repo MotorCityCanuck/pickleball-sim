@@ -20,11 +20,17 @@ from app.models import (
     PlayerRatingHistory,
     Region,
     Team,
+    TeamLifecycleEvent,
     TeamMembership,
 )
 
 from .dtos import PortfolioSlot, TournamentDivision, TournamentTeamEntry
-from .eligibility import team_active_as_of
+from .eligibility import (
+    ACTIVE_LIFECYCLE_EVENTS,
+    INACTIVE_LIFECYCLE_EVENTS,
+    TeamEligibility,
+    team_active_as_of,
+)
 from .round_robin import build_division_from_submissions
 
 
@@ -69,6 +75,18 @@ class _LoadedTeam:
     issues: tuple[SubmissionValidationIssue, ...]
 
 
+@dataclass(frozen=True)
+class _ValidationContext:
+    source_batch: MonthlyBatch
+    tournament_date: date
+    teams_by_id: dict[int, Team]
+    eligibility_by_team_id: dict[int, TeamEligibility]
+    roster_rows_by_team_id: dict[int, tuple[dict[str, object], ...]]
+    ratings_by_player_id: dict[int, Decimal]
+    club_memberships_by_player_id: dict[int, tuple[tuple[int, bool], ...]]
+    activity_counts_by_pair: dict[tuple[int, int], tuple[int, int, int]]
+
+
 def latest_completed_source_batch(
     session: Session,
     *,
@@ -101,29 +119,32 @@ def load_validated_tournament_input(
         source_batch_id=source_batch_id,
         generation_run_id=generation_run_id,
     )
+    validation_context = _build_validation_context(
+        session,
+        submissions=submissions,
+        source_batch=source_batch,
+        tournament_date=tournament_date,
+    )
 
     issues: list[SubmissionValidationIssue] = []
     entries_by_id: dict[int, TournamentTeamEntry] = {}
     for submission in submissions:
         loaded = _load_team_entry(
-            session,
             submission=submission,
-            source_batch=source_batch,
-            tournament_date=tournament_date,
+            validation_context=validation_context,
         )
         issues.extend(loaded.issues)
         if loaded.entry is not None:
             entries_by_id[loaded.entry.id] = loaded.entry
 
     divisions: list[TournamentDivision] = []
+    issue_keys = {
+        (issue.group_id, issue.slot, issue.team_id)
+        for issue in issues
+    }
     submissions_by_division: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for submission in submissions:
-        if any(
-            issue.group_id == submission.group_id
-            and issue.slot == submission.slot
-            and issue.team_id == submission.team_id
-            for issue in issues
-        ):
+        if (submission.group_id, submission.slot, submission.team_id) in issue_keys:
             continue
         submissions_by_division[submission.slot.division].append(
             (submission.group_id, submission.team_id)
@@ -163,11 +184,15 @@ def validate_tournament_submission(
         source_batch_id=source_batch_id,
         generation_run_id=generation_run_id,
     )
-    return _load_team_entry(
+    validation_context = _build_validation_context(
         session,
-        submission=submission,
+        submissions=(submission,),
         source_batch=source_batch,
         tournament_date=tournament_date,
+    )
+    return _load_team_entry(
+        submission=submission,
+        validation_context=validation_context,
     ).issues
 
 
@@ -206,14 +231,75 @@ def _resolve_source_batch(
     return source_batch
 
 
-def _load_team_entry(
+def _build_validation_context(
     session: Session,
     *,
-    submission: TeamSubmission,
+    submissions: tuple[TeamSubmission, ...],
     source_batch: MonthlyBatch,
     tournament_date: date,
+) -> _ValidationContext:
+    team_ids = {submission.team_id for submission in submissions}
+    teams_by_id = (
+        {
+            team.id: team
+            for team in session.execute(
+                select(Team).where(Team.id.in_(team_ids))
+            ).scalars()
+        }
+        if team_ids
+        else {}
+    )
+    roster_rows_by_team_id = _active_roster_rows_by_team(
+        session,
+        team_ids=set(teams_by_id),
+        source_batch=source_batch,
+        tournament_date=tournament_date,
+    )
+    player_ids = {
+        int(row["player_id"])
+        for roster_rows in roster_rows_by_team_id.values()
+        for row in roster_rows
+    }
+    player_pairs = {
+        tuple(sorted(int(row["player_id"]) for row in roster_rows))
+        for roster_rows in roster_rows_by_team_id.values()
+        if len(roster_rows) == 2
+    }
+    return _ValidationContext(
+        source_batch=source_batch,
+        tournament_date=tournament_date,
+        teams_by_id=teams_by_id,
+        eligibility_by_team_id=_eligibility_by_team_id(
+            session,
+            teams_by_id=teams_by_id,
+            tournament_date=tournament_date,
+        ),
+        roster_rows_by_team_id=roster_rows_by_team_id,
+        ratings_by_player_id=_latest_ratings_by_player(
+            session,
+            player_ids=player_ids,
+            source_batch=source_batch,
+        ),
+        club_memberships_by_player_id=_club_memberships_by_player(
+            session,
+            player_ids=player_ids,
+            as_of=source_batch.batch_month,
+        ),
+        activity_counts_by_pair=_team_activity_counts_by_pair(
+            session,
+            player_pairs=player_pairs,
+            source_batch=source_batch,
+        ),
+    )
+
+
+def _load_team_entry(
+    *,
+    submission: TeamSubmission,
+    validation_context: _ValidationContext,
 ) -> _LoadedTeam:
-    team = session.get(Team, submission.team_id)
+    source_batch = validation_context.source_batch
+    team = validation_context.teams_by_id.get(submission.team_id)
     if team is None:
         return _LoadedTeam(
             entry=None,
@@ -265,11 +351,7 @@ def _load_team_entry(
             )
         )
 
-    eligibility = team_active_as_of(
-        session,
-        team,
-        tournament_date=tournament_date,
-    )
+    eligibility = validation_context.eligibility_by_team_id[team.id]
     if not eligibility.is_active:
         issues.append(
             _issue(
@@ -280,12 +362,7 @@ def _load_team_entry(
             )
         )
 
-    roster_rows = _active_roster_rows(
-        session,
-        team_id=team.id,
-        source_batch=source_batch,
-        tournament_date=tournament_date,
-    )
+    roster_rows = validation_context.roster_rows_by_team_id.get(team.id, ())
     if len(roster_rows) != 2:
         issues.append(
             _issue(
@@ -309,12 +386,11 @@ def _load_team_entry(
             )
         )
 
-    ratings = _latest_ratings_by_player(
-        session,
-        player_ids=set(player_ids),
-        source_batch=source_batch,
-    )
-    missing_ratings = [player_id for player_id in player_ids if player_id not in ratings]
+    missing_ratings = [
+        player_id
+        for player_id in player_ids
+        if player_id not in validation_context.ratings_by_player_id
+    ]
     if missing_ratings:
         issues.append(
             _issue(
@@ -332,23 +408,26 @@ def _load_team_entry(
         return _LoadedTeam(entry=None, issues=tuple(issues))
 
     club_ids, primary_club_ids = _club_ids_for_players(
-        session,
-        player_ids=set(player_ids),
-        as_of=source_batch.batch_month,
-    )
-    prior_match_count, recent_match_count, recent_game_count = _team_activity_counts(
-        session,
         player_ids=player_ids,
-        source_batch=source_batch,
+        memberships_by_player_id=validation_context.club_memberships_by_player_id,
     )
-    average_rating = sum(ratings[player_id] for player_id in player_ids) / Decimal("2")
+    prior_match_count, recent_match_count, recent_game_count = (
+        validation_context.activity_counts_by_pair.get(player_ids, (0, 0, 0))
+    )
+    average_rating = (
+        sum(validation_context.ratings_by_player_id[player_id] for player_id in player_ids)
+        / Decimal("2")
+    )
     entry = TournamentTeamEntry(
         id=team.id,
         country_code=team.country_code,
         division=team.team_type,
         average_rating=average_rating,
-        avg_age=_average_age([row["birth_date"] for row in roster_rows], as_of=tournament_date),
-        region_name=_team_region_name(session, roster_rows),
+        avg_age=_average_age(
+            [row["birth_date"] for row in roster_rows],
+            as_of=validation_context.tournament_date,
+        ),
+        region_name=_team_region_name(roster_rows),
         primary_club_ids=primary_club_ids,
         club_ids=club_ids,
         team_total_prior_matches=prior_match_count,
@@ -358,25 +437,96 @@ def _load_team_entry(
     return _LoadedTeam(entry=entry, issues=())
 
 
-def _active_roster_rows(
+def _eligibility_by_team_id(
     session: Session,
     *,
-    team_id: int,
+    teams_by_id: dict[int, Team],
+    tournament_date: date,
+) -> dict[int, TeamEligibility]:
+    if not teams_by_id:
+        return {}
+
+    latest_events_by_team_id: dict[int, TeamLifecycleEvent] = {}
+    for event in session.execute(
+        select(TeamLifecycleEvent)
+        .where(
+            TeamLifecycleEvent.team_id.in_(set(teams_by_id)),
+            TeamLifecycleEvent.event_date <= tournament_date,
+        )
+        .order_by(
+            TeamLifecycleEvent.team_id,
+            TeamLifecycleEvent.event_date.desc(),
+            TeamLifecycleEvent.id.desc(),
+        )
+    ).scalars():
+        latest_events_by_team_id.setdefault(event.team_id, event)
+
+    results: dict[int, TeamEligibility] = {}
+    for team_id, team in teams_by_id.items():
+        latest_event = latest_events_by_team_id.get(team_id)
+        if latest_event is not None:
+            if latest_event.event_type in ACTIVE_LIFECYCLE_EVENTS:
+                results[team_id] = TeamEligibility(
+                    is_active=True,
+                    source="team_lifecycle_events",
+                )
+                continue
+            if latest_event.event_type in INACTIVE_LIFECYCLE_EVENTS:
+                results[team_id] = TeamEligibility(
+                    is_active=False,
+                    source="team_lifecycle_events",
+                    reason=f"latest lifecycle event is {latest_event.event_type}",
+                )
+                continue
+            results[team_id] = TeamEligibility(
+                is_active=False,
+                source="team_lifecycle_events",
+                reason=f"unknown lifecycle event {latest_event.event_type}",
+            )
+            continue
+
+        results[team_id] = team_active_as_of(
+            session,
+            team,
+            tournament_date=tournament_date,
+        )
+
+    return results
+
+
+def _active_roster_rows_by_team(
+    session: Session,
+    *,
+    team_ids: set[int],
     source_batch: MonthlyBatch,
     tournament_date: date,
-) -> list[dict[str, object]]:
-    rows = session.execute(
+) -> dict[int, tuple[dict[str, object], ...]]:
+    if not team_ids:
+        return {}
+
+    rows_by_team_id: dict[int, list[dict[str, object]]] = defaultdict(list)
+    for (
+        team_id,
+        player_id,
+        player_position,
+        birth_date,
+        home_region_id,
+        country_code,
+        region_name,
+    ) in session.execute(
         select(
+            TeamMembership.team_id,
             TeamMembership.player_id,
             TeamMembership.player_position,
             Player.birth_date,
             Player.home_region_id,
             Region.country_code,
+            Region.region_name,
         )
         .join(Player, Player.id == TeamMembership.player_id)
         .join(Region, Region.id == Player.home_region_id)
         .where(
-            TeamMembership.team_id == team_id,
+            TeamMembership.team_id.in_(team_ids),
             TeamMembership.joined_date <= tournament_date,
             or_(
                 TeamMembership.left_date.is_(None),
@@ -385,18 +535,22 @@ def _active_roster_rows(
             Player.player_status == "ACTIVE",
             Player.generation_run_id == source_batch.generation_run_id,
         )
-        .order_by(TeamMembership.player_position)
-    ).all()
-    return [
-        {
-            "player_id": player_id,
-            "player_position": player_position,
-            "birth_date": birth_date,
-            "home_region_id": home_region_id,
-            "country_code": country_code,
-        }
-        for player_id, player_position, birth_date, home_region_id, country_code in rows
-    ]
+        .order_by(TeamMembership.team_id, TeamMembership.player_position)
+    ):
+        rows_by_team_id[team_id].append(
+            {
+                "player_id": player_id,
+                "player_position": player_position,
+                "birth_date": birth_date,
+                "home_region_id": home_region_id,
+                "country_code": country_code,
+                "region_name": region_name,
+            }
+        )
+    return {
+        team_id: tuple(rows)
+        for team_id, rows in rows_by_team_id.items()
+    }
 
 
 def _latest_ratings_by_player(
@@ -429,17 +583,16 @@ def _latest_ratings_by_player(
     return latest
 
 
-def _club_ids_for_players(
+def _club_memberships_by_player(
     session: Session,
     *,
     player_ids: set[int],
     as_of: date,
-) -> tuple[frozenset[int], frozenset[int]]:
+) -> dict[int, tuple[tuple[int, bool], ...]]:
     if not player_ids:
-        return frozenset(), frozenset()
-    club_ids: set[int] = set()
-    primary_club_ids: set[int] = set()
-    for _player_id, club_id, is_primary in session.execute(
+        return {}
+    memberships_by_player_id: dict[int, list[tuple[int, bool]]] = defaultdict(list)
+    for player_id, club_id, is_primary in session.execute(
         select(
             ClubMembership.player_id,
             ClubMembership.club_id,
@@ -450,30 +603,41 @@ def _club_ids_for_players(
             or_(ClubMembership.end_date.is_(None), ClubMembership.end_date > as_of),
         )
     ):
-        club_ids.add(club_id)
-        if is_primary:
-            primary_club_ids.add(club_id)
+        memberships_by_player_id[player_id].append((club_id, bool(is_primary)))
+    return {
+        player_id: tuple(memberships)
+        for player_id, memberships in memberships_by_player_id.items()
+    }
+
+
+def _club_ids_for_players(
+    *,
+    player_ids: tuple[int, ...],
+    memberships_by_player_id: dict[int, tuple[tuple[int, bool], ...]],
+) -> tuple[frozenset[int], frozenset[int]]:
+    club_ids: set[int] = set()
+    primary_club_ids: set[int] = set()
+    for player_id in player_ids:
+        for club_id, is_primary in memberships_by_player_id.get(player_id, ()):
+            club_ids.add(club_id)
+            if is_primary:
+                primary_club_ids.add(club_id)
     return frozenset(club_ids), frozenset(primary_club_ids)
 
 
-def _team_activity_counts(
+def _team_activity_counts_by_pair(
     session: Session,
     *,
-    player_ids: tuple[int, ...],
+    player_pairs: set[tuple[int, int]],
     source_batch: MonthlyBatch,
-) -> tuple[int, int, int]:
-    prior_match_count = 0
-    recent_match_count = 0
-    recent_game_count = 0
-    game_counts = dict(
-        session.execute(
-            select(MatchGame.match_id, func.count(MatchGame.id)).group_by(
-                MatchGame.match_id
-            )
-        ).all()
-    )
+) -> dict[tuple[int, int], tuple[int, int, int]]:
+    if not player_pairs:
+        return {}
+
+    player_ids = {player_id for player_pair in player_pairs for player_id in player_pair}
     rows: dict[int, dict[str, object]] = {}
-    for match_team_id, match_id, match_date, player_id in session.execute(
+    match_ids: set[int] = set()
+    for match_team_id, match_id, _match_date, player_id in session.execute(
         select(
             MatchTeam.id,
             Match.id,
@@ -490,35 +654,53 @@ def _team_activity_counts(
             MatchTeamPlayer.player_id.in_(set(player_ids)),
         )
     ):
+        match_ids.add(match_id)
         row = rows.setdefault(
             match_team_id,
             {
                 "match_id": match_id,
-                "match_date": match_date,
                 "player_ids": [],
             },
         )
         row["player_ids"].append(player_id)
 
-    for row in rows.values():
-        if tuple(sorted(row["player_ids"])) != player_ids:
-            continue
-        prior_match_count += 1
-        recent_match_count += 1
-        recent_game_count += int(game_counts.get(row["match_id"], 0))
+    game_counts = (
+        dict(
+            session.execute(
+                select(MatchGame.match_id, func.count(MatchGame.id))
+                .where(MatchGame.match_id.in_(match_ids))
+                .group_by(MatchGame.match_id)
+            ).all()
+        )
+        if match_ids
+        else {}
+    )
 
-    return prior_match_count, recent_match_count, recent_game_count
+    counts_by_pair = {
+        player_pair: [0, 0, 0]
+        for player_pair in player_pairs
+    }
+    for row in rows.values():
+        player_pair = tuple(sorted(row["player_ids"]))
+        if player_pair not in counts_by_pair:
+            continue
+        counts_by_pair[player_pair][0] += 1
+        counts_by_pair[player_pair][1] += 1
+        counts_by_pair[player_pair][2] += int(game_counts.get(row["match_id"], 0))
+
+    return {
+        player_pair: (counts[0], counts[1], counts[2])
+        for player_pair, counts in counts_by_pair.items()
+    }
 
 
 def _team_region_name(
-    session: Session,
-    roster_rows: list[dict[str, object]],
+    roster_rows: tuple[dict[str, object], ...],
 ) -> str | None:
-    region_ids = [row["home_region_id"] for row in roster_rows]
-    if not region_ids or region_ids[0] is None:
+    if not roster_rows:
         return None
-    region = session.get(Region, region_ids[0])
-    return None if region is None else region.region_name
+    region_name = roster_rows[0]["region_name"]
+    return None if region_name is None else str(region_name)
 
 
 def _average_age(birth_dates: list[date], *, as_of: date) -> Decimal | None:
