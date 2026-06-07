@@ -55,30 +55,77 @@ class StudentDatasetReleaseWindow:
     batch_sequence_start: int
     batch_sequence_end: int
     batches: tuple[ReleaseBatch, ...]
+    fact_batches: tuple[ReleaseBatch, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.fact_batches is None:
+            object.__setattr__(self, "fact_batches", self.batches)
+
+    @property
+    def snapshot_batches(self) -> tuple[ReleaseBatch, ...]:
+        """Return snapshot-scope monthly batches in sequence order."""
+
+        return self.batches
 
     @property
     def batch_ids(self) -> tuple[int, ...]:
-        """Return included monthly batch ids in sequence order."""
+        """Return snapshot-scope monthly batch ids in sequence order."""
 
-        return tuple(batch.id for batch in self.batches)
+        return self.snapshot_batch_ids
 
     @property
     def batch_sequences(self) -> tuple[int, ...]:
-        """Return included monthly batch sequences in sequence order."""
+        """Return snapshot-scope monthly batch sequences in sequence order."""
 
-        return tuple(batch.batch_sequence for batch in self.batches)
+        return self.snapshot_batch_sequences
 
     @property
     def batch_months(self) -> tuple[date, ...]:
-        """Return included monthly batch months in sequence order."""
+        """Return snapshot-scope monthly batch months in sequence order."""
 
-        return tuple(batch.batch_month for batch in self.batches)
+        return self.snapshot_batch_months
+
+    @property
+    def snapshot_batch_ids(self) -> tuple[int, ...]:
+        """Return snapshot-scope monthly batch ids in sequence order."""
+
+        return tuple(batch.id for batch in self.snapshot_batches)
+
+    @property
+    def snapshot_batch_sequences(self) -> tuple[int, ...]:
+        """Return snapshot-scope monthly batch sequences in sequence order."""
+
+        return tuple(batch.batch_sequence for batch in self.snapshot_batches)
+
+    @property
+    def snapshot_batch_months(self) -> tuple[date, ...]:
+        """Return snapshot-scope monthly batch months in sequence order."""
+
+        return tuple(batch.batch_month for batch in self.snapshot_batches)
+
+    @property
+    def fact_batch_ids(self) -> tuple[int, ...]:
+        """Return fact-scope monthly batch ids in sequence order."""
+
+        return tuple(batch.id for batch in self.fact_batches or ())
+
+    @property
+    def fact_batch_sequences(self) -> tuple[int, ...]:
+        """Return fact-scope monthly batch sequences in sequence order."""
+
+        return tuple(batch.batch_sequence for batch in self.fact_batches or ())
+
+    @property
+    def fact_batch_months(self) -> tuple[date, ...]:
+        """Return fact-scope monthly batch months in sequence order."""
+
+        return tuple(batch.batch_month for batch in self.fact_batches or ())
 
     @property
     def snapshot_month(self) -> date:
         """Return the newest monthly batch month included in this release."""
 
-        return self.batches[-1].batch_month
+        return self.snapshot_batches[-1].batch_month
 
     @property
     def snapshot_end_exclusive(self) -> date:
@@ -142,7 +189,7 @@ def build_release_windows(
     request: StudentDatasetReleaseRequest,
     requested_batches: Sequence[MonthlyBatch | ReleaseBatch],
 ) -> tuple[StudentDatasetReleaseWindow, ...]:
-    """Build deterministic initial-history and snapshot windows."""
+    """Build deterministic baseline and incremental release windows."""
 
     batch_by_sequence = _validate_requested_batches(request, requested_batches)
     release_windows: list[StudentDatasetReleaseWindow] = []
@@ -159,6 +206,7 @@ def build_release_windows(
             batch_sequence_start=1,
             batch_sequence_end=request.initial_history_month_count,
             batches=initial_batches,
+            fact_batches=initial_batches,
         )
     )
 
@@ -177,6 +225,7 @@ def build_release_windows(
                 batch_sequence_start=1,
                 batch_sequence_end=batch_sequence_end,
                 batches=snapshot_batches,
+                fact_batches=(batch_by_sequence[batch_sequence_end],),
             )
         )
 

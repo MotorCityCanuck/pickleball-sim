@@ -50,6 +50,8 @@ class StudentDatasetExportPreflightError(ValueError):
 class StudentDatasetExportService:
     """Operator-facing service for student dataset export jobs."""
 
+    RELEASE_FAMILY_MODE = "baseline_plus_monthly_incrementals"
+
     def register_export_job(
         self,
         *,
@@ -71,7 +73,7 @@ class StudentDatasetExportService:
             status="pending",
             current_phase="queued",
             percent_complete=Decimal("0.00"),
-            current_message="Queued student dataset export.",
+            current_message="Queued student dataset baseline and incremental export.",
         )
         session.add(job_status)
         session.flush()
@@ -97,6 +99,9 @@ class StudentDatasetExportService:
                         "generation_run_id": generation_run_id,
                         "initial_history_month_count": initial_history_month_count,
                         "subsequent_month_count": subsequent_month_count,
+                        "release_family_mode": self.RELEASE_FAMILY_MODE,
+                        "baseline_month_count": initial_history_month_count,
+                        "incremental_month_count": subsequent_month_count,
                         "output_root": str(output_root),
                         "release_name": release_name,
                         "data_quality_level": data_quality_level,
@@ -182,7 +187,7 @@ class StudentDatasetExportService:
                 job_status,
                 status="running",
                 phase="preflight",
-                message="Validating generation run, release window, and output location.",
+                message="Validating generation run, baseline/incremental plan, and output location.",
                 percent_complete=Decimal("0.00"),
                 started=True,
             )
@@ -192,7 +197,7 @@ class StudentDatasetExportService:
                 stage_name="preflight",
                 status="running",
                 current=0,
-                message="Validating generation run, release window, and output location.",
+                message="Validating generation run, baseline/incremental plan, and output location.",
             )
             self._checkpoint(session, checkpoint)
 
@@ -209,7 +214,7 @@ class StudentDatasetExportService:
                 stage_name="preflight",
                 status="succeeded",
                 current=1,
-                message=f"Planned {len(release_windows)} release window(s).",
+                message=f"Planned {len(release_windows)} baseline/incremental release folder(s).",
             )
             self._set_job_status(
                 job_status,
@@ -278,7 +283,7 @@ class StudentDatasetExportService:
                 job_status,
                 status="succeeded",
                 phase="completed",
-                message="Student dataset export completed successfully.",
+                message="Student dataset baseline and incremental export completed successfully.",
                 percent_complete=Decimal("100.00"),
                 completed=True,
             )

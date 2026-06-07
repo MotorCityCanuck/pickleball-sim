@@ -730,7 +730,8 @@ def build_control_panel_router() -> APIRouter:
                 )
                 snapshot = queries.get_control_panel_snapshot(session)
                 export_launch_message = (
-                    f"Student dataset export '{release_name.strip()}' started in background."
+                    "Student dataset baseline and incremental export "
+                    f"'{release_name.strip()}' started in background."
                 )
             except Exception as exc:
                 session.rollback()
@@ -1101,14 +1102,9 @@ def build_control_panel_router() -> APIRouter:
 
 def _default_export_config(snapshot: ControlPanelSnapshot) -> dict[str, object]:
     run = snapshot.generation_run_summary
-    config = snapshot.config_summary
     generation_run_id = run.generation_run_id if run else ""
     batch_count = run.succeeded_batch_count if run else 0
-    initial_history_month_count = (
-        config.historical_batch_count
-        if config and config.historical_batch_count
-        else batch_count
-    )
+    initial_history_month_count = 12
     if batch_count and initial_history_month_count > batch_count:
         initial_history_month_count = batch_count
     subsequent_month_count = max(batch_count - (initial_history_month_count or 0), 0)

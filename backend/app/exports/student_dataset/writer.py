@@ -250,14 +250,28 @@ def _release_manifest(
     compression: str,
     validation_result: StudentDatasetValidationResult,
 ) -> dict[str, Any]:
+    release_mode = (
+        "baseline"
+        if release_window.release_type == "historical_baseline"
+        else "monthly_incremental"
+    )
     return {
         "release_name": release_name,
+        "release_mode": release_mode,
         "release_type": release_window.release_type,
         "student_dataset_schema_version": STUDENT_DATASET_SCHEMA_VERSION,
         "source_generation_run_id": build_parameters.generation_run_id,
-        "included_batch_sequences": list(release_window.batch_sequences),
+        "included_batch_sequences": list(release_window.fact_batch_sequences),
         "included_batch_months": [
-            batch_month.isoformat() for batch_month in release_window.batch_months
+            batch_month.isoformat() for batch_month in release_window.fact_batch_months
+        ],
+        "snapshot_batch_sequences": list(release_window.snapshot_batch_sequences),
+        "snapshot_batch_months": [
+            batch_month.isoformat() for batch_month in release_window.snapshot_batch_months
+        ],
+        "fact_batch_sequences": list(release_window.fact_batch_sequences),
+        "fact_batch_months": [
+            batch_month.isoformat() for batch_month in release_window.fact_batch_months
         ],
         "snapshot_month": release_window.snapshot_month.isoformat(),
         "snapshot_end_exclusive": release_window.snapshot_end_exclusive.isoformat(),

@@ -24,7 +24,7 @@ from schema_expectations import EXPECTED_TABLES  # noqa: E402
 
 
 def test_student_dataset_schema_version_tracks_current_projection_contract():
-    assert STUDENT_DATASET_SCHEMA_VERSION == "1.1"
+    assert STUDENT_DATASET_SCHEMA_VERSION == "1.3"
 
 
 def test_projection_table_order_matches_documented_release_files():
@@ -37,9 +37,8 @@ def test_projection_table_order_matches_documented_release_files():
         "matches",
         "monthly_batches",
         "player_assessment_history",
-        "player_rating_history",
+        "player_master",
         "player_registrations",
-        "players",
         "regions",
         "team_memberships",
         "teams",
@@ -49,7 +48,11 @@ def test_projection_table_order_matches_documented_release_files():
 
 def test_projection_and_excluded_tables_cover_the_full_orm_schema():
     assert set(PROJECTION_BY_TABLE).isdisjoint(EXCLUDED_SOURCE_TABLES)
-    assert set(PROJECTION_BY_TABLE) | EXCLUDED_SOURCE_TABLES == EXPECTED_TABLES
+    assert (
+        {projection.source_table for projection in PROJECTION_BY_TABLE.values()}
+        | EXCLUDED_SOURCE_TABLES
+        == EXPECTED_TABLES
+    )
 
 
 def test_projection_contract_matches_orm_columns():
@@ -91,7 +94,7 @@ def test_get_projection_rejects_unknown_tables():
 
 def test_validate_projection_contract_detects_missing_projection():
     broken = dict(PROJECTION_BY_TABLE)
-    broken.pop("players")
+    broken.pop("player_master")
 
     original = __import__(
         "app.exports.student_dataset.projection",

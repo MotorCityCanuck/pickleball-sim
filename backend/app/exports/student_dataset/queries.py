@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from sqlalchemy import Select, and_, case, or_, select
+from sqlalchemy import Select, and_, case, func, literal, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import (
@@ -42,9 +42,21 @@ class StudentDatasetQueryContext:
 
     @property
     def batch_ids(self) -> tuple[int, ...]:
-        """Return included monthly batch ids."""
+        """Return snapshot-scope monthly batch ids."""
 
         return self.release_window.batch_ids
+
+    @property
+    def snapshot_batch_ids(self) -> tuple[int, ...]:
+        """Return snapshot-scope monthly batch ids."""
+
+        return self.release_window.snapshot_batch_ids
+
+    @property
+    def fact_batch_ids(self) -> tuple[int, ...]:
+        """Return fact-scope monthly batch ids."""
+
+        return self.release_window.fact_batch_ids
 
     @property
     def snapshot_end_exclusive(self):
@@ -85,18 +97,9 @@ def _monthly_batches_query(context: StudentDatasetQueryContext) -> Select:
         _select_projection(projection)
         .where(
             MonthlyBatch.generation_run_id == context.generation_run_id,
-            MonthlyBatch.id.in_(context.batch_ids),
+            MonthlyBatch.id.in_(context.fact_batch_ids),
         )
         .order_by(MonthlyBatch.batch_sequence, MonthlyBatch.id)
-    )
-
-
-def _players_query(context: StudentDatasetQueryContext) -> Select:
-    projection = PROJECTION_BY_TABLE["players"]
-    return (
-        _select_projection(projection)
-        .where(_included_player_predicate(context))
-        .order_by(Player.id)
     )
 
 
@@ -105,22 +108,72 @@ def _player_registrations_query(context: StudentDatasetQueryContext) -> Select:
     return (
         _select_projection(projection)
         .where(
-            PlayerRegistration.batch_id.in_(context.batch_ids),
+            PlayerRegistration.batch_id.in_(context.fact_batch_ids),
             PlayerRegistration.player_id.in_(_included_player_ids(context)),
         )
         .order_by(PlayerRegistration.id)
     )
 
 
-def _player_rating_history_query(context: StudentDatasetQueryContext) -> Select:
-    projection = PROJECTION_BY_TABLE["player_rating_history"]
-    return (
-        _select_projection(projection)
-        .where(
-            PlayerRatingHistory.batch_id.in_(context.batch_ids),
-            PlayerRatingHistory.player_id.in_(_included_player_ids(context)),
+def _player_master_query(context: StudentDatasetQueryContext) -> Select:
+    latest_ratings = (
+        select(
+            PlayerRatingHistory.player_id.label("player_id"),
+            PlayerRatingHistory.rating_value.label("rating_value"),
+            PlayerRatingHistory.confidence_score.label("confidence_score"),
+            PlayerRatingHistory.volatility_score.label("volatility_score"),
+            PlayerRatingHistory.global_percentile.label("global_percentile"),
+            PlayerRatingHistory.match_count_used.label("match_count_used"),
+            PlayerRatingHistory.rating_date.label("rating_date"),
+            PlayerRatingHistory.batch_id.label("rating_batch_id"),
+            func.row_number()
+            .over(
+                partition_by=PlayerRatingHistory.player_id,
+                order_by=(
+                    PlayerRatingHistory.rating_date.desc(),
+                    PlayerRatingHistory.id.desc(),
+                ),
+            )
+            .label("rating_rank"),
         )
-        .order_by(PlayerRatingHistory.id)
+        .where(
+            PlayerRatingHistory.batch_id.in_(context.snapshot_batch_ids),
+            PlayerRatingHistory.player_id.in_(_included_player_ids(context)),
+            PlayerRatingHistory.rating_date < context.snapshot_end_exclusive,
+        )
+        .subquery()
+    )
+    return (
+        select(
+            Player.id.label("player_id"),
+            Player.external_player_key.label("external_player_key"),
+            Player.first_name.label("first_name"),
+            Player.last_name.label("last_name"),
+            Player.gender.label("gender"),
+            Player.birth_date.label("birth_date"),
+            Player.dominant_hand.label("dominant_hand"),
+            Player.home_region_id.label("home_region_id"),
+            Player.registration_date.label("registration_date"),
+            Player.player_status.label("player_status"),
+            latest_ratings.c.rating_value.label("rating_value"),
+            latest_ratings.c.confidence_score.label("confidence_score"),
+            latest_ratings.c.volatility_score.label("volatility_score"),
+            latest_ratings.c.global_percentile.label("global_percentile"),
+            latest_ratings.c.match_count_used.label("match_count_used"),
+            latest_ratings.c.rating_date.label("rating_date"),
+            latest_ratings.c.rating_batch_id.label("rating_batch_id"),
+            literal(context.release_window.snapshot_month).label("snapshot_month"),
+        )
+        .select_from(Player)
+        .outerjoin(
+            latest_ratings,
+            and_(
+                latest_ratings.c.player_id == Player.id,
+                latest_ratings.c.rating_rank == 1,
+            ),
+        )
+        .where(_included_player_predicate(context))
+        .order_by(Player.id)
     )
 
 
@@ -129,7 +182,7 @@ def _player_assessment_history_query(context: StudentDatasetQueryContext) -> Sel
     return (
         _select_projection(projection)
         .where(
-            PlayerAssessmentHistory.batch_id.in_(context.batch_ids),
+            PlayerAssessmentHistory.batch_id.in_(context.fact_batch_ids),
             PlayerAssessmentHistory.player_id.in_(_included_player_ids(context)),
         )
         .order_by(PlayerAssessmentHistory.id)
@@ -140,7 +193,7 @@ def _matches_query(context: StudentDatasetQueryContext) -> Select:
     projection = PROJECTION_BY_TABLE["matches"]
     return (
         _select_projection(projection)
-        .where(Match.batch_id.in_(context.batch_ids))
+        .where(Match.batch_id.in_(context.fact_batch_ids))
         .order_by(Match.id)
     )
 
@@ -160,7 +213,6 @@ def _match_team_players_query(context: StudentDatasetQueryContext) -> Select:
         _select_projection(projection)
         .where(
             MatchTeamPlayer.match_team_id.in_(_included_match_team_ids(context)),
-            MatchTeamPlayer.player_id.in_(_included_player_ids(context)),
         )
         .order_by(MatchTeamPlayer.id)
     )
@@ -304,7 +356,7 @@ def _included_player_ids(context: StudentDatasetQueryContext) -> Select:
 
 
 def _included_match_ids(context: StudentDatasetQueryContext) -> Select:
-    return select(Match.id).where(Match.batch_id.in_(context.batch_ids))
+    return select(Match.id).where(Match.batch_id.in_(context.fact_batch_ids))
 
 
 def _included_match_team_ids(context: StudentDatasetQueryContext) -> Select:
@@ -359,12 +411,12 @@ def _referenced_region_ids(context: StudentDatasetQueryContext) -> Select:
     registration_regions = select(
         PlayerRegistration.assigned_region_id.label("region_id")
     ).where(
-        PlayerRegistration.batch_id.in_(context.batch_ids),
+        PlayerRegistration.batch_id.in_(context.fact_batch_ids),
         PlayerRegistration.player_id.in_(_included_player_ids(context)),
         PlayerRegistration.assigned_region_id.is_not(None),
     )
     match_regions = select(Match.region_id.label("region_id")).where(
-        Match.batch_id.in_(context.batch_ids),
+        Match.batch_id.in_(context.fact_batch_ids),
         Match.region_id.is_not(None),
     )
     return player_regions.union(club_regions, registration_regions, match_regions)
@@ -379,9 +431,8 @@ _QUERY_BUILDERS = {
     "matches": _matches_query,
     "monthly_batches": _monthly_batches_query,
     "player_assessment_history": _player_assessment_history_query,
-    "player_rating_history": _player_rating_history_query,
+    "player_master": _player_master_query,
     "player_registrations": _player_registrations_query,
-    "players": _players_query,
     "regions": _regions_query,
     "team_memberships": _team_memberships_query,
     "teams": _teams_query,

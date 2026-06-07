@@ -180,7 +180,7 @@ def test_resolve_release_request_rejects_invalid_counts(kwargs, message):
         resolve_release_request(**kwargs)
 
 
-def test_plan_release_windows_builds_initial_and_snapshot_windows(session):
+def test_plan_release_windows_builds_baseline_and_incremental_windows(session):
     generation_run = seed_generation_run(session)
     seed_monthly_batches(session, generation_run.id, count=5)
 
@@ -195,16 +195,23 @@ def test_plan_release_windows_builds_initial_and_snapshot_windows(session):
     assert windows[0].release_type == HISTORICAL_BASELINE_RELEASE_TYPE
     assert windows[0].folder_suffix == "_initial_history"
     assert windows[0].batch_sequences == (1, 2, 3)
+    assert windows[0].snapshot_batch_sequences == (1, 2, 3)
+    assert windows[0].fact_batch_sequences == (1, 2, 3)
     assert windows[0].snapshot_month == date(2025, 3, 1)
     assert windows[0].snapshot_end_exclusive == date(2025, 4, 1)
 
     assert windows[1].release_type == MONTHLY_INCREMENTAL_RELEASE_TYPE
     assert windows[1].folder_suffix == "_snapshot_2025_04"
     assert windows[1].batch_sequences == (1, 2, 3, 4)
+    assert windows[1].snapshot_batch_sequences == (1, 2, 3, 4)
+    assert windows[1].fact_batch_sequences == (4,)
+    assert windows[1].fact_batch_ids == (4,)
 
     assert windows[2].release_type == MONTHLY_INCREMENTAL_RELEASE_TYPE
     assert windows[2].folder_suffix == "_snapshot_2025_05"
     assert windows[2].batch_sequences == (1, 2, 3, 4, 5)
+    assert windows[2].snapshot_batch_sequences == (1, 2, 3, 4, 5)
+    assert windows[2].fact_batch_sequences == (5,)
     assert windows[2].batch_ids == (1, 2, 3, 4, 5)
     assert windows[2].batch_months == (
         date(2025, 1, 1),
@@ -213,6 +220,7 @@ def test_plan_release_windows_builds_initial_and_snapshot_windows(session):
         date(2025, 4, 1),
         date(2025, 5, 1),
     )
+    assert windows[2].fact_batch_months == (date(2025, 5, 1),)
 
 
 def test_plan_release_windows_requires_succeeded_generation_run(session):
@@ -312,6 +320,10 @@ def test_build_release_windows_accepts_release_batch_values_without_database():
     assert tuple(window.batch_sequences for window in windows) == (
         (1, 2),
         (1, 2, 3),
+    )
+    assert tuple(window.fact_batch_sequences for window in windows) == (
+        (1, 2),
+        (3,),
     )
 
 

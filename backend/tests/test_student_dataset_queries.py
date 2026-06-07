@@ -66,6 +66,33 @@ def query_context(release_window):
     )
 
 
+@pytest.fixture()
+def incremental_release_window():
+    return StudentDatasetReleaseWindow(
+        release_index=1,
+        release_type="monthly_incremental",
+        folder_suffix="_snapshot_2025_03",
+        batch_sequence_start=1,
+        batch_sequence_end=3,
+        batches=(
+            ReleaseBatch(id=101, batch_sequence=1, batch_month=date(2025, 1, 1)),
+            ReleaseBatch(id=102, batch_sequence=2, batch_month=date(2025, 2, 1)),
+            ReleaseBatch(id=103, batch_sequence=3, batch_month=date(2025, 3, 1)),
+        ),
+        fact_batches=(
+            ReleaseBatch(id=103, batch_sequence=3, batch_month=date(2025, 3, 1)),
+        ),
+    )
+
+
+@pytest.fixture()
+def incremental_query_context(incremental_release_window):
+    return StudentDatasetQueryContext(
+        generation_run_id=1,
+        release_window=incremental_release_window,
+    )
+
+
 def seed_snapshot_query_data(session):
     session.execute(
         text(
@@ -142,6 +169,8 @@ def seed_snapshot_query_data(session):
             VALUES
                 (1, 1, '2025-01-31', 'initial', 1400.0, 0.1, 0.2, 0.5,
                  1.0, 55.0, 0, 'internal', 101),
+                (3, 1, '2025-02-28', 'match_update', 1412.0, 0.2, 0.3, 0.5,
+                 1.0, 57.5, 3, 'internal', 102),
                 (2, 2, '2025-03-31', 'initial', 1500.0, 0.1, 0.2, 0.5,
                  1.0, 60.0, 0, 'internal', 103)
             """
@@ -330,14 +359,126 @@ def test_batch_tied_queries_use_included_batch_ids(session, query_context):
     ]
     assert [row["id"] for row in rows(session, "match_games", query_context)] == [1]
     assert [
-        row["id"] for row in rows(session, "player_rating_history", query_context)
-    ] == [1]
-    assert [
         row["id"] for row in rows(session, "player_assessment_history", query_context)
     ] == [1]
     assert [
         row["id"] for row in rows(session, "player_registrations", query_context)
     ] == [1]
+
+
+def test_incremental_batch_tied_queries_use_fact_batch_ids(
+    session,
+    incremental_query_context,
+):
+    seed_snapshot_query_data(session)
+
+    assert [
+        row["id"] for row in rows(session, "monthly_batches", incremental_query_context)
+    ] == [103]
+    assert [row["id"] for row in rows(session, "matches", incremental_query_context)] == [2]
+    assert [row["id"] for row in rows(session, "match_teams", incremental_query_context)] == [
+        20,
+    ]
+    assert [row["id"] for row in rows(session, "match_games", incremental_query_context)] == [2]
+    assert [
+        row["id"]
+        for row in rows(session, "player_assessment_history", incremental_query_context)
+    ] == [2]
+    assert [
+        row["id"]
+        for row in rows(session, "player_registrations", incremental_query_context)
+    ] == [2]
+
+
+def test_incremental_fact_queries_do_not_hide_non_snapshot_player_references(
+    session,
+    incremental_query_context,
+):
+    seed_snapshot_query_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO match_team_players (
+                id, match_team_id, player_id, player_position,
+                player_rating_at_match
+            )
+            VALUES (202, 20, 3, 2, 1300.0)
+            """
+        )
+    )
+    session.commit()
+
+    assert [
+        row["id"]
+        for row in rows(session, "match_team_players", incremental_query_context)
+    ] == [200, 202]
+
+
+def test_incremental_dimension_queries_remain_snapshot_scoped(
+    session,
+    incremental_query_context,
+):
+    seed_snapshot_query_data(session)
+
+    assert [row["player_id"] for row in rows(session, "player_master", incremental_query_context)] == [1, 2]
+    assert [row["id"] for row in rows(session, "teams", incremental_query_context)] == [
+        1,
+        2,
+        3,
+    ]
+    assert [row["id"] for row in rows(session, "club_memberships", incremental_query_context)] == [
+        1,
+        2,
+        4,
+    ]
+    assert [row["id"] for row in rows(session, "regions", incremental_query_context)] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+
+
+def test_player_master_query_uses_latest_snapshot_scope_rating(session, query_context):
+    seed_snapshot_query_data(session)
+
+    row = rows(session, "player_master", query_context)[0]
+
+    assert row["player_id"] == 1
+    assert str(row["external_player_key"]) == "00000000-0000-0000-0000-000000000001"
+    assert row["first_name"] == "Ada"
+    assert row["last_name"] == "Ace"
+    assert row["gender"] == "F"
+    assert row["birth_date"] == date(1990, 1, 1)
+    assert row["dominant_hand"] == "RIGHT"
+    assert row["home_region_id"] == 1
+    assert row["registration_date"] == date(2025, 1, 5)
+    assert row["player_status"] == "ACTIVE"
+    assert float(row["rating_value"]) == 1412.0
+    assert float(row["confidence_score"]) == 0.2
+    assert float(row["volatility_score"]) == 0.3
+    assert float(row["global_percentile"]) == 57.5
+    assert row["match_count_used"] == 3
+    assert row["rating_date"] == date(2025, 2, 28)
+    assert row["rating_batch_id"] == 102
+    assert row["snapshot_month"] == date(2025, 2, 1)
+
+
+def test_player_master_query_keeps_snapshot_players_and_latest_ratings_for_incrementals(
+    session,
+    incremental_query_context,
+):
+    seed_snapshot_query_data(session)
+
+    rows_out = rows(session, "player_master", incremental_query_context)
+
+    assert [row["player_id"] for row in rows_out] == [1, 2]
+    assert float(rows_out[0]["rating_value"]) == 1412.0
+    assert rows_out[0]["rating_batch_id"] == 102
+    assert rows_out[0]["snapshot_month"] == date(2025, 3, 1)
+    assert float(rows_out[1]["rating_value"]) == 1500.0
+    assert rows_out[1]["rating_batch_id"] == 103
+    assert rows_out[1]["rating_date"] == date(2025, 3, 31)
 
 
 def test_player_and_match_participation_queries_do_not_export_future_players(
@@ -346,7 +487,7 @@ def test_player_and_match_participation_queries_do_not_export_future_players(
 ):
     seed_snapshot_query_data(session)
 
-    assert [row["id"] for row in rows(session, "players", query_context)] == [1]
+    assert [row["player_id"] for row in rows(session, "player_master", query_context)] == [1]
     assert [row["id"] for row in rows(session, "match_team_players", query_context)] == [
         100,
         101,

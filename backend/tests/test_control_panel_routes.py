@@ -19,6 +19,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import ConfigurationLifecycleService  # noqa: E402
+from app.exports.student_dataset.service import StudentDatasetExportService  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.web.routes import get_configuration_lifecycle  # noqa: E402
 import app.web.routes as routes_module  # noqa: E402
@@ -1149,7 +1150,7 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "<details open" not in orchestration.body.decode()
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
-    assert "Start Student Dataset Export" in orchestration.body.decode()
+    assert "Start Student Dataset Baseline + Incremental Export" in orchestration.body.decode()
     assert "Start Generation Run" in orchestration.body.decode()
     assert "Estimated Dataset Size" in orchestration.body.decode()
     assert "Estimated Players" in orchestration.body.decode()
@@ -1181,9 +1182,9 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
 
     assert export_config.status_code == 200
     assert "Export Configuration" in export_config.body.decode()
-    assert "Student dataset export" in export_config.body.decode()
+    assert "Student dataset baseline and incremental export" in export_config.body.decode()
     assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
-    assert "Start Student Dataset Export" in export_config.body.decode()
+    assert "Start Student Dataset Baseline + Incremental Export" in export_config.body.decode()
     assert "copyControlPanelText" in export_config.body.decode()
 
     assert tournament_config.status_code == 200
@@ -1713,6 +1714,7 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
     body = response.body.decode()
     assert response.status_code == 200
     assert "ui_export" in body
+    assert "baseline and incremental export" in body
     assert "started in background" in body
     assert export_service.calls[0]["generation_run_id"] == 2
     assert export_service.calls[0]["release_name"] == "ui_export"
@@ -1751,7 +1753,7 @@ def test_student_dataset_export_start_route_can_return_orchestration_partial(ses
     body = response.body.decode()
     assert response.status_code == 200
     assert "Data Export" in body
-    assert "Start Student Dataset Export" in body
+    assert "Start Student Dataset Baseline + Incremental Export" in body
     assert "ui_export" in body
     assert "started in background" in body
 
@@ -1798,7 +1800,7 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
                     started_at, completed_at, created_at, updated_at
                 ) VALUES (
                     81, 'student_dataset_export', 'student-dataset-export-81', 'succeeded', 'completed', 100.00,
-                    'Student dataset export completed successfully.',
+                    'Student dataset baseline and incremental export completed successfully.',
                     '2026-05-20 10:00:00', '2026-05-20 10:07:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
@@ -1817,7 +1819,7 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Student dataset export completed successfully." in body
+    assert "Student dataset baseline and incremental export completed successfully." in body
     assert "Duration 7m 30s" in body
 
 
@@ -1845,7 +1847,7 @@ def test_export_progress_renders_release_actions(session_factory):
                 INSERT INTO student_dataset_release_files (
                     release_id, table_name, file_path, row_count, schema_hash, checksum, created_at
                 ) VALUES
-                    (61, 'players', 'data/student_dataset_exports/student_release/student_release_initial_history/players.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
+                    (61, 'player_master', 'data/student_dataset_exports/student_release/student_release_initial_history/player_master.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -1866,6 +1868,88 @@ def test_export_progress_renders_release_actions(session_factory):
     assert "Open Folder" in body
     assert "Run QC" in body
     assert "Copy Path" in body
+
+
+def test_default_export_config_prefers_twelve_month_baseline():
+    snapshot = SimpleNamespace(
+        generation_run_summary=SimpleNamespace(
+            generation_run_id=9,
+            generation_name="QA Export Run",
+            succeeded_batch_count=18,
+        ),
+        config_summary=SimpleNamespace(historical_batch_count=4),
+    )
+
+    config = routes_module._default_export_config(snapshot)
+
+    assert config["generation_run_id"] == 9
+    assert config["initial_history_month_count"] == 12
+    assert config["subsequent_month_count"] == 6
+    assert config["release_name"] == "qa_export_run"
+
+
+def test_student_dataset_export_start_route_records_incremental_export_metadata(
+    session_factory,
+):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    background_runner = FakeBackgroundRunner()
+    try:
+        response = routes["/control/export/student-dataset/start"](
+            request=_request("/control/export/student-dataset/start", method="POST"),
+            generation_run_id=2,
+            initial_history_month_count=12,
+            subsequent_month_count=3,
+            output_root="data/student_dataset_exports",
+            release_name="ui_export",
+            data_quality_level="clean",
+            overwrite_existing=None,
+            session=session,
+            queries=ControlPanelQueries(),
+            export_service=StudentDatasetExportService(),
+            background_runner=background_runner,
+        )
+
+        queued_job_id = background_runner.submissions[0][2]["job_status_id"]
+        stage_rows = session.execute(
+            text(
+                """
+                SELECT stage_name, metadata_json
+                FROM job_stage_progress
+                WHERE job_status_id = :job_status_id
+                ORDER BY stage_sequence
+                """
+            ),
+            {"job_status_id": queued_job_id},
+        ).mappings().all()
+        job_row = session.execute(
+            text(
+                """
+                SELECT current_message
+                FROM job_status
+                WHERE id = :job_status_id
+                """
+            ),
+            {"job_status_id": queued_job_id},
+        ).mappings().one()
+    finally:
+        session.close()
+
+    assert response.status_code == 200
+    assert len(background_runner.submissions) == 1
+    assert job_row["current_message"] == "Queued student dataset baseline and incremental export."
+    assert len(stage_rows) == 3
+    for row in stage_rows:
+        metadata = (
+            row["metadata_json"]
+            if isinstance(row["metadata_json"], dict)
+            else json.loads(row["metadata_json"])
+        )
+        assert metadata["release_family_mode"] == "baseline_plus_monthly_incrementals"
+        assert metadata["baseline_month_count"] == 12
+        assert metadata["incremental_month_count"] == 3
 
 
 def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):

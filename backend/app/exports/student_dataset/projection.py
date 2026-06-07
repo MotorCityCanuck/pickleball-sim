@@ -29,7 +29,7 @@ from app.models import (
 )
 
 
-STUDENT_DATASET_SCHEMA_VERSION = "1.1"
+STUDENT_DATASET_SCHEMA_VERSION = "1.3"
 
 STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "clubs",
@@ -40,9 +40,8 @@ STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "matches",
     "monthly_batches",
     "player_assessment_history",
-    "player_rating_history",
+    "player_master",
     "player_registrations",
-    "players",
     "regions",
     "team_memberships",
     "teams",
@@ -71,6 +70,7 @@ EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
         "raw_state_prov_biases",
         "student_dataset_release_files",
         "student_dataset_releases",
+        "player_rating_history",
         "team_lifecycle_events",
         "tournament_division_results",
         "tournament_events",
@@ -121,8 +121,8 @@ class StudentTableProjection:
     """Explicit table projection for one student-facing Parquet file."""
 
     source_table: str
+    output_table: str
     model: type
-    output_file: str
     source_columns: tuple[str, ...]
     included_columns: tuple[str, ...]
     excluded_columns: tuple[str, ...]
@@ -131,10 +131,16 @@ class StudentTableProjection:
     temporal_validations: tuple[TemporalValidation, ...] = ()
 
     @property
-    def output_table(self) -> str:
-        """Return the output table name implied by the Parquet file."""
+    def output_file(self) -> str:
+        """Return the output parquet file name."""
 
-        return self.output_file.removesuffix(".parquet")
+        return f"{self.output_table}.parquet"
+
+    @property
+    def is_derived(self) -> bool:
+        """Return whether this export table is derived from another source table."""
+
+        return self.output_table != self.source_table
 
 
 class ProjectionDriftError(ValueError):
@@ -145,6 +151,7 @@ def _projection(
     *,
     model: type,
     source_table: str,
+    output_table: str | None = None,
     source_columns: tuple[str, ...],
     included_columns: tuple[str, ...],
     excluded_columns: tuple[str, ...],
@@ -155,8 +162,8 @@ def _projection(
 ) -> StudentTableProjection:
     return StudentTableProjection(
         source_table=source_table,
+        output_table=output_table or source_table,
         model=model,
-        output_file=f"{source_table}.parquet",
         source_columns=source_columns,
         included_columns=included_columns,
         excluded_columns=excluded_columns,
@@ -247,7 +254,12 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "projected as null."
         ),
         relationship_validations=(
-            RelationshipValidation("club_memberships", "player_id", "players"),
+            RelationshipValidation(
+                "club_memberships",
+                "player_id",
+                "player_master",
+                parent_column="player_id",
+            ),
             RelationshipValidation("club_memberships", "club_id", "clubs"),
         ),
         temporal_validations=(
@@ -331,7 +343,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         source_filter_key="match_team_players_for_included_match_teams",
         source_filter_description=(
             "Match-team player rows whose match_team_id belongs to included "
-            "match teams."
+            "match teams; player references are validated against player_master."
         ),
         relationship_validations=(
             RelationshipValidation(
@@ -339,7 +351,12 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
                 "match_team_id",
                 "match_teams",
             ),
-            RelationshipValidation("match_team_players", "player_id", "players"),
+            RelationshipValidation(
+                "match_team_players",
+                "player_id",
+                "player_master",
+                parent_column="player_id",
+            ),
         ),
     ),
     _projection(
@@ -503,13 +520,14 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         excluded_columns=("created_at",),
         source_filter_key="player_assessments_for_included_batches",
         source_filter_description=(
-            "Assessment rows tied to included monthly batches and included players."
+            "Assessment rows tied to included monthly fact batches and included players."
         ),
         relationship_validations=(
             RelationshipValidation(
                 "player_assessment_history",
                 "player_id",
-                "players",
+                "player_master",
+                parent_column="player_id",
             ),
             RelationshipValidation(
                 "player_assessment_history",
@@ -519,54 +537,75 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
     ),
     _projection(
-        model=PlayerRatingHistory,
-        source_table="player_rating_history",
+        model=Player,
+        source_table="players",
+        output_table="player_master",
         source_columns=(
             "id",
-            "player_id",
-            "rating_date",
-            "rating_type",
-            "rating_value",
-            "confidence_score",
-            "volatility_score",
-            "expected_performance",
-            "regional_adjustment_factor",
-            "global_percentile",
-            "match_count_used",
-            "calculation_version",
-            "batch_id",
+            "external_player_key",
+            "first_name",
+            "last_name",
+            "gender",
+            "birth_date",
+            "dominant_hand",
+            "home_region_id",
+            "registration_date",
+            "initial_skill_seed",
+            "player_status",
+            "generation_run_id",
             "created_at",
             "updated_at",
         ),
         included_columns=(
-            "id",
             "player_id",
-            "rating_date",
-            "rating_type",
+            "external_player_key",
+            "first_name",
+            "last_name",
+            "gender",
+            "birth_date",
+            "dominant_hand",
+            "home_region_id",
+            "registration_date",
+            "player_status",
             "rating_value",
             "confidence_score",
             "volatility_score",
-            "regional_adjustment_factor",
             "global_percentile",
             "match_count_used",
-            "batch_id",
+            "rating_date",
+            "rating_batch_id",
+            "snapshot_month",
         ),
         excluded_columns=(
-            "expected_performance",
-            "calculation_version",
+            "id",
+            "initial_skill_seed",
+            "generation_run_id",
             "created_at",
             "updated_at",
         ),
-        source_filter_key="player_ratings_for_included_batches",
+        source_filter_key="player_master_as_of_snapshot",
         source_filter_description=(
-            "Rating rows tied to included monthly batches and included players."
+            "One row per included player with static player attributes plus the latest "
+            "available rating state as of the release snapshot month."
         ),
         relationship_validations=(
-            RelationshipValidation("player_rating_history", "player_id", "players"),
             RelationshipValidation(
-                "player_rating_history",
-                "batch_id",
-                "monthly_batches",
+                "player_master",
+                "home_region_id",
+                "regions",
+                nullable=True,
+            ),
+        ),
+        temporal_validations=(
+            TemporalValidation(
+                "player_master",
+                "registration_date < snapshot_end_exclusive",
+                "Player master rows must be registered before the release snapshot end.",
+            ),
+            TemporalValidation(
+                "player_master",
+                "rating_date IS NULL OR rating_date < snapshot_end_exclusive",
+                "Player master ratings must not be newer than the release snapshot month.",
             ),
         ),
     ),
@@ -597,10 +636,15 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         excluded_columns=("created_at",),
         source_filter_key="player_registrations_for_included_batches",
         source_filter_description=(
-            "Registration rows tied to included monthly batches and included players."
+            "Registration rows tied to included monthly fact batches and included players."
         ),
         relationship_validations=(
-            RelationshipValidation("player_registrations", "player_id", "players"),
+            RelationshipValidation(
+                "player_registrations",
+                "player_id",
+                "player_master",
+                parent_column="player_id",
+            ),
             RelationshipValidation(
                 "player_registrations",
                 "batch_id",
@@ -611,63 +655,6 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
                 "assigned_region_id",
                 "regions",
                 nullable=True,
-            ),
-        ),
-    ),
-    _projection(
-        model=Player,
-        source_table="players",
-        source_columns=(
-            "id",
-            "external_player_key",
-            "first_name",
-            "last_name",
-            "gender",
-            "birth_date",
-            "dominant_hand",
-            "home_region_id",
-            "registration_date",
-            "initial_skill_seed",
-            "player_status",
-            "generation_run_id",
-            "created_at",
-            "updated_at",
-        ),
-        included_columns=(
-            "id",
-            "external_player_key",
-            "first_name",
-            "last_name",
-            "gender",
-            "birth_date",
-            "dominant_hand",
-            "home_region_id",
-            "registration_date",
-            "player_status",
-        ),
-        excluded_columns=(
-            "initial_skill_seed",
-            "generation_run_id",
-            "created_at",
-            "updated_at",
-        ),
-        source_filter_key="players_as_of_snapshot",
-        source_filter_description=(
-            "Players for the selected run with registration_date before snapshot end."
-        ),
-        relationship_validations=(
-            RelationshipValidation(
-                "players",
-                "home_region_id",
-                "regions",
-                nullable=True,
-            ),
-        ),
-        temporal_validations=(
-            TemporalValidation(
-                "players",
-                "registration_date < snapshot_end_exclusive",
-                "Players must be registered before the release snapshot end.",
             ),
         ),
     ),
@@ -738,7 +725,12 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
         relationship_validations=(
             RelationshipValidation("team_memberships", "team_id", "teams"),
-            RelationshipValidation("team_memberships", "player_id", "players"),
+            RelationshipValidation(
+                "team_memberships",
+                "player_id",
+                "player_master",
+                parent_column="player_id",
+            ),
         ),
         temporal_validations=(
             TemporalValidation(
@@ -806,7 +798,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
 )
 
 PROJECTION_BY_TABLE: Mapping[str, StudentTableProjection] = {
-    projection.source_table: projection for projection in PROJECTIONS
+    projection.output_table: projection for projection in PROJECTIONS
 }
 
 
@@ -832,7 +824,8 @@ def validate_projection_contract(metadata=Base.metadata) -> None:
             f"missing={missing}, unexpected={unexpected}"
         )
 
-    included_and_excluded = expected_tables | EXCLUDED_SOURCE_TABLES
+    source_projected_tables = {projection.source_table for projection in PROJECTION_BY_TABLE.values()}
+    included_and_excluded = source_projected_tables | EXCLUDED_SOURCE_TABLES
     orm_tables = set(metadata.tables)
     uncovered_tables = sorted(orm_tables - included_and_excluded)
     missing_orm_tables = sorted(included_and_excluded - orm_tables)
@@ -844,9 +837,11 @@ def validate_projection_contract(metadata=Base.metadata) -> None:
 
     for table_name in STUDENT_TABLE_ORDER:
         projection = PROJECTION_BY_TABLE[table_name]
-        orm_table = metadata.tables.get(table_name)
+        orm_table = metadata.tables.get(projection.source_table)
         if orm_table is None:
-            raise ProjectionDriftError(f"Missing ORM table for {table_name}")
+            raise ProjectionDriftError(
+                f"Missing ORM table for source {projection.source_table} used by {table_name}"
+            )
 
         orm_columns = tuple(column.name for column in orm_table.columns)
         if projection.source_columns != orm_columns:
@@ -857,18 +852,24 @@ def validate_projection_contract(metadata=Base.metadata) -> None:
 
         included = set(projection.included_columns)
         excluded = set(projection.excluded_columns)
-        source = set(projection.source_columns)
         overlap = sorted(included & excluded)
-        missing = sorted(source - (included | excluded))
-        unexpected = sorted((included | excluded) - source)
-        if overlap or missing or unexpected:
+        if overlap:
             raise ProjectionDriftError(
-                f"Included/excluded columns do not partition {table_name}: "
-                f"overlap={overlap}, missing={missing}, unexpected={unexpected}"
+                f"Included/excluded columns overlap for {table_name}: overlap={overlap}"
             )
 
-        if projection.output_table != projection.source_table:
+        if not projection.is_derived:
+            source = set(projection.source_columns)
+            missing = sorted(source - (included | excluded))
+            unexpected = sorted((included | excluded) - source)
+            if missing or unexpected:
+                raise ProjectionDriftError(
+                    f"Included/excluded columns do not partition {table_name}: "
+                    f"overlap={overlap}, missing={missing}, unexpected={unexpected}"
+                )
+
+        if projection.output_table != table_name:
             raise ProjectionDriftError(
-                f"Output file does not match source table for {table_name}: "
-                f"{projection.output_file}"
+                f"Projection output table mismatch for {table_name}: "
+                f"{projection.output_table}"
             )

@@ -1,9 +1,9 @@
 <section style="display:grid; gap:16px;">
-    <div>
-        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Configuration</div>
-        <h2 style="margin:6px 0 0; font-size:22px;">Student dataset export</h2>
+        <div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Configuration</div>
+        <h2 style="margin:6px 0 0; font-size:22px;">Student dataset baseline and incremental export</h2>
         <p style="margin:6px 0 0; color:#5a6477;">
-            Configure the student-facing Parquet release family for the latest completed generation run.
+            Configure the student-facing Parquet baseline plus monthly incremental release family for the latest completed generation run.
         </p>
     </div>
 
@@ -50,7 +50,7 @@
                 >
             </label>
             <label style="display:grid; gap:6px;">
-                <span style="font-size:13px; color:#5a6477;">Subsequent snapshot months</span>
+                <span style="font-size:13px; color:#5a6477;">Subsequent incremental months</span>
                 <input
                     type="number"
                     name="subsequent_month_count"
@@ -117,7 +117,7 @@
                 <code>{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
             </div>
             <div style="margin-top:6px; color:#5a6477;">
-                Additional snapshots use <code>_snapshot_YYYY_MM</code> suffixes when subsequent months are requested.
+                Monthly incremental releases use <code>_snapshot_YYYY_MM</code> suffixes keyed to the release snapshot month.
             </div>
         </div>
 
@@ -142,7 +142,7 @@
             {% if not snapshot.allowed_actions.can_generate_student_dataset %}disabled{% endif %}
             style="justify-self:start; border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_generate_student_dataset %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
         >
-            Start Student Dataset Export
+            Start Student Dataset Baseline + Incremental Export
         </button>
     </form>
 

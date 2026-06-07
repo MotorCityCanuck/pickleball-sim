@@ -3,11 +3,6 @@
 -- Usage:
 --   SET VARIABLE release_dir = '/abs/path/to/release_folder';
 --   .read scripts/student_dataset_duckdb_quality_check.sql
---
--- Example:
---   duckdb
---   D SET VARIABLE release_dir = '/home/brett/projects/pickleball-sim/data/student_dataset_exports/run_32_student_dataset_publish_smoke/run_32_student_dataset_publish_smoke_initial_history';
---   D .read scripts/student_dataset_duckdb_quality_check.sql
 
 SET VARIABLE manifest_path = getvariable('release_dir') || '/manifest.json';
 
@@ -38,9 +33,8 @@ INSERT INTO expected_tables VALUES
     ('matches', 'matches.parquet', TRUE),
     ('monthly_batches', 'monthly_batches.parquet', TRUE),
     ('player_assessment_history', 'player_assessment_history.parquet', FALSE),
-    ('player_rating_history', 'player_rating_history.parquet', TRUE),
+    ('player_master', 'player_master.parquet', TRUE),
     ('player_registrations', 'player_registrations.parquet', TRUE),
-    ('players', 'players.parquet', TRUE),
     ('regions', 'regions.parquet', TRUE),
     ('team_memberships', 'team_memberships.parquet', TRUE),
     ('teams', 'teams.parquet', TRUE);
@@ -114,17 +108,24 @@ INSERT INTO expected_columns VALUES
     ('player_assessment_history', 6, 'confidence_score'),
     ('player_assessment_history', 7, 'derived_from_matches'),
     ('player_assessment_history', 8, 'batch_id'),
-    ('player_rating_history', 1, 'id'),
-    ('player_rating_history', 2, 'player_id'),
-    ('player_rating_history', 3, 'rating_date'),
-    ('player_rating_history', 4, 'rating_type'),
-    ('player_rating_history', 5, 'rating_value'),
-    ('player_rating_history', 6, 'confidence_score'),
-    ('player_rating_history', 7, 'volatility_score'),
-    ('player_rating_history', 8, 'regional_adjustment_factor'),
-    ('player_rating_history', 9, 'global_percentile'),
-    ('player_rating_history', 10, 'match_count_used'),
-    ('player_rating_history', 11, 'batch_id'),
+    ('player_master', 1, 'player_id'),
+    ('player_master', 2, 'external_player_key'),
+    ('player_master', 3, 'first_name'),
+    ('player_master', 4, 'last_name'),
+    ('player_master', 5, 'gender'),
+    ('player_master', 6, 'birth_date'),
+    ('player_master', 7, 'dominant_hand'),
+    ('player_master', 8, 'home_region_id'),
+    ('player_master', 9, 'registration_date'),
+    ('player_master', 10, 'player_status'),
+    ('player_master', 11, 'rating_value'),
+    ('player_master', 12, 'confidence_score'),
+    ('player_master', 13, 'volatility_score'),
+    ('player_master', 14, 'global_percentile'),
+    ('player_master', 15, 'match_count_used'),
+    ('player_master', 16, 'rating_date'),
+    ('player_master', 17, 'rating_batch_id'),
+    ('player_master', 18, 'snapshot_month'),
     ('player_registrations', 1, 'id'),
     ('player_registrations', 2, 'player_id'),
     ('player_registrations', 3, 'batch_id'),
@@ -133,16 +134,6 @@ INSERT INTO expected_columns VALUES
     ('player_registrations', 6, 'assigned_region_id'),
     ('player_registrations', 7, 'initial_rating_value'),
     ('player_registrations', 8, 'initial_confidence_score'),
-    ('players', 1, 'id'),
-    ('players', 2, 'external_player_key'),
-    ('players', 3, 'first_name'),
-    ('players', 4, 'last_name'),
-    ('players', 5, 'gender'),
-    ('players', 6, 'birth_date'),
-    ('players', 7, 'dominant_hand'),
-    ('players', 8, 'home_region_id'),
-    ('players', 9, 'registration_date'),
-    ('players', 10, 'player_status'),
     ('regions', 1, 'id'),
     ('regions', 2, 'country_code'),
     ('regions', 3, 'region_type'),
@@ -160,42 +151,113 @@ INSERT INTO expected_columns VALUES
     ('teams', 1, 'id'),
     ('teams', 2, 'team_type'),
     ('teams', 3, 'team_status'),
-    ('teams', 4, 'formation_date'),
-    ('teams', 5, 'dissolution_date'),
-    ('teams', 6, 'chemistry_score'),
-    ('teams', 7, 'persistence_probability');
-
-CREATE OR REPLACE TEMP TABLE excluded_parquet_files (file_name VARCHAR);
-
-INSERT INTO excluded_parquet_files VALUES
-    ('batch_runs.parquet'),
-    ('configuration_profile_versions.parquet'),
-    ('configuration_profiles.parquet'),
-    ('export_runs.parquet'),
-    ('first_names.parquet'),
-    ('generation_runtime_metrics.parquet'),
-    ('generation_runs.parquet'),
-    ('job_stage_progress.parquet'),
-    ('job_status.parquet'),
-    ('last_names.parquet'),
-    ('ratings_update_log.parquet'),
-    ('raw_first_names.parquet'),
-    ('raw_last_names.parquet'),
-    ('raw_metro_areas.parquet'),
-    ('raw_pickleball_club_distributions.parquet'),
-    ('raw_pickleball_club_names.parquet'),
-    ('raw_seed_load_errors.parquet'),
-    ('raw_seed_load_runs.parquet'),
-    ('raw_state_prov_biases.parquet'),
-    ('student_dataset_release_files.parquet'),
-    ('student_dataset_releases.parquet'),
-    ('tournaments.parquet'),
-    ('uploaded_files.parquet'),
-    ('validation_results.parquet');
+    ('teams', 4, 'country_code'),
+    ('teams', 5, 'formation_date'),
+    ('teams', 6, 'dissolution_date');
 
 CREATE OR REPLACE TEMP VIEW actual_files AS
 SELECT regexp_extract(file, '[^/]+$', 0) AS file_name
 FROM glob(getvariable('release_dir') || '/*.parquet');
+
+INSERT INTO qc_results
+SELECT
+    'files',
+    'file_exists:' || table_name,
+    CASE WHEN EXISTS (
+        SELECT 1 FROM actual_files WHERE file_name = output_file
+    ) THEN 'passed' ELSE 'failed' END,
+    CASE WHEN EXISTS (
+        SELECT 1 FROM actual_files WHERE file_name = output_file
+    ) THEN 0 ELSE 1 END,
+    output_file
+FROM expected_tables;
+
+INSERT INTO qc_results
+SELECT
+    'files',
+    'unexpected_parquet_files_absent',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    COALESCE(string_agg(file_name, ', ' ORDER BY file_name), '')
+FROM (
+    SELECT file_name FROM actual_files
+    EXCEPT
+    SELECT output_file FROM expected_tables
+) unexpected;
+
+CREATE OR REPLACE VIEW clubs AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/clubs.parquet');
+
+CREATE OR REPLACE VIEW club_memberships AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/club_memberships.parquet');
+
+CREATE OR REPLACE VIEW match_games AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/match_games.parquet');
+
+CREATE OR REPLACE VIEW match_team_players AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/match_team_players.parquet');
+
+CREATE OR REPLACE VIEW match_teams AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/match_teams.parquet');
+
+CREATE OR REPLACE VIEW matches AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/matches.parquet');
+
+CREATE OR REPLACE VIEW monthly_batches AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/monthly_batches.parquet');
+
+CREATE OR REPLACE VIEW player_assessment_history AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/player_assessment_history.parquet');
+
+CREATE OR REPLACE VIEW player_master AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/player_master.parquet');
+
+CREATE OR REPLACE VIEW player_registrations AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/player_registrations.parquet');
+
+CREATE OR REPLACE VIEW regions AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/regions.parquet');
+
+CREATE OR REPLACE VIEW team_memberships AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/team_memberships.parquet');
+
+CREATE OR REPLACE VIEW teams AS
+SELECT * FROM read_parquet(getvariable('release_dir') || '/teams.parquet');
+
+CREATE OR REPLACE TEMP VIEW actual_columns AS
+SELECT 'clubs' AS table_name, cid + 1 AS ordinal, name AS column_name FROM pragma_table_info('clubs')
+UNION ALL SELECT 'club_memberships', cid + 1, name FROM pragma_table_info('club_memberships')
+UNION ALL SELECT 'match_games', cid + 1, name FROM pragma_table_info('match_games')
+UNION ALL SELECT 'match_team_players', cid + 1, name FROM pragma_table_info('match_team_players')
+UNION ALL SELECT 'match_teams', cid + 1, name FROM pragma_table_info('match_teams')
+UNION ALL SELECT 'matches', cid + 1, name FROM pragma_table_info('matches')
+UNION ALL SELECT 'monthly_batches', cid + 1, name FROM pragma_table_info('monthly_batches')
+UNION ALL SELECT 'player_assessment_history', cid + 1, name FROM pragma_table_info('player_assessment_history')
+UNION ALL SELECT 'player_master', cid + 1, name FROM pragma_table_info('player_master')
+UNION ALL SELECT 'player_registrations', cid + 1, name FROM pragma_table_info('player_registrations')
+UNION ALL SELECT 'regions', cid + 1, name FROM pragma_table_info('regions')
+UNION ALL SELECT 'team_memberships', cid + 1, name FROM pragma_table_info('team_memberships')
+UNION ALL SELECT 'teams', cid + 1, name FROM pragma_table_info('teams');
+
+CREATE OR REPLACE TEMP VIEW expected_column_lists AS
+SELECT table_name, to_json(list(column_name ORDER BY ordinal)) AS columns_json
+FROM expected_columns
+GROUP BY table_name;
+
+CREATE OR REPLACE TEMP VIEW actual_column_lists AS
+SELECT table_name, to_json(list(column_name ORDER BY ordinal)) AS columns_json
+FROM actual_columns
+GROUP BY table_name;
+
+INSERT INTO qc_results
+SELECT
+    'schema',
+    'column_order:' || expected.table_name,
+    CASE WHEN expected.columns_json = actual.columns_json THEN 'passed' ELSE 'failed' END,
+    CASE WHEN expected.columns_json = actual.columns_json THEN 0 ELSE 1 END,
+    'expected=' || expected.columns_json || ' actual=' || actual.columns_json
+FROM expected_column_lists expected
+JOIN actual_column_lists actual USING (table_name);
 
 CREATE OR REPLACE TEMP VIEW manifest_row_counts AS
 SELECT * FROM (
@@ -207,105 +269,14 @@ SELECT * FROM (
     UNION ALL SELECT 'matches', manifest.row_counts.matches FROM manifest
     UNION ALL SELECT 'monthly_batches', manifest.row_counts.monthly_batches FROM manifest
     UNION ALL SELECT 'player_assessment_history', manifest.row_counts.player_assessment_history FROM manifest
-    UNION ALL SELECT 'player_rating_history', manifest.row_counts.player_rating_history FROM manifest
+    UNION ALL SELECT 'player_master', manifest.row_counts.player_master FROM manifest
     UNION ALL SELECT 'player_registrations', manifest.row_counts.player_registrations FROM manifest
-    UNION ALL SELECT 'players', manifest.row_counts.players FROM manifest
     UNION ALL SELECT 'regions', manifest.row_counts.regions FROM manifest
     UNION ALL SELECT 'team_memberships', manifest.row_counts.team_memberships FROM manifest
     UNION ALL SELECT 'teams', manifest.row_counts.teams FROM manifest
 );
 
-CREATE OR REPLACE TEMP VIEW manifest_ordered_columns AS
-SELECT * FROM (
-    SELECT 'clubs' AS table_name, c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.clubs) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'club_memberships', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.club_memberships) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'match_games', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.match_games) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'match_team_players', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.match_team_players) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'match_teams', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.match_teams) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'matches', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.matches) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'monthly_batches', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.monthly_batches) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'player_assessment_history', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.player_assessment_history) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'player_rating_history', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.player_rating_history) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'player_registrations', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.player_registrations) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'players', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.players) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'regions', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.regions) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'team_memberships', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.team_memberships) WITH ORDINALITY AS c(column_name, ordinal)
-    UNION ALL SELECT 'teams', c.column_name, c.ordinal FROM manifest, unnest(manifest.ordered_columns.teams) WITH ORDINALITY AS c(column_name, ordinal)
-);
-
-CREATE OR REPLACE VIEW clubs AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/clubs.parquet');
-
-CREATE OR REPLACE VIEW club_memberships AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/club_memberships.parquet');
-
-CREATE OR REPLACE VIEW match_games AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/match_games.parquet');
-
-CREATE OR REPLACE VIEW match_team_players AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/match_team_players.parquet');
-
-CREATE OR REPLACE VIEW match_teams AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/match_teams.parquet');
-
-CREATE OR REPLACE VIEW matches AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/matches.parquet');
-
-CREATE OR REPLACE VIEW monthly_batches AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/monthly_batches.parquet');
-
-CREATE OR REPLACE VIEW player_assessment_history AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/player_assessment_history.parquet');
-
-CREATE OR REPLACE VIEW player_rating_history AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/player_rating_history.parquet');
-
-CREATE OR REPLACE VIEW player_registrations AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/player_registrations.parquet');
-
-CREATE OR REPLACE VIEW players AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/players.parquet');
-
-CREATE OR REPLACE VIEW regions AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/regions.parquet');
-
-CREATE OR REPLACE VIEW team_memberships AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/team_memberships.parquet');
-
-CREATE OR REPLACE VIEW teams AS
-SELECT *
-FROM read_parquet(getvariable('release_dir') || '/teams.parquet');
-
-CREATE OR REPLACE TEMP VIEW actual_table_columns AS
-SELECT 'clubs' AS table_name, cid + 1 AS ordinal, name AS column_name FROM pragma_table_info('clubs')
-UNION ALL SELECT 'club_memberships', cid + 1, name FROM pragma_table_info('club_memberships')
-UNION ALL SELECT 'match_games', cid + 1, name FROM pragma_table_info('match_games')
-UNION ALL SELECT 'match_team_players', cid + 1, name FROM pragma_table_info('match_team_players')
-UNION ALL SELECT 'match_teams', cid + 1, name FROM pragma_table_info('match_teams')
-UNION ALL SELECT 'matches', cid + 1, name FROM pragma_table_info('matches')
-UNION ALL SELECT 'monthly_batches', cid + 1, name FROM pragma_table_info('monthly_batches')
-UNION ALL SELECT 'player_assessment_history', cid + 1, name FROM pragma_table_info('player_assessment_history')
-UNION ALL SELECT 'player_rating_history', cid + 1, name FROM pragma_table_info('player_rating_history')
-UNION ALL SELECT 'player_registrations', cid + 1, name FROM pragma_table_info('player_registrations')
-UNION ALL SELECT 'players', cid + 1, name FROM pragma_table_info('players')
-UNION ALL SELECT 'regions', cid + 1, name FROM pragma_table_info('regions')
-UNION ALL SELECT 'team_memberships', cid + 1, name FROM pragma_table_info('team_memberships')
-UNION ALL SELECT 'teams', cid + 1, name FROM pragma_table_info('teams');
-
-CREATE OR REPLACE TEMP VIEW actual_table_row_counts AS
+CREATE OR REPLACE TEMP VIEW actual_row_counts AS
 SELECT 'clubs' AS table_name, COUNT(*) AS row_count FROM clubs
 UNION ALL SELECT 'club_memberships', COUNT(*) FROM club_memberships
 UNION ALL SELECT 'match_games', COUNT(*) FROM match_games
@@ -314,134 +285,61 @@ UNION ALL SELECT 'match_teams', COUNT(*) FROM match_teams
 UNION ALL SELECT 'matches', COUNT(*) FROM matches
 UNION ALL SELECT 'monthly_batches', COUNT(*) FROM monthly_batches
 UNION ALL SELECT 'player_assessment_history', COUNT(*) FROM player_assessment_history
-UNION ALL SELECT 'player_rating_history', COUNT(*) FROM player_rating_history
+UNION ALL SELECT 'player_master', COUNT(*) FROM player_master
 UNION ALL SELECT 'player_registrations', COUNT(*) FROM player_registrations
-UNION ALL SELECT 'players', COUNT(*) FROM players
 UNION ALL SELECT 'regions', COUNT(*) FROM regions
 UNION ALL SELECT 'team_memberships', COUNT(*) FROM team_memberships
 UNION ALL SELECT 'teams', COUNT(*) FROM teams;
 
 INSERT INTO qc_results
 SELECT
-    'manifest' AS category,
-    'manifest.validation_status' AS check_name,
-    CASE WHEN validation_status = 'passed' THEN 'passed' ELSE 'failed' END AS status,
-    CASE WHEN validation_status = 'passed' THEN 0 ELSE 1 END AS failure_count,
-    'validation_status=' || validation_status AS details
+    'counts',
+    'row_count:' || manifest.table_name,
+    CASE WHEN manifest.row_count = actual.row_count THEN 'passed' ELSE 'failed' END,
+    ABS(manifest.row_count - actual.row_count),
+    'manifest=' || manifest.row_count || ' actual=' || actual.row_count
+FROM manifest_row_counts manifest
+JOIN actual_row_counts actual USING (table_name);
+
+INSERT INTO qc_results
+SELECT
+    'counts',
+    'required_non_empty:' || table_name,
+    CASE WHEN row_count > 0 THEN 'passed' ELSE 'failed' END,
+    CASE WHEN row_count > 0 THEN 0 ELSE 1 END,
+    'row_count=' || row_count
+FROM actual_row_counts
+WHERE table_name IN (
+    SELECT table_name
+    FROM expected_tables
+    WHERE required_non_empty
+);
+
+INSERT INTO qc_results
+SELECT
+    'manifest',
+    'schema_version_is_1_3',
+    CASE WHEN student_dataset_schema_version = '1.3' THEN 'passed' ELSE 'failed' END,
+    CASE WHEN student_dataset_schema_version = '1.3' THEN 0 ELSE 1 END,
+    COALESCE(student_dataset_schema_version, '')
 FROM manifest;
 
 INSERT INTO qc_results
 SELECT
-    'files',
-    'expected_parquet_file_count',
-    CASE WHEN COUNT(*) = 14 THEN 'passed' ELSE 'failed' END,
-    ABS(COUNT(*) - 14),
-    'actual_file_count=' || COUNT(*)::VARCHAR
-FROM actual_files;
-
-INSERT INTO qc_results
-SELECT
-    'files',
-    'unexpected_parquet_files',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    COALESCE(string_agg(actual.file_name, ', ' ORDER BY actual.file_name), '')
-FROM actual_files actual
-LEFT JOIN expected_tables expected
-  ON expected.output_file = actual.file_name
-WHERE expected.output_file IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'files',
-    'excluded_source_parquet_files',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    COALESCE(string_agg(actual.file_name, ', ' ORDER BY actual.file_name), '')
-FROM actual_files actual
-INNER JOIN excluded_parquet_files excluded
-  ON excluded.file_name = actual.file_name;
-
-INSERT INTO qc_results
-SELECT
     'manifest',
-    'manifest_row_counts_cover_expected_tables',
-    CASE WHEN COUNT(*) = 14 THEN 'passed' ELSE 'failed' END,
-    ABS(COUNT(*) - 14),
-    'manifest_row_count_entries=' || COUNT(*)::VARCHAR
-FROM manifest_row_counts;
-
-INSERT INTO qc_results
-SELECT
-    'manifest',
-    'manifest_ordered_columns_cover_expected_tables',
-    CASE WHEN COUNT(DISTINCT table_name) = 14 THEN 'passed' ELSE 'failed' END,
-    ABS(COUNT(DISTINCT table_name) - 14),
-    'manifest_tables=' || COUNT(DISTINCT table_name)::VARCHAR
-FROM manifest_ordered_columns;
-
-INSERT INTO qc_results
-SELECT
-    'schema',
-    'column_order:' || table_name,
-    CASE WHEN actual_columns = expected_columns THEN 'passed' ELSE 'failed' END,
-    CASE WHEN actual_columns = expected_columns THEN 0 ELSE 1 END,
-    'expected=' || to_json(expected_columns) || ' actual=' || to_json(actual_columns)
-FROM (
-    SELECT
-        expected.table_name,
-        list(expected.column_name ORDER BY expected.ordinal) AS expected_columns,
-        list(actual.column_name ORDER BY actual.ordinal) AS actual_columns
-    FROM expected_columns expected
-    LEFT JOIN actual_table_columns actual
-      ON actual.table_name = expected.table_name
-     AND actual.ordinal = expected.ordinal
-    GROUP BY expected.table_name
-) comparison;
-
-INSERT INTO qc_results
-SELECT
-    'schema',
-    'manifest_column_order:' || expected.table_name,
-    CASE WHEN actual.actual_columns = manifest_columns.manifest_columns THEN 'passed' ELSE 'failed' END,
-    CASE WHEN actual.actual_columns = manifest_columns.manifest_columns THEN 0 ELSE 1 END,
-    'manifest=' || to_json(manifest_columns.manifest_columns) || ' actual=' || to_json(actual.actual_columns)
-FROM (
-    SELECT table_name, list(column_name ORDER BY ordinal) AS actual_columns
-    FROM actual_table_columns
-    GROUP BY table_name
-) actual
-JOIN (
-    SELECT table_name, list(column_name ORDER BY ordinal) AS manifest_columns
-    FROM manifest_ordered_columns
-    GROUP BY table_name
-) manifest_columns
-  ON manifest_columns.table_name = actual.table_name
-JOIN expected_tables expected
-  ON expected.table_name = actual.table_name;
-
-INSERT INTO qc_results
-SELECT
-    'counts',
-    'row_count:' || actual.table_name,
-    CASE WHEN actual.row_count = manifest_rows.row_count THEN 'passed' ELSE 'failed' END,
-    ABS(actual.row_count - manifest_rows.row_count),
-    'manifest=' || manifest_rows.row_count::VARCHAR || ' actual=' || actual.row_count::VARCHAR
-FROM actual_table_row_counts actual
-JOIN manifest_row_counts manifest_rows
-  ON manifest_rows.table_name = actual.table_name;
-
-INSERT INTO qc_results
-SELECT
-    'counts',
-    'required_non_empty:' || actual.table_name,
-    CASE WHEN actual.row_count > 0 THEN 'passed' ELSE 'failed' END,
-    CASE WHEN actual.row_count > 0 THEN 0 ELSE 1 END,
-    'row_count=' || actual.row_count::VARCHAR
-FROM actual_table_row_counts actual
-JOIN expected_tables expected
-  ON expected.table_name = actual.table_name
-WHERE expected.required_non_empty;
+    'monthly_batches_match_fact_batch_sequences',
+    CASE
+        WHEN COALESCE((SELECT to_json(list(batch_sequence ORDER BY batch_sequence)) FROM monthly_batches), '[]')
+            = COALESCE((SELECT to_json(fact_batch_sequences) FROM manifest), '[]')
+        THEN 'passed' ELSE 'failed'
+    END,
+    CASE
+        WHEN COALESCE((SELECT to_json(list(batch_sequence ORDER BY batch_sequence)) FROM monthly_batches), '[]')
+            = COALESCE((SELECT to_json(fact_batch_sequences) FROM manifest), '[]')
+        THEN 0 ELSE 1
+    END,
+    'actual=' || COALESCE((SELECT to_json(list(batch_sequence ORDER BY batch_sequence)) FROM monthly_batches), '[]')
+        || ' manifest=' || COALESCE((SELECT to_json(fact_batch_sequences) FROM manifest), '[]');
 
 INSERT INTO qc_results
 SELECT
@@ -449,23 +347,22 @@ SELECT
     'clubs.region_id->regions.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing region refs'
 FROM clubs child
-LEFT JOIN regions parent
-  ON parent.id = child.region_id
-WHERE parent.id IS NULL;
+LEFT JOIN regions parent ON parent.id = child.region_id
+WHERE child.region_id IS NOT NULL
+  AND parent.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
     'relationships',
-    'club_memberships.player_id->players.id',
+    'club_memberships.player_id->player_master.player_id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing player refs'
 FROM club_memberships child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
-WHERE parent.id IS NULL;
+LEFT JOIN player_master parent ON parent.player_id = child.player_id
+WHERE parent.player_id IS NULL;
 
 INSERT INTO qc_results
 SELECT
@@ -473,58 +370,9 @@ SELECT
     'club_memberships.club_id->clubs.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing club refs'
 FROM club_memberships child
-LEFT JOIN clubs parent
-  ON parent.id = child.club_id
-WHERE parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'match_games.match_id->matches.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM match_games child
-LEFT JOIN matches parent
-  ON parent.id = child.match_id
-WHERE parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'match_team_players.match_team_id->match_teams.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM match_team_players child
-LEFT JOIN match_teams parent
-  ON parent.id = child.match_team_id
-WHERE parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'match_team_players.player_id->players.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM match_team_players child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
-WHERE parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'match_teams.match_id->matches.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM match_teams child
-LEFT JOIN matches parent
-  ON parent.id = child.match_id
+LEFT JOIN clubs parent ON parent.id = child.club_id
 WHERE parent.id IS NULL;
 
 INSERT INTO qc_results
@@ -533,10 +381,9 @@ SELECT
     'matches.region_id->regions.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing region refs'
 FROM matches child
-LEFT JOIN regions parent
-  ON parent.id = child.region_id
+LEFT JOIN regions parent ON parent.id = child.region_id
 WHERE child.region_id IS NOT NULL
   AND parent.id IS NULL;
 
@@ -546,10 +393,9 @@ SELECT
     'matches.batch_id->monthly_batches.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing batch refs'
 FROM matches child
-LEFT JOIN monthly_batches parent
-  ON parent.id = child.batch_id
+LEFT JOIN monthly_batches parent ON parent.id = child.batch_id
 WHERE parent.id IS NULL;
 
 INSERT INTO qc_results
@@ -558,24 +404,66 @@ SELECT
     'matches.winning_team_id->match_teams.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing winning-team refs'
 FROM matches child
-LEFT JOIN match_teams parent
-  ON parent.id = child.winning_team_id
+LEFT JOIN match_teams parent ON parent.id = child.winning_team_id
 WHERE child.winning_team_id IS NOT NULL
   AND parent.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
     'relationships',
-    'player_assessment_history.player_id->players.id',
+    'match_games.match_id->matches.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM player_assessment_history child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
+    'missing match refs'
+FROM match_games child
+LEFT JOIN matches parent ON parent.id = child.match_id
 WHERE parent.id IS NULL;
+
+INSERT INTO qc_results
+SELECT
+    'relationships',
+    'match_teams.match_id->matches.id',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'missing match refs'
+FROM match_teams child
+LEFT JOIN matches parent ON parent.id = child.match_id
+WHERE parent.id IS NULL;
+
+INSERT INTO qc_results
+SELECT
+    'relationships',
+    'match_team_players.match_team_id->match_teams.id',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'missing match-team refs'
+FROM match_team_players child
+LEFT JOIN match_teams parent ON parent.id = child.match_team_id
+WHERE parent.id IS NULL;
+
+INSERT INTO qc_results
+SELECT
+    'relationships',
+    'match_team_players.player_id->player_master.player_id',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'missing player refs'
+FROM match_team_players child
+LEFT JOIN player_master parent ON parent.player_id = child.player_id
+WHERE parent.player_id IS NULL;
+
+INSERT INTO qc_results
+SELECT
+    'relationships',
+    'player_assessment_history.player_id->player_master.player_id',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'missing player refs'
+FROM player_assessment_history child
+LEFT JOIN player_master parent ON parent.player_id = child.player_id
+WHERE parent.player_id IS NULL;
 
 INSERT INTO qc_results
 SELECT
@@ -583,47 +471,33 @@ SELECT
     'player_assessment_history.batch_id->monthly_batches.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing batch refs'
 FROM player_assessment_history child
-LEFT JOIN monthly_batches parent
-  ON parent.id = child.batch_id
+LEFT JOIN monthly_batches parent ON parent.id = child.batch_id
 WHERE parent.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
     'relationships',
-    'player_rating_history.player_id->players.id',
+    'player_master.home_region_id->regions.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM player_rating_history child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
-WHERE parent.id IS NULL;
+    'missing home-region refs'
+FROM player_master child
+LEFT JOIN regions parent ON parent.id = child.home_region_id
+WHERE child.home_region_id IS NOT NULL
+  AND parent.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
     'relationships',
-    'player_rating_history.batch_id->monthly_batches.id',
+    'player_registrations.player_id->player_master.player_id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM player_rating_history child
-LEFT JOIN monthly_batches parent
-  ON parent.id = child.batch_id
-WHERE parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'player_registrations.player_id->players.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing player refs'
 FROM player_registrations child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
-WHERE parent.id IS NULL;
+LEFT JOIN player_master parent ON parent.player_id = child.player_id
+WHERE parent.player_id IS NULL;
 
 INSERT INTO qc_results
 SELECT
@@ -631,10 +505,9 @@ SELECT
     'player_registrations.batch_id->monthly_batches.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing batch refs'
 FROM player_registrations child
-LEFT JOIN monthly_batches parent
-  ON parent.id = child.batch_id
+LEFT JOIN monthly_batches parent ON parent.id = child.batch_id
 WHERE parent.id IS NULL;
 
 INSERT INTO qc_results
@@ -643,24 +516,10 @@ SELECT
     'player_registrations.assigned_region_id->regions.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing assigned-region refs'
 FROM player_registrations child
-LEFT JOIN regions parent
-  ON parent.id = child.assigned_region_id
+LEFT JOIN regions parent ON parent.id = child.assigned_region_id
 WHERE child.assigned_region_id IS NOT NULL
-  AND parent.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'relationships',
-    'players.home_region_id->regions.id',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
-FROM players child
-LEFT JOIN regions parent
-  ON parent.id = child.home_region_id
-WHERE child.home_region_id IS NOT NULL
   AND parent.id IS NULL;
 
 INSERT INTO qc_results
@@ -669,262 +528,199 @@ SELECT
     'team_memberships.team_id->teams.id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing team refs'
 FROM team_memberships child
-LEFT JOIN teams parent
-  ON parent.id = child.team_id
+LEFT JOIN teams parent ON parent.id = child.team_id
 WHERE parent.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
     'relationships',
-    'team_memberships.player_id->players.id',
+    'team_memberships.player_id->player_master.player_id',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_parent_rows=' || COUNT(*)::VARCHAR
+    'missing player refs'
 FROM team_memberships child
-LEFT JOIN players parent
-  ON parent.id = child.player_id
-WHERE parent.id IS NULL;
+LEFT JOIN player_master parent ON parent.player_id = child.player_id
+WHERE parent.player_id IS NULL;
 
 INSERT INTO qc_results
 SELECT
-    'match_shape',
-    'matches.winning_team_id_same_match',
+    'shape',
+    'matches_have_exactly_two_match_teams',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'mismatch_count=' || COUNT(*)::VARCHAR
-FROM matches m
-LEFT JOIN match_teams mt
-  ON mt.id = m.winning_team_id
- AND mt.match_id = m.id
-WHERE m.winning_team_id IS NOT NULL
-  AND mt.id IS NULL;
-
-INSERT INTO qc_results
-SELECT
-    'match_shape',
-    'exactly_two_match_teams_per_match',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
+    'matches with non-two team counts'
 FROM (
-    SELECT m.id
-    FROM matches m
-    LEFT JOIN match_teams mt
-      ON mt.match_id = m.id
-    GROUP BY m.id
-    HAVING COUNT(mt.id) <> 2
-) failures;
+    SELECT match_id
+    FROM match_teams
+    GROUP BY match_id
+    HAVING COUNT(*) <> 2
+) invalid;
 
 INSERT INTO qc_results
 SELECT
-    'match_shape',
+    'shape',
     'match_teams_have_players',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
+    'match teams without players'
 FROM (
     SELECT mt.id
     FROM match_teams mt
-    LEFT JOIN match_team_players mtp
-      ON mtp.match_team_id = mt.id
+    LEFT JOIN match_team_players mtp ON mtp.match_team_id = mt.id
     GROUP BY mt.id
     HAVING COUNT(mtp.id) = 0
-) failures;
+) invalid;
 
 INSERT INTO qc_results
 SELECT
-    'temporal',
-    'monthly_batches_match_manifest_sequences',
-    CASE WHEN COALESCE(to_json(list(batch_sequence ORDER BY batch_sequence)), '[]') = COALESCE(to_json(included_batch_sequences), '[]')
-         THEN 'passed' ELSE 'failed' END,
-    CASE WHEN COALESCE(to_json(list(batch_sequence ORDER BY batch_sequence)), '[]') = COALESCE(to_json(included_batch_sequences), '[]')
-         THEN 0 ELSE 1 END,
-    'manifest=' || COALESCE(to_json(included_batch_sequences), '[]')
-    || ' actual=' || COALESCE(to_json(list(batch_sequence ORDER BY batch_sequence)), '[]')
-FROM monthly_batches
-CROSS JOIN manifest
-GROUP BY included_batch_sequences;
-
-INSERT INTO qc_results
-SELECT
-    'temporal',
-    'monthly_batch_months_unique',
+    'player_master',
+    'player_master_one_row_per_player',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'duplicate_month_count=' || COUNT(*)::VARCHAR
+    'duplicate player ids'
 FROM (
-    SELECT batch_month
-    FROM monthly_batches
-    GROUP BY batch_month
+    SELECT player_id
+    FROM player_master
+    GROUP BY player_id
     HAVING COUNT(*) > 1
 ) duplicates;
 
 INSERT INTO qc_results
 SELECT
-    'temporal',
-    'clubs_founding_date_before_snapshot_end',
+    'player_master',
+    'player_master_snapshot_month_consistent',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
+    'rows with mismatched snapshot_month'
+FROM player_master
+WHERE snapshot_month <> (SELECT CAST(snapshot_month AS DATE) FROM manifest);
+
+INSERT INTO qc_results
+SELECT
+    'player_master',
+    'player_master_rating_state_coherent',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'rows with inconsistent rating state'
+FROM player_master
+WHERE (
+    rating_date IS NULL
+    AND (
+        rating_value IS NOT NULL
+        OR rating_batch_id IS NOT NULL
+        OR confidence_score IS NOT NULL
+        OR volatility_score IS NOT NULL
+        OR global_percentile IS NOT NULL
+        OR match_count_used IS NOT NULL
+    )
+) OR (
+    rating_date IS NOT NULL
+    AND (rating_value IS NULL OR rating_batch_id IS NULL)
+);
+
+INSERT INTO qc_results
+SELECT
+    'temporal',
+    'player_master_registration_before_snapshot_end',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'rows on or after snapshot_end_exclusive'
+FROM player_master
+WHERE registration_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest);
+
+INSERT INTO qc_results
+SELECT
+    'temporal',
+    'player_master_rating_before_snapshot_end',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'rating rows on or after snapshot_end_exclusive'
+FROM player_master
+WHERE rating_date IS NOT NULL
+  AND rating_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest);
+
+INSERT INTO qc_results
+SELECT
+    'temporal',
+    'clubs_founded_before_snapshot_end',
+    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
+    COUNT(*),
+    'club rows on or after snapshot_end_exclusive'
 FROM clubs
-CROSS JOIN manifest
 WHERE founding_date IS NOT NULL
-  AND CAST(founding_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
+  AND founding_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest);
 
 INSERT INTO qc_results
 SELECT
     'temporal',
-    'club_memberships_start_before_snapshot_end',
+    'club_memberships_dates_before_snapshot_end',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
+    'membership rows leaking future dates'
 FROM club_memberships
-CROSS JOIN manifest
-WHERE CAST(start_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
+WHERE start_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest)
+   OR (end_date IS NOT NULL AND end_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest));
 
 INSERT INTO qc_results
 SELECT
     'temporal',
-    'club_memberships_end_not_in_future',
+    'teams_dates_before_snapshot_end',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
-FROM club_memberships
-CROSS JOIN manifest
-WHERE end_date IS NOT NULL
-  AND CAST(end_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
-
-INSERT INTO qc_results
-SELECT
-    'temporal',
-    'players_registration_before_snapshot_end',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
-FROM players
-CROSS JOIN manifest
-WHERE CAST(registration_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
-
-INSERT INTO qc_results
-SELECT
-    'temporal',
-    'team_memberships_joined_before_snapshot_end',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
-FROM team_memberships
-CROSS JOIN manifest
-WHERE CAST(joined_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
-
-INSERT INTO qc_results
-SELECT
-    'temporal',
-    'team_memberships_left_not_in_future',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
-FROM team_memberships
-CROSS JOIN manifest
-WHERE left_date IS NOT NULL
-  AND CAST(left_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
-
-INSERT INTO qc_results
-SELECT
-    'temporal',
-    'teams_formed_before_snapshot_end',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
+    'team rows leaking future dates'
 FROM teams
-CROSS JOIN manifest
-WHERE CAST(formation_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
+WHERE formation_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest)
+   OR (dissolution_date IS NOT NULL AND dissolution_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest));
 
 INSERT INTO qc_results
 SELECT
     'temporal',
-    'teams_dissolution_not_in_future',
+    'team_memberships_dates_before_snapshot_end',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'failure_count=' || COUNT(*)::VARCHAR
-FROM teams
-CROSS JOIN manifest
-WHERE dissolution_date IS NOT NULL
-  AND CAST(dissolution_date AS DATE) >= CAST(snapshot_end_exclusive AS DATE);
+    'team membership rows leaking future dates'
+FROM team_memberships
+WHERE joined_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest)
+   OR (left_date IS NOT NULL AND left_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest));
 
 INSERT INTO qc_results
 SELECT
-    'batch_window',
-    'matches.batch_id_in_release_window',
+    'fact_window',
+    'matches_within_fact_window',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_batch_count=' || COUNT(*)::VARCHAR
-FROM matches fact
-LEFT JOIN monthly_batches batch
-  ON batch.id = fact.batch_id
-WHERE batch.id IS NULL;
+    'matches outside fact window'
+FROM matches m
+LEFT JOIN monthly_batches b ON b.id = m.batch_id
+WHERE b.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
-    'batch_window',
-    'player_assessment_history.batch_id_in_release_window',
+    'fact_window',
+    'player_registrations_within_fact_window',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_batch_count=' || COUNT(*)::VARCHAR
-FROM player_assessment_history fact
-LEFT JOIN monthly_batches batch
-  ON batch.id = fact.batch_id
-WHERE batch.id IS NULL;
+    'registrations outside fact window'
+FROM player_registrations r
+LEFT JOIN monthly_batches b ON b.id = r.batch_id
+WHERE b.id IS NULL;
 
 INSERT INTO qc_results
 SELECT
-    'batch_window',
-    'player_rating_history.batch_id_in_release_window',
+    'fact_window',
+    'player_assessment_history_within_fact_window',
     CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
     COUNT(*),
-    'missing_batch_count=' || COUNT(*)::VARCHAR
-FROM player_rating_history fact
-LEFT JOIN monthly_batches batch
-  ON batch.id = fact.batch_id
-WHERE batch.id IS NULL;
+    'assessments outside fact window'
+FROM player_assessment_history a
+LEFT JOIN monthly_batches b ON b.id = a.batch_id
+WHERE b.id IS NULL;
 
-INSERT INTO qc_results
-SELECT
-    'batch_window',
-    'player_registrations.batch_id_in_release_window',
-    CASE WHEN COUNT(*) = 0 THEN 'passed' ELSE 'failed' END,
-    COUNT(*),
-    'missing_batch_count=' || COUNT(*)::VARCHAR
-FROM player_registrations fact
-LEFT JOIN monthly_batches batch
-  ON batch.id = fact.batch_id
-WHERE batch.id IS NULL;
-
-SELECT
-    category,
-    check_name,
-    status,
-    failure_count,
-    details
+SELECT *
 FROM qc_results
 ORDER BY
     CASE status WHEN 'failed' THEN 0 ELSE 1 END,
     category,
     check_name;
-
-SELECT
-    status,
-    COUNT(*) AS check_count
-FROM qc_results
-GROUP BY status
-ORDER BY status;
-
-SELECT
-    CASE
-        WHEN EXISTS (SELECT 1 FROM qc_results WHERE status = 'failed')
-            THEN error(
-                'Student dataset QC failed. Inspect failed rows in qc_results output.'
-            )
-        ELSE 'Student dataset QC passed.'
-    END AS qc_outcome;

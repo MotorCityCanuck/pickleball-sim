@@ -25,9 +25,8 @@ REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
         "match_teams",
         "matches",
         "monthly_batches",
-        "player_rating_history",
+        "player_master",
         "player_registrations",
-        "players",
         "regions",
         "team_memberships",
         "teams",
@@ -106,6 +105,7 @@ def validate_staged_release(
         checks.extend(_validate_row_counts(connection, manifest_row_counts))
         checks.extend(_validate_required_non_empty_tables(connection))
         checks.extend(_validate_relationships(connection))
+        checks.extend(_validate_player_master(connection, release_window))
         checks.extend(_validate_match_shape(connection))
         checks.extend(_validate_temporal_rules(connection, release_window))
         checks.extend(_validate_batch_tied_facts(connection))
@@ -311,6 +311,84 @@ def _validate_relationships(
     return tuple(checks)
 
 
+def _validate_player_master(
+    connection: duckdb.DuckDBPyConnection,
+    release_window: StudentDatasetReleaseWindow,
+) -> tuple[StudentDatasetValidationCheck, ...]:
+    duplicate_player_count = _count(
+        connection,
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT player_id
+            FROM "player_master"
+            GROUP BY player_id
+            HAVING player_id IS NULL OR COUNT(*) <> 1
+        ) failures
+        """,
+    )
+    snapshot_month_mismatch_count = _count(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM "player_master"
+        WHERE snapshot_month <> {_duckdb_string(release_window.snapshot_month.isoformat())}
+        """,
+    )
+    incoherent_rating_state_count = _count(
+        connection,
+        """
+        SELECT COUNT(*)
+        FROM "player_master"
+        WHERE
+            (
+                rating_date IS NULL
+                AND (
+                    rating_batch_id IS NOT NULL
+                    OR rating_value IS NOT NULL
+                    OR confidence_score IS NOT NULL
+                    OR volatility_score IS NOT NULL
+                    OR global_percentile IS NOT NULL
+                    OR match_count_used IS NOT NULL
+                )
+            )
+            OR (
+                rating_date IS NOT NULL
+                AND (
+                    rating_batch_id IS NULL
+                    OR rating_value IS NULL
+                )
+            )
+        """,
+    )
+    return (
+        _check(
+            name="player_master:one_row_per_player",
+            passed=duplicate_player_count == 0,
+            passed_message="player_master contains exactly one row per player_id.",
+            failed_message="player_master contains duplicate or null player_id rows.",
+            details={"failure_count": duplicate_player_count},
+        ),
+        _check(
+            name="player_master:snapshot_month_consistent",
+            passed=snapshot_month_mismatch_count == 0,
+            passed_message="player_master snapshot_month matches the release snapshot month.",
+            failed_message="player_master snapshot_month does not match the release snapshot month.",
+            details={
+                "expected_snapshot_month": release_window.snapshot_month.isoformat(),
+                "failure_count": snapshot_month_mismatch_count,
+            },
+        ),
+        _check(
+            name="player_master:rating_state_coherent",
+            passed=incoherent_rating_state_count == 0,
+            passed_message="player_master rating fields are internally coherent.",
+            failed_message="player_master rating fields are internally inconsistent.",
+            details={"failure_count": incoherent_rating_state_count},
+        ),
+    )
+
+
 def _validate_match_shape(
     connection: duckdb.DuckDBPyConnection,
 ) -> tuple[StudentDatasetValidationCheck, ...]:
@@ -387,11 +465,12 @@ def _validate_temporal_rules(
     checks: list[StudentDatasetValidationCheck] = [
         _check(
             name="temporal:monthly_batch_sequences",
-            passed=_monthly_batch_sequences(connection) == list(release_window.batch_sequences),
-            passed_message="monthly_batches.batch_sequence matches the release window.",
-            failed_message="monthly_batches.batch_sequence does not match the release window.",
+            passed=_monthly_batch_sequences(connection)
+            == list(release_window.fact_batch_sequences),
+            passed_message="monthly_batches.batch_sequence matches the fact window.",
+            failed_message="monthly_batches.batch_sequence does not match the fact window.",
             details={
-                "expected_sequences": list(release_window.batch_sequences),
+                "expected_sequences": list(release_window.fact_batch_sequences),
                 "actual_sequences": _monthly_batch_sequences(connection),
             },
         ),
@@ -448,7 +527,6 @@ def _validate_batch_tied_facts(
     batch_tied_tables = (
         "matches",
         "player_assessment_history",
-        "player_rating_history",
         "player_registrations",
     )
     checks: list[StudentDatasetValidationCheck] = []
