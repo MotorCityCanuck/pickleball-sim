@@ -14,6 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.exports.data_quality import INSTRUCTOR_MANIFEST_FILE_NAME  # noqa: E402
 from app.exports.student_dataset import (  # noqa: E402
     MANIFEST_FILE_NAME,
     PROJECTION_BY_TABLE,
@@ -75,7 +76,7 @@ def test_write_staged_release_family_emits_parquet_files_and_manifest(
         subsequent_month_count=0,
         output_root=tmp_path,
         release_name="napa_student_release",
-        data_quality_level="clean",
+        data_quality_level="none",
         overwrite_existing=False,
     )
 
@@ -102,6 +103,19 @@ def test_write_staged_release_family_emits_parquet_files_and_manifest(
     parquet_files = sorted(path.name for path in release.release_dir.glob("*.parquet"))
     assert parquet_files == sorted(f"{table_name}.parquet" for table_name in STUDENT_TABLE_ORDER)
     assert len(release.files) == len(STUDENT_TABLE_ORDER)
+
+
+def test_build_parameters_normalize_legacy_clean_alias(tmp_path):
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="clean",
+    )
+
+    assert build_parameters.data_quality_level == "none"
 
 
 def test_write_staged_release_preserves_projection_column_order(
@@ -162,7 +176,6 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["release_mode"] == "baseline"
     assert manifest["release_type"] == "historical_baseline"
     assert manifest["student_dataset_schema_version"] == "1.3"
-    assert manifest["source_generation_run_id"] == 1
     assert manifest["included_batch_sequences"] == [1, 2]
     assert manifest["included_batch_months"] == ["2025-01-01", "2025-02-01"]
     assert manifest["snapshot_batch_sequences"] == [1, 2]
@@ -171,7 +184,9 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["fact_batch_months"] == ["2025-01-01", "2025-02-01"]
     assert manifest["snapshot_month"] == "2025-02-01"
     assert manifest["snapshot_end_exclusive"] == "2025-03-01"
-    assert manifest["data_quality_level"] == "clean"
+    assert "source_generation_run_id" not in manifest
+    assert "data_quality_level" not in manifest
+    assert "build_parameters" not in manifest
     assert manifest["validation_status"] == "passed"
     assert manifest["validation_summary"]["status"] == "passed"
     assert manifest["validation_summary"]["failed_check_count"] == 0
@@ -225,6 +240,42 @@ def test_write_staged_release_parquet_contains_snapshot_transformed_values(
         release_dir / "club_memberships.parquet"
     ).to_pylist()
     assert club_memberships[0]["end_date"] is None
+
+
+def test_write_staged_release_family_writes_instructor_manifest_outside_student_release(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    assert result.instructor_manifest_path == (
+        result.staging_root / "instructor_only" / INSTRUCTOR_MANIFEST_FILE_NAME
+    )
+    assert result.instructor_manifest_path.exists()
+    manifest_rows = pq.read_table(result.instructor_manifest_path).to_pylist()
+    assert isinstance(manifest_rows, list)
+    if manifest_rows:
+        assert all(
+            row["release_name"] == "napa_student_release_initial_history"
+            for row in manifest_rows
+        )
 
 
 def test_write_staged_incremental_release_uses_snapshot_dimensions_and_fact_batches(
@@ -455,7 +506,7 @@ def test_promote_staged_release_family_moves_files_and_persists_metadata(
     assert release_rows[0]["release_type"] == "historical_baseline"
     assert str(release_rows[0]["release_month"]) == "2025-02-01"
     assert release_rows[0]["generation_run_id"] == 1
-    assert release_rows[0]["data_quality_level"] == "clean"
+    assert release_rows[0]["data_quality_level"] == "none"
     assert release_rows[0]["output_path"] == str(release.release_dir)
     assert release_rows[0]["status"] == "succeeded"
 

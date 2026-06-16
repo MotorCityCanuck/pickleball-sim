@@ -14,6 +14,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.orm import Session
 
+from app.exports.data_quality import (
+    INSTRUCTOR_MANIFEST_FILE_NAME,
+    DataQualityInjectionManifestEntry,
+    DataQualityReleaseContext,
+    build_default_data_quality_config,
+    inject_data_quality_issues,
+    manifest_table,
+    normalize_data_quality_level,
+)
+
 from .projection import (
     PROJECTION_BY_TABLE,
     STUDENT_DATASET_SCHEMA_VERSION,
@@ -41,8 +51,15 @@ class StudentDatasetBuildParameters:
     subsequent_month_count: int
     output_root: Path
     release_name: str
-    data_quality_level: str = "clean"
+    data_quality_level: str = "none"
     overwrite_existing: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "data_quality_level",
+            normalize_data_quality_level(self.data_quality_level),
+        )
 
     def manifest_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable build parameter dictionary."""
@@ -93,6 +110,7 @@ class StagedStudentDatasetRelease:
     release_dir: Path
     manifest_path: Path
     files: tuple[StudentDatasetFileManifest, ...]
+    data_quality_manifest_entries: tuple[DataQualityInjectionManifestEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,6 +120,7 @@ class StagedStudentDatasetFamily:
     release_name: str
     staging_root: Path
     releases: tuple[StagedStudentDatasetRelease, ...]
+    instructor_manifest_path: Path | None = None
 
 
 def create_staging_root(output_root: Path, release_name: str) -> Path:
@@ -141,10 +160,16 @@ def write_staged_release_family(
         )
         for release_window in release_windows
     )
+    instructor_manifest_path = _write_instructor_manifest(
+        staging_root=staging_root,
+        releases=releases,
+        compression=compression,
+    )
     return StagedStudentDatasetFamily(
         release_name=release_name,
         staging_root=staging_root,
         releases=releases,
+        instructor_manifest_path=instructor_manifest_path,
     )
 
 
@@ -167,12 +192,33 @@ def write_staged_release(
         generation_run_id=build_parameters.generation_run_id,
         release_window=release_window,
     )
-    files = tuple(
-        _write_table_file(
+    clean_tables = {
+        table_name: _load_table_rows(
             session=session,
-            release_dir=release_dir,
             table_name=table_name,
             context=context,
+        )
+        for table_name in STUDENT_TABLE_ORDER
+    }
+    data_quality_config = build_default_data_quality_config(
+        level=build_parameters.data_quality_level,
+    )
+    injection_result = inject_data_quality_issues(
+        tables=clean_tables,
+        config=data_quality_config,
+        release_context=DataQualityReleaseContext(
+            release_id=concrete_release_name,
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            generation_run_id=build_parameters.generation_run_id,
+            snapshot_month=release_window.snapshot_month,
+        ),
+    )
+    files = tuple(
+        _write_table_rows(
+            release_dir=release_dir,
+            table_name=table_name,
+            row_dicts=injection_result.tables[table_name],
             compression=compression,
         )
         for table_name in STUDENT_TABLE_ORDER
@@ -203,24 +249,33 @@ def write_staged_release(
         release_dir=release_dir,
         manifest_path=manifest_path,
         files=files,
+        data_quality_manifest_entries=injection_result.manifest_entries,
     )
 
 
-def _write_table_file(
+def _load_table_rows(
     *,
     session: Session,
-    release_dir: Path,
     table_name: str,
     context: StudentDatasetQueryContext,
-    compression: str,
-) -> StudentDatasetFileManifest:
+) -> list[dict[str, Any]]:
     projection = PROJECTION_BY_TABLE[table_name]
     query = build_student_dataset_query(table_name, context)
     rows = session.execute(query).mappings().all()
-    row_dicts = [
+    return [
         {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
         for row in rows
     ]
+
+
+def _write_table_rows(
+    *,
+    release_dir: Path,
+    table_name: str,
+    row_dicts: list[dict[str, Any]],
+    compression: str,
+) -> StudentDatasetFileManifest:
+    projection = PROJECTION_BY_TABLE[table_name]
     table = pa.table(
         {
             column_name: pa.array([row[column_name] for row in row_dicts])
@@ -260,7 +315,6 @@ def _release_manifest(
         "release_mode": release_mode,
         "release_type": release_window.release_type,
         "student_dataset_schema_version": STUDENT_DATASET_SCHEMA_VERSION,
-        "source_generation_run_id": build_parameters.generation_run_id,
         "included_batch_sequences": list(release_window.fact_batch_sequences),
         "included_batch_months": [
             batch_month.isoformat() for batch_month in release_window.fact_batch_months
@@ -275,8 +329,6 @@ def _release_manifest(
         ],
         "snapshot_month": release_window.snapshot_month.isoformat(),
         "snapshot_end_exclusive": release_window.snapshot_end_exclusive.isoformat(),
-        "build_parameters": build_parameters.manifest_dict(),
-        "data_quality_level": build_parameters.data_quality_level,
         "parquet_compression": compression,
         "output_files": [
             file_manifest.manifest_dict(release_dir) for file_manifest in files
@@ -304,6 +356,28 @@ def _release_manifest(
         "validation_status": validation_result.status,
         "validation_summary": validation_result.manifest_dict(),
     }
+
+
+def _write_instructor_manifest(
+    *,
+    staging_root: Path,
+    releases: tuple[StagedStudentDatasetRelease, ...],
+    compression: str,
+) -> Path | None:
+    entries = [
+        entry
+        for release in releases
+        for entry in release.data_quality_manifest_entries
+    ]
+    instructor_dir = staging_root / "instructor_only"
+    instructor_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = instructor_dir / INSTRUCTOR_MANIFEST_FILE_NAME
+    pq.write_table(
+        manifest_table(entries),
+        manifest_path,
+        compression=compression,
+    )
+    return manifest_path
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:

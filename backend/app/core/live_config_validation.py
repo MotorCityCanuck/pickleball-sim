@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping
 
+from app.exports.data_quality.config import (
+    SUPPORTED_DATA_QUALITY_LEVELS,
+    SUPPORTED_ISSUE_TYPES,
+)
 from app.generators.club_memberships import ClubMembershipGenerationConfig
 from app.generators.matches import MatchGenerationConfig
 from app.generators.players import PlayerGenerationConfig
@@ -46,6 +50,7 @@ def validate_live_config_payload(
     issues.extend(_validate_first_batch_month(payload))
     issues.extend(_validate_historical_batch_count(payload))
     issues.extend(_validate_instrumentation(payload))
+    issues.extend(_validate_data_quality_injection(payload))
     issues.extend(_validate_hidden_performance_bias(payload))
 
     module_validators = (
@@ -293,6 +298,109 @@ def _validate_hidden_performance_bias(
             probability_fields=("close_match_competitiveness_threshold",),
         )
     )
+
+    return issues
+
+
+def _validate_data_quality_injection(
+    payload: Mapping[str, Any],
+) -> list[ConfigValidationIssue]:
+    section = payload.get("data_quality_injection")
+    if section is None:
+        return []
+    if not isinstance(section, Mapping):
+        return [
+            ConfigValidationIssue(
+                path="data_quality_injection",
+                message="must be an object.",
+            )
+        ]
+
+    issues: list[ConfigValidationIssue] = []
+    issues.extend(
+        _validate_bool(
+            section,
+            "enabled",
+            "data_quality_injection.enabled",
+        )
+    )
+    issues.extend(
+        _validate_bool(
+            section,
+            "write_instructor_manifest",
+            "data_quality_injection.write_instructor_manifest",
+        )
+    )
+    issues.extend(
+        _validate_bool(
+            section,
+            "write_student_visible_quality_summary",
+            "data_quality_injection.write_student_visible_quality_summary",
+        )
+    )
+
+    level = section.get("level")
+    if level is not None and level not in SUPPORTED_DATA_QUALITY_LEVELS:
+        issues.append(
+            ConfigValidationIssue(
+                path="data_quality_injection.level",
+                message=(
+                    "must be one of: "
+                    + ", ".join(SUPPORTED_DATA_QUALITY_LEVELS)
+                    + "."
+                ),
+            )
+        )
+
+    table_rules = section.get("table_rules")
+    if table_rules is not None and not isinstance(table_rules, Mapping):
+        issues.append(
+            ConfigValidationIssue(
+                path="data_quality_injection.table_rules",
+                message="must be an object mapping table names to rules.",
+            )
+        )
+    elif isinstance(table_rules, Mapping):
+        for table_name, rule in table_rules.items():
+            if not isinstance(rule, Mapping):
+                issues.append(
+                    ConfigValidationIssue(
+                        path=f"data_quality_injection.table_rules.{table_name}",
+                        message="must be an object.",
+                    )
+                )
+                continue
+            issue_types = rule.get("allowed_issue_types")
+            if issue_types is None:
+                continue
+            if not isinstance(issue_types, (list, tuple)):
+                issues.append(
+                    ConfigValidationIssue(
+                        path=(
+                            "data_quality_injection.table_rules."
+                            f"{table_name}.allowed_issue_types"
+                        ),
+                        message="must be a list of strings.",
+                    )
+                )
+                continue
+            unknown = sorted(
+                {
+                    str(issue_type)
+                    for issue_type in issue_types
+                    if issue_type not in SUPPORTED_ISSUE_TYPES
+                }
+            )
+            if unknown:
+                issues.append(
+                    ConfigValidationIssue(
+                        path=(
+                            "data_quality_injection.table_rules."
+                            f"{table_name}.allowed_issue_types"
+                        ),
+                        message="contains unsupported issue types: " + ", ".join(unknown) + ".",
+                    )
+                )
 
     return issues
 

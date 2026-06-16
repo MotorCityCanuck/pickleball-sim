@@ -8,6 +8,8 @@ from typing import Any, Iterable, Mapping
 
 import duckdb
 
+from app.exports.data_quality.rules import primary_key_column
+
 from .projection import (
     EXCLUDED_SOURCE_TABLES,
     PROJECTION_BY_TABLE,
@@ -102,6 +104,7 @@ def validate_staged_release(
         checks.extend(_validate_readability(connection))
         checks.extend(_validate_schema(connection))
         checks.extend(_validate_excluded_files(release_dir))
+        checks.extend(_validate_primary_key_uniqueness(connection))
         checks.extend(_validate_row_counts(connection, manifest_row_counts))
         checks.extend(_validate_required_non_empty_tables(connection))
         checks.extend(_validate_relationships(connection))
@@ -224,6 +227,40 @@ def _validate_excluded_files(release_dir: Path) -> tuple[StudentDatasetValidatio
             details={"unexpected_files": unexpected_files},
         ),
     )
+
+
+def _validate_primary_key_uniqueness(
+    connection: duckdb.DuckDBPyConnection,
+) -> tuple[StudentDatasetValidationCheck, ...]:
+    checks: list[StudentDatasetValidationCheck] = []
+    for table_name in STUDENT_TABLE_ORDER:
+        pk_column = primary_key_column(table_name)
+        duplicate_count = _count(
+            connection,
+            f'''
+            SELECT COUNT(*)
+            FROM (
+                SELECT "{pk_column}"
+                FROM "{table_name}"
+                GROUP BY "{pk_column}"
+                HAVING "{pk_column}" IS NULL OR COUNT(*) > 1
+            ) duplicates
+            ''',
+        )
+        checks.append(
+            _check(
+                name=f"primary_key:{table_name}.{pk_column}",
+                passed=duplicate_count == 0,
+                passed_message=f"{table_name}.{pk_column} remains unique and populated.",
+                failed_message=f"{table_name}.{pk_column} contains null or duplicate values.",
+                details={
+                    "table": table_name,
+                    "primary_key_column": pk_column,
+                    "failure_count": duplicate_count,
+                },
+            )
+        )
+    return tuple(checks)
 
 
 def _validate_row_counts(

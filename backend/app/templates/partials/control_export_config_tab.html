@@ -92,7 +92,11 @@
                     name="data_quality_level"
                     style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:white;"
                 >
-                    <option value="clean" {% if export_config.data_quality_level == 'clean' %}selected{% endif %}>clean</option>
+                    <option value="none" {% if export_config.data_quality_level == 'none' %}selected{% endif %}>none</option>
+                    <option value="low" {% if export_config.data_quality_level == 'low' %}selected{% endif %}>low</option>
+                    <option value="medium" {% if export_config.data_quality_level == 'medium' %}selected{% endif %}>medium</option>
+                    <option value="high" {% if export_config.data_quality_level == 'high' %}selected{% endif %}>high</option>
+                    <option value="very_high" {% if export_config.data_quality_level == 'very_high' %}selected{% endif %}>very_high</option>
                 </select>
             </label>
             <div style="display:grid; gap:6px; padding-bottom:10px;">

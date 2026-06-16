@@ -1701,7 +1701,7 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
             subsequent_month_count=0,
             output_root="data/student_dataset_exports",
             release_name="ui_export",
-            data_quality_level="clean",
+            data_quality_level="none",
             overwrite_existing=None,
             session=session,
             queries=ControlPanelQueries(),
@@ -1739,7 +1739,7 @@ def test_student_dataset_export_start_route_can_return_orchestration_partial(ses
             subsequent_month_count=0,
             output_root="data/student_dataset_exports",
             release_name="ui_export",
-            data_quality_level="clean",
+            data_quality_level="none",
             overwrite_existing=None,
             return_target="orchestration",
             session=session,
@@ -1773,7 +1773,7 @@ def test_student_dataset_export_start_route_passes_delete_confirmation(session_f
             subsequent_month_count=0,
             output_root="data/student_dataset_exports",
             release_name="ui_export",
-            data_quality_level="clean",
+            data_quality_level="none",
             overwrite_existing="yes",
             session=session,
             queries=ControlPanelQueries(),
@@ -1835,7 +1835,7 @@ def test_export_progress_renders_release_actions(session_factory):
                     data_quality_level, output_path, status, created_at, updated_at, completed_at
                 ) VALUES (
                     61, 'student_release_initial_history', 'historical_baseline', '2026-05-01', 2,
-                    'clean', 'data/student_dataset_exports/student_release/student_release_initial_history',
+                    'none', 'data/student_dataset_exports/student_release/student_release_initial_history',
                     'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
@@ -1904,7 +1904,7 @@ def test_student_dataset_export_start_route_records_incremental_export_metadata(
             subsequent_month_count=3,
             output_root="data/student_dataset_exports",
             release_name="ui_export",
-            data_quality_level="clean",
+            data_quality_level="none",
             overwrite_existing=None,
             session=session,
             queries=ControlPanelQueries(),

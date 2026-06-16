@@ -377,6 +377,135 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "export_included_tables": [],
         "export_batch_on_completion": True,
     },
+    "data_quality_injection": {
+        "enabled": True,
+        "level": "medium",
+        "random_seed": 12345,
+        "apply_to_release_types": [
+            "historical_baseline",
+            "monthly_incremental",
+        ],
+        "write_instructor_manifest": True,
+        "write_student_visible_quality_summary": False,
+        "monthly_release_level_offset": -1,
+        "global_limits": {
+            "max_total_affected_rows_pct": 5.0,
+            "max_affected_fields_per_row": 2,
+            "prevent_primary_key_mutation": True,
+            "prevent_foreign_key_mutation": True,
+            "preserve_required_join_keys": True,
+        },
+        "table_rules": {
+            "clubs": {
+                "enabled": True,
+                "issue_profile": "medium",
+                "allowed_issue_types": [
+                    "missing_optional_values",
+                    "categorical_variants",
+                    "soft_join_ambiguity",
+                    "duplicate_like_rows",
+                ],
+            },
+            "club_memberships": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "missing_optional_values",
+                    "categorical_variants",
+                ],
+            },
+            "match_games": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "numeric_outliers",
+                ],
+            },
+            "match_team_players": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "rounding_variants",
+                ],
+            },
+            "match_teams": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "rounding_variants",
+                    "numeric_outliers",
+                ],
+            },
+            "matches": {
+                "enabled": True,
+                "issue_profile": "medium",
+                "allowed_issue_types": [
+                    "missing_optional_values",
+                    "categorical_variants",
+                    "duplicate_like_rows",
+                ],
+            },
+            "monthly_batches": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "numeric_outliers",
+                ],
+            },
+            "player_assessment_history": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "missing_optional_values",
+                    "numeric_outliers",
+                    "rounding_variants",
+                    "timestamp_jitter",
+                ],
+            },
+            "player_master": {
+                "enabled": True,
+                "issue_profile": "medium",
+                "allowed_issue_types": [
+                    "name_case_variants",
+                    "missing_optional_values",
+                    "categorical_variants",
+                    "rounding_variants",
+                    "timestamp_jitter",
+                ],
+            },
+            "player_registrations": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "missing_optional_values",
+                    "categorical_variants",
+                    "rounding_variants",
+                ],
+            },
+            "regions": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "categorical_variants",
+                    "soft_join_ambiguity",
+                ],
+            },
+            "team_memberships": {
+                "enabled": True,
+                "issue_profile": "none",
+                "allowed_issue_types": [],
+            },
+            "teams": {
+                "enabled": True,
+                "issue_profile": "low",
+                "allowed_issue_types": [
+                    "categorical_variants",
+                    "soft_join_ambiguity",
+                    "duplicate_like_rows",
+                ],
+            },
+        },
+    },
     "tournament_scoring": {
         "champion_points": 10,
         "runner_up_points": 6,

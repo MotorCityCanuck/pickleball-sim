@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
+from app.exports.data_quality import normalize_data_quality_level
 from app.generation.job_lifecycle import job_is_actively_processing, overall_percent_complete
 from app.models import JobStageProgress, JobStatus
 
@@ -61,7 +62,7 @@ class StudentDatasetExportService:
         subsequent_month_count: int,
         output_root: Path,
         release_name: str,
-        data_quality_level: str = "clean",
+        data_quality_level: str = "none",
         overwrite_existing: bool = False,
     ) -> StudentDatasetExportRegistration:
         """Create a pending export job and progress rows."""
@@ -104,7 +105,7 @@ class StudentDatasetExportService:
                         "incremental_month_count": subsequent_month_count,
                         "output_root": str(output_root),
                         "release_name": release_name,
-                        "data_quality_level": data_quality_level,
+                        "data_quality_level": normalize_data_quality_level(data_quality_level),
                         "overwrite_existing": overwrite_existing,
                     },
                 )
@@ -121,7 +122,7 @@ class StudentDatasetExportService:
         subsequent_month_count: int,
         output_root: str,
         release_name: str,
-        data_quality_level: str = "clean",
+        data_quality_level: str = "none",
         overwrite_existing: bool = False,
     ) -> None:
         """Run a registered export job with durable background commits."""
@@ -158,7 +159,7 @@ class StudentDatasetExportService:
         subsequent_month_count: int,
         output_root: Path,
         release_name: str,
-        data_quality_level: str = "clean",
+        data_quality_level: str = "none",
         overwrite_existing: bool = False,
         checkpoint=None,
         re_raise: bool = True,
@@ -180,7 +181,7 @@ class StudentDatasetExportService:
                 subsequent_month_count=subsequent_month_count,
                 output_root=output_root,
                 release_name=release_name,
-                data_quality_level=data_quality_level,
+                data_quality_level=normalize_data_quality_level(data_quality_level),
                 overwrite_existing=overwrite_existing,
             )
             self._set_job_status(
@@ -435,7 +436,7 @@ def build_student_dataset_release(
     subsequent_month_count: int,
     output_root: Path,
     release_name: str,
-    data_quality_level: str = "clean",
+    data_quality_level: str = "none",
     overwrite_existing: bool = False,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
 ) -> StudentDatasetBuildResult:
@@ -453,7 +454,7 @@ def build_student_dataset_release(
         subsequent_month_count=subsequent_month_count,
         output_root=output_root,
         release_name=release_name,
-        data_quality_level=data_quality_level,
+        data_quality_level=normalize_data_quality_level(data_quality_level),
         overwrite_existing=overwrite_existing,
     )
     StudentDatasetExportService._prepare_output_root(build_parameters)

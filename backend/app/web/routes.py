@@ -31,6 +31,7 @@ from app.core import (
     diff_config_payloads,
 )
 from app.db.session import get_session
+from app.exports.data_quality import normalize_data_quality_level
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
 from app.models import (
@@ -677,7 +678,7 @@ def build_control_panel_router() -> APIRouter:
         subsequent_month_count: int = Form(...),
         output_root: str = Form(...),
         release_name: str = Form(...),
-        data_quality_level: str = Form("clean"),
+        data_quality_level: str = Form("none"),
         overwrite_existing: str | None = Form(None),
         return_target: str = Form("export_config"),
         session: Session = Depends(get_session),
@@ -713,7 +714,9 @@ def build_control_panel_router() -> APIRouter:
                     subsequent_month_count=subsequent_month_count,
                     output_root=Path(output_root),
                     release_name=release_name.strip(),
-                    data_quality_level=data_quality_level.strip() or "clean",
+                    data_quality_level=normalize_data_quality_level(
+                        data_quality_level.strip() or "none"
+                    ),
                     overwrite_existing=overwrite_existing == "yes",
                 )
                 session.commit()
@@ -725,7 +728,9 @@ def build_control_panel_router() -> APIRouter:
                     subsequent_month_count=subsequent_month_count,
                     output_root=output_root,
                     release_name=release_name.strip(),
-                    data_quality_level=data_quality_level.strip() or "clean",
+                    data_quality_level=normalize_data_quality_level(
+                        data_quality_level.strip() or "none"
+                    ),
                     overwrite_existing=overwrite_existing == "yes",
                 )
                 snapshot = queries.get_control_panel_snapshot(session)
@@ -1117,7 +1122,7 @@ def _default_export_config(snapshot: ControlPanelSnapshot) -> dict[str, object]:
         "subsequent_month_count": subsequent_month_count,
         "output_root": "data/student_dataset_exports",
         "release_name": release_base,
-        "data_quality_level": "clean",
+        "data_quality_level": "none",
         "overwrite_existing": False,
     }
 
