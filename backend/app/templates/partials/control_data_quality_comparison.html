@@ -1,35 +1,22 @@
-{% set compare_ready = not snapshot.student_dataset_export_summary.latest_export_job_is_active %}
-
 <section style="display:grid; gap:16px;">
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
         <div>
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 4</div>
             <div style="margin-top:6px; font-size:18px;">Compare clean and injected exports</div>
             <div style="margin-top:6px; color:#5a6477;">
-                Compare a no-issues export location against a tainted export location and summarize the visible data-quality differences in the released Parquet data.
+                Compare clean and tainted subfolders from one export location and summarize the visible data-quality differences in the released Parquet data.
             </div>
         </div>
         {% if compare_ready %}
-            <div style="border:1px solid #7bc693; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:600; color:#1f5f30; background:#edf8f0;">
+            <div style="border:1px solid #7bc693; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:600; color:#1f5f30; background:#edf8f0; text-align:center;">
                 Ready to Compare
             </div>
         {% else %}
-            <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
-                Blocked
+            <div style="border:1px solid #f1b2ad; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:600; color:#8f1d18; background:#fef3f2; text-align:center;">
+                Not Ready to Compare
             </div>
         {% endif %}
     </div>
-
-    {% if compare_message %}
-        <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
-            {{ compare_message }}
-        </div>
-    {% endif %}
-    {% if compare_error %}
-        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
-            {{ compare_error }}
-        </div>
-    {% endif %}
 
     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
         <div class="info-card {% if compare_ready %}state-card-ready{% else %}state-card-blocked{% endif %}">
@@ -39,91 +26,109 @@
             </div>
             {% if not compare_ready %}
                 <div style="margin-top:8px; color:#5a6477;">
-                    Finish the active student dataset export before comparing release folders.
+                    {{ compare_readiness_message }}
                 </div>
             {% else %}
                 <div style="margin-top:8px; color:#5a6477;">
-                    Provide the clean export location and the tainted export location. Each path may point to a single release folder or a release-family root.
+                    {{ compare_readiness_message }}
                 </div>
             {% endif %}
         </div>
         <div class="info-card">
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Suggested Paths</div>
             <div style="margin-top:8px; color:#5a6477;">
-                The form defaults to the latest `none` release and the latest non-`none` release when those are available in export history.
+                The form defaults to the latest paired export run when available. Without history, it shows the expected timestamped path pattern with
+                <code>clean</code> and <code>tainted</code> as the terminal subfolder names.
             </div>
         </div>
     </div>
 
     <form
+        id="student-dataset-compare-form"
         style="display:grid; gap:12px;"
         hx-post="/control/export/student-dataset/compare"
         hx-target="#control-tab-content"
         hx-swap="innerHTML"
     >
         <input type="hidden" name="return_target" value="{{ comparison_return_target or 'orchestration' }}">
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+        <div style="display:grid; gap:12px;">
             <label style="display:grid; gap:6px;">
-                <span style="font-size:13px; color:#5a6477;">No Issues Export Location</span>
+                <span style="font-size:13px; color:#5a6477;">Export Location</span>
                 <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
                     <input
-                        id="comparison-clean-export-path"
+                        id="comparison-export-path"
                         type="text"
-                        name="clean_export_path"
+                        name="export_path"
                         required
-                        value="{{ comparison_config.clean_export_path }}"
+                        value="{{ comparison_config.export_path }}"
                         style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
                     >
                     <button
                         type="button"
-                        onclick="window.selectControlPanelFolder('comparison-clean-export-path')"
+                        onclick="window.selectControlPanelFolder('comparison-export-path', 'data')"
                         style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
                     >
                         Choose Folder
                     </button>
                 </div>
             </label>
-            <label style="display:grid; gap:6px;">
-                <span style="font-size:13px; color:#5a6477;">Tainted Export Location</span>
-                <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Clean export subfolder</span>
                     <input
-                        id="comparison-tainted-export-path"
                         type="text"
-                        name="tainted_export_path"
+                        name="clean_subfolder"
                         required
-                        value="{{ comparison_config.tainted_export_path }}"
+                        value="{{ comparison_config.clean_subfolder or '/clean' }}"
                         style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
                     >
-                    <button
-                        type="button"
-                        onclick="window.selectControlPanelFolder('comparison-tainted-export-path')"
-                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
+                </label>
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Tainted export subfolder</span>
+                    <input
+                        type="text"
+                        name="tainted_subfolder"
+                        required
+                        value="{{ comparison_config.tainted_subfolder or '/tainted' }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
                     >
-                        Choose Folder
-                    </button>
-                </div>
-            </label>
+                </label>
+            </div>
+            <div style="font-size:12px; color:#5a6477;">
+                Select the timestamped run folder, not the parent release folder. Comparison paths resolve to
+                <code>{{ comparison_config.export_path }}{{ comparison_config.clean_subfolder or '/clean' }}</code>
+                and
+                <code>{{ comparison_config.export_path }}{{ comparison_config.tainted_subfolder or '/tainted' }}</code>.
+            </div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-            <button
-                type="submit"
-                {% if not compare_ready %}disabled{% endif %}
-                style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not compare_ready %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
-            >
-                Compare Exported Data
-            </button>
-            {% if (comparison_return_target or 'orchestration') != 'export_config' %}
+        <div style="display:grid; gap:10px;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                 <button
-                    type="button"
-                    onclick="window.loadControlPanelTab(document.getElementById('control-tab-button-export'))"
-                    style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                    id="student-dataset-compare-submit"
+                    type="submit"
+                    {% if not compare_ready %}disabled{% endif %}
+                    data-default-label="Compare Exported Data"
+                    style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not compare_ready %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
                 >
-                    Open Export Configuration
+                    Compare Exported Data
                 </button>
-            {% endif %}
+            </div>
+            <div id="student-dataset-compare-feedback" style="display:grid; gap:8px;">
+                {% if compare_message %}
+                    <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                        {{ compare_message }}
+                    </div>
+                {% endif %}
+                {% if compare_error %}
+                    <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                        {{ compare_error }}
+                    </div>
+                {% endif %}
+            </div>
         </div>
     </form>
 
+    <div id="student-dataset-compare-results" style="display:grid; gap:12px;">
     {% if comparison_result %}
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
             <div class="metric-card">
@@ -209,6 +214,7 @@
             {% endfor %}
         </div>
     {% endif %}
+    </div>
 
     {% if snapshot.student_dataset_export_summary.comparison_history %}
         <div class="info-card" style="display:grid; gap:12px;">
@@ -269,6 +275,31 @@
 </section>
 <script>
     (() => {
+        const compareForm = document.getElementById("student-dataset-compare-form");
+        if (compareForm && !compareForm.dataset.compareWired) {
+            compareForm.dataset.compareWired = "true";
+            compareForm.addEventListener("htmx:beforeRequest", () => {
+                const submitButton = document.getElementById("student-dataset-compare-submit");
+                const feedback = document.getElementById("student-dataset-compare-feedback");
+                const results = document.getElementById("student-dataset-compare-results");
+                if (submitButton) {
+                    submitButton.textContent = "Compare In-Progress";
+                    submitButton.disabled = true;
+                    submitButton.style.borderColor = "#f1b2ad";
+                    submitButton.style.background = "#fef3f2";
+                    submitButton.style.color = "#8f1d18";
+                    submitButton.style.cursor = "wait";
+                    submitButton.style.opacity = "1";
+                }
+                if (feedback) {
+                    feedback.innerHTML = "";
+                }
+                if (results) {
+                    results.innerHTML = "";
+                }
+            });
+        }
+
         window.selectControlPanelFolder = async function selectControlPanelFolder(inputId, fallbackPath) {
             const input = document.getElementById(inputId);
             if (!input) {

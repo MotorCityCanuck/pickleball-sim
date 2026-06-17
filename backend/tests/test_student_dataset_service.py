@@ -1,6 +1,7 @@
 """Tests for complete student dataset build orchestration."""
 
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -12,6 +13,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.exports.student_dataset import (  # noqa: E402
+    PublishedStudentDatasetFamily,
+    PublishedStudentDatasetRelease,
     ReleaseWindowValidationError,
     STUDENT_TABLE_ORDER,
     StudentDatasetBuildResult,
@@ -173,18 +176,20 @@ def test_registered_export_writes_paired_clean_and_tainted_outputs(session, tmp_
 
     assert result is not None
     assert result.clean_published_family is not None
-    assert result.clean_published_family.final_root == tmp_path / "napa_student_release" / "clean"
-    assert result.published_family.final_root == tmp_path / "napa_student_release" / "tainted"
+    clean_root = result.clean_published_family.final_root
+    tainted_root = result.published_family.final_root
+    assert clean_root == tainted_root.parent / "clean"
+    assert tainted_root.name == "tainted"
+    assert clean_root.parent == tainted_root.parent
+    assert clean_root.parent.parent.parent == tmp_path / "napa_student_release"
+    assert re.fullmatch(r"\d{8}", clean_root.parent.parent.name)
+    assert re.fullmatch(r"\d{6}Z", clean_root.parent.name)
     assert (
-        tmp_path
-        / "napa_student_release"
-        / "clean"
+        clean_root
         / "napa_student_release_initial_history"
     ).is_dir()
     assert (
-        tmp_path
-        / "napa_student_release"
-        / "tainted"
+        tainted_root
         / "napa_student_release_initial_history"
     ).is_dir()
 
@@ -200,6 +205,32 @@ def test_registered_export_writes_paired_clean_and_tainted_outputs(session, tmp_
     assert [row["data_quality_level"] for row in release_rows] == ["medium", "none"]
     assert any("/clean/" in row["output_path"] for row in release_rows)
     assert any("/tainted/" in row["output_path"] for row in release_rows)
+
+
+def test_published_family_assertion_requires_parquet_files(tmp_path):
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    published = PublishedStudentDatasetFamily(
+        release_name="release",
+        final_root=tmp_path,
+        releases=(
+            PublishedStudentDatasetRelease(
+                release_id=1,
+                release_name="release",
+                release_type="historical_baseline",
+                release_dir=release_dir,
+                manifest_path=release_dir / "manifest.json",
+                file_count=0,
+            ),
+        ),
+    )
+
+    with pytest.raises(StudentDatasetExportPreflightError, match="no Parquet files"):
+        StudentDatasetExportService._assert_published_family_has_files(published)
+
+    (release_dir / "players.parquet").write_bytes(b"parquet")
+
+    StudentDatasetExportService._assert_published_family_has_files(published)
 
 
 def _seed_succeeded_generation_run(session, *, status: str = "succeeded") -> None:

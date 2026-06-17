@@ -199,7 +199,9 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
         if not rows or not columns:
             state.issue_type_candidate_rows.setdefault(issue_type, 0)
             continue
-        state.issue_type_candidate_rows.setdefault(issue_type, len(rows))
+        state.issue_type_candidate_rows[issue_type] = (
+            state.issue_type_candidate_rows.get(issue_type, 0) + len(rows)
+        )
         target_count = _target_count(
             issue_type=issue_type,
             row_count=len(rows),

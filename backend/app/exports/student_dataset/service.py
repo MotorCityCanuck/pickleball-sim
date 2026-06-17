@@ -203,6 +203,15 @@ class StudentDatasetExportService:
                 data_quality_level=normalized_level,
                 overwrite_existing=overwrite_existing,
             )
+            paired_output_root = (
+                _timestamped_paired_output_root(
+                    output_root=output_root,
+                    release_name=release_name,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                if normalized_level != "none"
+                else None
+            )
             self._set_job_status(
                 job_status,
                 status="running",
@@ -225,6 +234,7 @@ class StudentDatasetExportService:
                 build_parameters,
                 clean_subfolder=clean_subfolder,
                 tainted_subfolder=tainted_subfolder,
+                paired_output_root=paired_output_root,
             )
             release_windows = plan_release_windows(
                 session=session,
@@ -268,7 +278,7 @@ class StudentDatasetExportService:
                     build_parameters=build_parameters,
                 )
             else:
-                paired_output_root = output_root / release_name
+                assert paired_output_root is not None
                 clean_build_parameters = StudentDatasetBuildParameters(
                     generation_run_id=generation_run_id,
                     initial_history_month_count=initial_history_month_count,
@@ -345,6 +355,9 @@ class StudentDatasetExportService:
                 staged_family=staged_family,
                 build_parameters=build_parameters,
             )
+            if clean_published_family is not None:
+                self._assert_published_family_has_files(clean_published_family)
+            self._assert_published_family_has_files(published_family)
             self._mark_stage(
                 session,
                 job_status_id=job_status.id,
@@ -420,11 +433,14 @@ class StudentDatasetExportService:
         *,
         clean_subfolder: str,
         tainted_subfolder: str,
+        paired_output_root: Path | None = None,
     ) -> None:
         if build_parameters.data_quality_level == "none":
             StudentDatasetExportService._prepare_output_root(build_parameters)
             return
-        paired_root = build_parameters.output_root / build_parameters.release_name
+        paired_root = paired_output_root or (
+            build_parameters.output_root / build_parameters.release_name
+        )
         for final_root in (
             paired_root / clean_subfolder,
             paired_root / tainted_subfolder,
@@ -447,6 +463,24 @@ class StudentDatasetExportService:
                 f"Expected release folder path is not a directory: {final_root}"
             )
         shutil.rmtree(final_root)
+
+    @staticmethod
+    def _assert_published_family_has_files(
+        published_family: PublishedStudentDatasetFamily,
+    ) -> None:
+        if not published_family.final_root.is_dir():
+            raise StudentDatasetExportPreflightError(
+                f"Published release folder is missing: {published_family.final_root}"
+            )
+        for release in published_family.releases:
+            if not release.release_dir.is_dir():
+                raise StudentDatasetExportPreflightError(
+                    f"Published release folder is missing: {release.release_dir}"
+                )
+            if not any(release.release_dir.glob("*.parquet")):
+                raise StudentDatasetExportPreflightError(
+                    f"Published release folder has no Parquet files: {release.release_dir}"
+                )
 
     def _mark_stage(
         self,
@@ -604,6 +638,21 @@ def _validate_output_subfolder(field_name: str, value: str) -> str:
             f"{field_name} may only contain letters, numbers, underscores, and hyphens."
         )
     return cleaned
+
+
+def _timestamped_paired_output_root(
+    *,
+    output_root: Path,
+    release_name: str,
+    timestamp: datetime,
+) -> Path:
+    timestamp_utc = timestamp.astimezone(timezone.utc)
+    return (
+        output_root
+        / release_name
+        / f"{timestamp_utc:%Y%m%d}"
+        / f"{timestamp_utc:%H%M%SZ}"
+    )
 
 
 def _percent(current: int, total: int) -> Decimal:

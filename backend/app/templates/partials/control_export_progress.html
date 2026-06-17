@@ -12,11 +12,15 @@
         <div>
             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Progress</div>
             {% if snapshot.student_dataset_export_summary.latest_export_job %}
-                <div style="margin-top:8px; font-size:18px;">{{ snapshot.student_dataset_export_summary.latest_export_job.status }}</div>
-                <div style="margin-top:6px; color:#5a6477;">
+                <div style="margin-top:8px; font-size:18px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' %}#247a3d{% else %}#1d2433{% endif %};">
+                    {{ snapshot.student_dataset_export_summary.latest_export_job.status }}
+                </div>
+                <div style="margin-top:6px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% else %}#5a6477{% endif %};">
                     {{ snapshot.student_dataset_export_summary.latest_export_job.current_message or "No message" }}
                     {% if snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' and snapshot.student_dataset_export_summary.latest_export_job.elapsed_label %}
                         - Duration {{ snapshot.student_dataset_export_summary.latest_export_job.elapsed_label }}
+                    {% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' and snapshot.student_dataset_export_summary.latest_export_job.elapsed_label %}
+                        - Failed after {{ snapshot.student_dataset_export_summary.latest_export_job.elapsed_label }}
                     {% endif %}
                 </div>
             {% else %}
@@ -24,9 +28,21 @@
             {% endif %}
         </div>
         {% if snapshot.student_dataset_export_summary.latest_export_job and snapshot.student_dataset_export_summary.latest_export_job.percent_complete is not none %}
-            <div style="font-size:18px; color:#1857c2;">{{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%</div>
+            <div style="font-size:18px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};">
+                {% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}
+                    Failed at {{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%
+                {% else %}
+                    {{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%
+                {% endif %}
+            </div>
         {% endif %}
     </div>
+
+    {% if snapshot.student_dataset_export_summary.latest_export_job and snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}
+        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+            Export failed. Review the failed stage details below before starting another export.
+        </div>
+    {% endif %}
 
     {% if snapshot.student_dataset_export_summary.latest_export_stage_progress %}
         <div style="display:grid; gap:10px;">
@@ -84,24 +100,24 @@
                             <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">
                                 <div style="display:grid; gap:8px;">
                                     <code>{{ release.output_path }}</code>
-                                    <button
-                                        type="button"
-                                        onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
-                                        style="justify-self:start; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
-                                        title="Copy release path"
-                                    >
-                                        Copy Path
-                                    </button>
                                 </div>
                             </td>
                         </tr>
                         <tr>
                             <td colspan="6" style="padding:0 10px 10px 10px; border-bottom:1px solid #d6d9df;">
-                                <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px;">
+                                <div style="display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:8px;">
+                                    <button
+                                        type="button"
+                                        onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
+                                        title="Copy release path"
+                                    >
+                                        Copy Path
+                                    </button>
                                     <button
                                         type="button"
                                         onclick="window.downloadControlPanelReleasePackage({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
                                         title="Download a zip package containing manifest.json and all Parquet files"
                                     >
                                         Download Package
@@ -109,7 +125,7 @@
                                     <button
                                         type="button"
                                         onclick="window.openControlPanelFolder({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
                                         title="Open release folder"
                                     >
                                         Open Folder
@@ -117,7 +133,7 @@
                                     <button
                                         type="button"
                                         onclick="window.runControlPanelReleaseQc({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
                                         title="Run DuckDB quality checks for this release"
                                     >
                                         Run QC
@@ -180,6 +196,7 @@
         };
 
         window.openControlPanelFolder = async function openControlPanelFolder(value) {
+            window.setControlPanelActionStatus(`Opening folder for ${value}...`, "success");
             try {
                 const response = await window.fetch("/control/system/open-folder", {
                     method: "POST",

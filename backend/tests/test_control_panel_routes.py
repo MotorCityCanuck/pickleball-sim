@@ -1201,19 +1201,38 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
     assert 'data-orchestration-section="data-quality-compare"' in orchestration.body.decode()
     assert 'id="generation-run-name"' in orchestration.body.decode()
+    assert 'id="export-config-form"' in orchestration.body.decode()
+    assert 'hx-post="/control/export/student-dataset/start"' in orchestration.body.decode()
+    assert 'name="output_root"' in orchestration.body.decode()
+    assert 'name="clean_subfolder"' in orchestration.body.decode()
+    assert 'name="tainted_subfolder"' in orchestration.body.decode()
+    assert "Data Quality Issue Injection Level" in orchestration.body.decode()
+    assert "Compare Exported Data" in orchestration.body.decode()
+    assert "Open Export Configuration" not in orchestration.body.decode()
     assert "hx-preserve" in orchestration.body.decode()
     assert "control-panel-orchestration-section:" in orchestration.body.decode()
 
     assert export_config.status_code == 200
-    assert "Export Configuration" in export_config.body.decode()
-    assert "Student dataset baseline and incremental export" in export_config.body.decode()
-    assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
-    assert "Start Student Dataset Baseline + Incremental Export" in export_config.body.decode()
+    assert "Export Configuration Reference" in export_config.body.decode()
+    assert "Student dataset export settings" in export_config.body.decode()
+    assert 'hx-post="/control/export/student-dataset/start"' not in export_config.body.decode()
+    assert "Start Student Dataset Baseline + Incremental Export" not in export_config.body.decode()
+    assert "Compare Exported Data" not in export_config.body.decode()
+    assert 'id="student-dataset-compare-form"' not in export_config.body.decode()
     assert "copyControlPanelText" in export_config.body.decode()
-    assert "Choose Folder" in export_config.body.decode()
-    assert "/control/system/select-folder" in export_config.body.decode()
-    assert 'name="clean_subfolder"' in export_config.body.decode()
-    assert 'name="tainted_subfolder"' in export_config.body.decode()
+    assert "Choose Folder" not in export_config.body.decode()
+    assert "/control/system/select-folder" not in export_config.body.decode()
+    assert "Open Orchestration" in export_config.body.decode()
+    assert "Output Path Pattern" in export_config.body.decode()
+    assert "Default Export Inputs" in export_config.body.decode()
+    assert "No Issues Export Location" not in export_config.body.decode()
+    assert "Tainted Export Location" not in export_config.body.decode()
+    assert 'name="export_path"' not in export_config.body.decode()
+    assert 'id="comparison-export-path"' not in export_config.body.decode()
+    assert 'id="comparison-tainted-export-path"' not in export_config.body.decode()
+    assert "YYYYMMDD" in export_config.body.decode()
+    assert "HHMMSSZ" in export_config.body.decode()
+    assert "Select the timestamped run folder" not in export_config.body.decode()
 
     assert tournament_config.status_code == 200
     assert "Tournament Configuration" in tournament_config.body.decode()
@@ -1709,8 +1728,9 @@ def test_completed_generation_run_marks_student_dataset_export_ready(session_fac
     assert orchestration.status_code == 200
     assert "Data Export" in body
     assert "Ready to export" in body
-    assert "Open Export Configuration" in body
-    assert "Delete the expected release folder first if it already exists" in body
+    assert "Open Export Configuration" not in body
+    assert 'id="export-config-form"' in body
+    assert "Confirm deletion of the expected release folder if it already exists" in body
     assert "Generate Student Dataset (coming soon)" not in body
 
 
@@ -1748,12 +1768,18 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
     assert "started in background" in body
     assert export_service.calls[0]["generation_run_id"] == 2
     assert export_service.calls[0]["release_name"] == "ui_export"
+    assert export_service.calls[0]["output_root"] == (
+        routes_module.PROJECT_ROOT / "data/student_dataset_exports"
+    )
     assert export_service.calls[0]["clean_subfolder"] == "clean"
     assert export_service.calls[0]["tainted_subfolder"] == "tainted"
     assert export_service.calls[0]["overwrite_existing"] is False
     assert len(background_runner.submissions) == 1
     assert background_runner.submissions[0][2]["job_status_id"] == 91
     assert background_runner.submissions[0][2]["release_name"] == "ui_export"
+    assert background_runner.submissions[0][2]["output_root"] == str(
+        routes_module.PROJECT_ROOT / "data/student_dataset_exports"
+    )
     assert background_runner.submissions[0][2]["clean_subfolder"] == "clean"
     assert background_runner.submissions[0][2]["tainted_subfolder"] == "tainted"
 
@@ -1859,6 +1885,59 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
     assert response.status_code == 200
     assert "Student dataset baseline and incremental export completed successfully." in body
     assert "Duration 7m 30s" in body
+
+
+def test_export_progress_reports_failed_export_job(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    82, 'student_dataset_export', 'student-dataset-export-82', 'failed', 'failed', 33.33,
+                    'Data quality injection validation failed: required:matches.match_format',
+                    '2026-05-20 10:00:00', '2026-05-20 10:01:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    job_status_id, generation_run_id, batch_id, stage_name, stage_sequence,
+                    status, progress_current, progress_total, progress_unit, progress_percent,
+                    progress_message, error_message, started_at, completed_at, created_at, updated_at
+                ) VALUES
+                    (82, 2, NULL, 'preflight', 1, 'succeeded', 1, 1, 'check', 100.00,
+                     'Planned 1 release folder.', NULL, '2026-05-20 10:00:00', '2026-05-20 10:00:05', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                    (82, 2, NULL, 'write_validate_parquet', 2, 'failed', 0, 1, 'release_family', 0.00,
+                     'Writing staged Parquet files and validating with DuckDB.',
+                     'Data quality injection validation failed: required:matches.match_format',
+                     '2026-05-20 10:00:05', '2026-05-20 10:01:30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/config/export"](
+            request=_request("/control/partials/config/export"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Failed at 33.33%" in body
+    assert "Export failed. Review the failed stage details below" in body
+    assert "required:matches.match_format" in body
 
 
 def test_export_progress_renders_release_actions(session_factory):
@@ -1997,16 +2076,17 @@ def test_student_dataset_compare_route_renders_comparison_summary(session_factor
     app = create_app()
     routes = _route_map(app)
     session = session_factory()
+    compare_calls: list[dict[str, Path]] = []
     try:
         monkeypatch.setattr(
             routes_module,
             "_resolve_control_panel_path",
             lambda value: Path(f"/tmp/{value}"),
         )
-        monkeypatch.setattr(
-            routes_module,
-            "compare_export_locations",
-            lambda **kwargs: SimpleNamespace(
+
+        def fake_compare_export_locations(**kwargs):
+            compare_calls.append(kwargs)
+            return SimpleNamespace(
                 compared_release_count=1,
                 total_issue_count=3,
                 missing_clean_releases=(),
@@ -2031,12 +2111,18 @@ def test_student_dataset_compare_route_renders_comparison_summary(session_factor
                         ),
                     ),
                 ),
-            ),
+            )
+
+        monkeypatch.setattr(
+            routes_module,
+            "compare_export_locations",
+            fake_compare_export_locations,
         )
         response = routes["/control/export/student-dataset/compare"](
             request=_request("/control/export/student-dataset/compare", method="POST"),
-            clean_export_path="clean_release",
-            tainted_export_path="tainted_release",
+            export_path="paired_release",
+            clean_subfolder="/clean",
+            tainted_subfolder="/tainted",
             return_target="orchestration",
             session=session,
             queries=ControlPanelQueries(),
@@ -2060,10 +2146,12 @@ def test_student_dataset_compare_route_renders_comparison_summary(session_factor
     assert "Compare clean and injected exports" in body
     assert "Comparison History" in body
     assert "Compared 1 release pair(s) and detected 3 issue signal(s)." in body
-    assert "/tmp/clean_release" in body
-    assert "/tmp/tainted_release" in body
-    assert history_row["clean_export_path"] == "/tmp/clean_release"
-    assert history_row["tainted_export_path"] == "/tmp/tainted_release"
+    assert "/tmp/paired_release/clean" in body
+    assert "/tmp/paired_release/tainted" in body
+    assert compare_calls[0]["clean_path"] == Path("/tmp/paired_release/clean")
+    assert compare_calls[0]["tainted_path"] == Path("/tmp/paired_release/tainted")
+    assert history_row["clean_export_path"] == "/tmp/paired_release/clean"
+    assert history_row["tainted_export_path"] == "/tmp/paired_release/tainted"
     assert history_row["status"] == "succeeded"
     assert history_row["compared_release_count"] == 1
     assert history_row["total_issue_count"] == 3
@@ -2099,8 +2187,9 @@ def test_student_dataset_compare_route_creates_missing_history_table(
 
         response = routes["/control/export/student-dataset/compare"](
             request=_request("/control/export/student-dataset/compare", method="POST"),
-            clean_export_path="clean_release",
-            tainted_export_path="tainted_release",
+            export_path="paired_release",
+            clean_subfolder="/clean",
+            tainted_subfolder="/tainted",
             return_target="orchestration",
             session=session,
             queries=ControlPanelQueries(),
@@ -2113,6 +2202,80 @@ def test_student_dataset_compare_route_creates_missing_history_table(
 
     assert response.status_code == 200
     assert history_count == 1
+
+
+def test_comparison_readiness_requires_clean_and_tainted_data(tmp_path):
+    export_root = tmp_path / "student_export" / "20260617" / "183022Z"
+    (export_root / "clean" / "release").mkdir(parents=True)
+    (export_root / "tainted" / "release").mkdir(parents=True)
+    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
+    (export_root / "tainted" / "release" / "players.parquet").write_bytes(b"tainted")
+    snapshot = SimpleNamespace(
+        student_dataset_export_summary=SimpleNamespace(
+            latest_export_job_is_active=False,
+        ),
+    )
+
+    readiness = routes_module._comparison_readiness_context(
+        snapshot,
+        {
+            "export_path": str(export_root),
+            "clean_subfolder": "/clean",
+            "tainted_subfolder": "/tainted",
+        },
+    )
+
+    assert readiness["compare_ready"] is True
+    assert "contain Parquet data" in readiness["compare_readiness_message"]
+
+
+def test_comparison_readiness_blocks_missing_tainted_data(tmp_path):
+    export_root = tmp_path / "student_export" / "20260617" / "183022Z"
+    (export_root / "clean" / "release").mkdir(parents=True)
+    (export_root / "tainted").mkdir(parents=True)
+    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
+    snapshot = SimpleNamespace(
+        student_dataset_export_summary=SimpleNamespace(
+            latest_export_job_is_active=False,
+        ),
+    )
+
+    readiness = routes_module._comparison_readiness_context(
+        snapshot,
+        {
+            "export_path": str(export_root),
+            "clean_subfolder": "/clean",
+            "tainted_subfolder": "/tainted",
+        },
+    )
+
+    assert readiness["compare_ready"] is False
+    assert str(export_root / "tainted") in readiness["compare_readiness_message"]
+
+
+def test_comparison_readiness_blocks_active_export_job(tmp_path):
+    export_root = tmp_path / "student_export" / "20260617" / "183022Z"
+    (export_root / "clean" / "release").mkdir(parents=True)
+    (export_root / "tainted" / "release").mkdir(parents=True)
+    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
+    (export_root / "tainted" / "release" / "players.parquet").write_bytes(b"tainted")
+    snapshot = SimpleNamespace(
+        student_dataset_export_summary=SimpleNamespace(
+            latest_export_job_is_active=True,
+        ),
+    )
+
+    readiness = routes_module._comparison_readiness_context(
+        snapshot,
+        {
+            "export_path": str(export_root),
+            "clean_subfolder": "/clean",
+            "tainted_subfolder": "/tainted",
+        },
+    )
+
+    assert readiness["compare_ready"] is False
+    assert "active student dataset export" in readiness["compare_readiness_message"]
 
 
 def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):
@@ -2535,7 +2698,7 @@ def test_control_panel_config_save_highlights_invalid_fields_without_persisting(
             config_notes="invalid month count",
             active_config_scope="synthetic",
             seed_config_json='{"raw_seed_data": {"raw_data_root": "data/raw", "supported_datasets": ["metro_areas_us"]}}',
-            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 13, "first_batch_month": "2026-03-01"}, "player_generation": {"player_count": 1200}}',
+            synthetic_config_json='{"runtime": {}, "simulation": {"simulation_name": "Editable Route Test", "simulation_version": "v2", "master_seed": 21, "historical_batch_count": 37, "first_batch_month": "2026-03-01"}, "player_generation": {"player_count": 1200}}',
             session=session,
             queries=ControlPanelQueries(),
             lifecycle=lifecycle,
@@ -2689,7 +2852,97 @@ def test_control_panel_seed_config_partial_renders_current_values_in_controls(se
         body,
     )
     assert "Raw seed data root" not in body
-    assert "Player and Match Generation" not in body
+
+
+def test_control_panel_config_partial_renders_saved_version_recall_table(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/config/seed"](
+            request=_request("/control/partials/config/seed"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Saved Configuration Versions" in body
+    assert "Load into Editor" in body
+    assert "Editable config" in body
+    assert "Version 1" in body
+    assert 'hx-post="/control/config/load-version"' in body
+
+
+def test_control_panel_config_load_version_populates_editor_without_promoting_version(
+    session_factory,
+):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    lifecycle = get_configuration_lifecycle()
+    try:
+        lifecycle.save_new_version(
+            session,
+            title="Current config",
+            notes="new active version",
+            payload={
+                "runtime": {},
+                "simulation": {
+                    "simulation_name": "Editable Route Test",
+                    "simulation_version": "v2",
+                    "master_seed": 99,
+                    "historical_batch_count": 4,
+                    "first_batch_month": "2026-04-01",
+                },
+                "player_generation": {
+                    "player_count": 2400,
+                },
+            },
+        )
+        session.commit()
+        deprecated_version_id = session.execute(
+            text(
+                """
+                SELECT id FROM configuration_profile_versions
+                WHERE version_number = 1 AND lifecycle_status = 'deprecated'
+                """
+            )
+        ).scalar_one()
+
+        response = routes["/control/config/load-version"](
+            request=_request("/control/config/load-version", method="POST"),
+            config_version_id=deprecated_version_id,
+            active_config_scope="synthetic",
+            session=session,
+            queries=ControlPanelQueries(),
+            lifecycle=lifecycle,
+        )
+        current_version = lifecycle.load_current_valid_version(session)
+        version_statuses = session.execute(
+            text(
+                """
+                SELECT version_number, lifecycle_status
+                FROM configuration_profile_versions
+                ORDER BY version_number
+                """
+            )
+        ).all()
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Loaded default version 1 into the editor draft." in body
+    assert 'value="Editable config copy"' in body
+    assert 'value="v1"' in body
+    assert current_version.title == "Current config"
+    assert current_version.version_number == 2
+    assert version_statuses == [(1, "deprecated"), (2, "valid")]
 
 
 def test_control_panel_player_match_config_partial_renders_current_values_in_controls(session_factory):

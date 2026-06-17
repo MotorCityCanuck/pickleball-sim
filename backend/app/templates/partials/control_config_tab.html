@@ -348,6 +348,89 @@
     </div>
 
     <section class="panel-section">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Saved Configuration Versions</div>
+                <div style="margin-top:6px; font-size:18px;">Recall a saved version into the editor draft.</div>
+                <div style="margin-top:6px; color:#5a6477;">Loading a version only populates the editor. It does not change the current valid configuration until you Validate and Save.</div>
+            </div>
+            {% if not snapshot.allowed_actions.can_edit_config %}
+                <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:999px; padding:6px 10px; font-size:13px;">
+                    Loading blocked while a generation job is active
+                </div>
+            {% endif %}
+        </div>
+
+        {% if configuration_versions %}
+            <div style="margin-top:14px; overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; min-width:920px;">
+                    <thead>
+                        <tr style="border-bottom:1px solid #d6d9df; color:#5a6477; font-size:12px; text-transform:uppercase; text-align:left;">
+                            <th style="padding:10px 8px;">Profile / Version</th>
+                            <th style="padding:10px 8px;">Title</th>
+                            <th style="padding:10px 8px;">Status</th>
+                            <th style="padding:10px 8px;">Scope</th>
+                            <th style="padding:10px 8px;">Seed</th>
+                            <th style="padding:10px 8px;">Created</th>
+                            <th style="padding:10px 8px;">Last Used</th>
+                            <th style="padding:10px 8px;">Hash</th>
+                            <th style="padding:10px 8px; text-align:right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for version in configuration_versions %}
+                            <tr style="border-bottom:1px solid #eef1f5;">
+                                <td style="padding:10px 8px; vertical-align:top;">
+                                    <div style="font-weight:600; color:#1d2433;">{{ version.profile_name }}</div>
+                                    <div style="margin-top:3px; color:#5a6477; font-size:13px;">Version {{ version.version_number }}</div>
+                                </td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#1d2433;">{{ version.title }}</td>
+                                <td style="padding:10px 8px; vertical-align:top;">
+                                    <span style="display:inline-flex; border:1px solid {% if version.lifecycle_status == 'valid' %}#b7dfc2{% else %}#d6d9df{% endif %}; background:{% if version.lifecycle_status == 'valid' %}#edf8f0{% else %}#f8fafc{% endif %}; color:{% if version.lifecycle_status == 'valid' %}#1f5f30{% else %}#5a6477{% endif %}; border-radius:999px; padding:3px 8px; font-size:12px; text-transform:capitalize;">
+                                        {{ version.lifecycle_status }}
+                                    </span>
+                                </td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#5a6477;">
+                                    {{ version.player_count or 0 }} players
+                                    <br>
+                                    {{ version.historical_batch_count or 0 }} months
+                                </td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#5a6477;">{{ version.seed_value if version.seed_value is not none else "n/a" }}</td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#5a6477;">{{ version.created_at.strftime("%Y-%m-%d %H:%M") if version.created_at else "n/a" }}</td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#5a6477;">{{ version.last_used_at.strftime("%Y-%m-%d %H:%M") if version.last_used_at else "Never" }}</td>
+                                <td style="padding:10px 8px; vertical-align:top; color:#5a6477; font-family:monospace; font-size:12px;">{{ version.config_hash[:10] if version.config_hash else "n/a" }}</td>
+                                <td style="padding:10px 8px; vertical-align:top; text-align:right;">
+                                    <form
+                                        hx-post="/control/config/load-version"
+                                        hx-target="#config-tab-panel"
+                                        hx-swap="outerHTML"
+                                        method="post"
+                                        style="display:inline-block;"
+                                    >
+                                        <input type="hidden" name="config_version_id" value="{{ version.version_id }}">
+                                        <input type="hidden" name="active_config_scope" value="{{ active_config_scope }}">
+                                        <button
+                                            type="submit"
+                                            {% if not snapshot.allowed_actions.can_edit_config %}disabled{% endif %}
+                                            style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:8px 12px; cursor:pointer; white-space:nowrap; {% if not snapshot.allowed_actions.can_edit_config %}opacity:0.45; cursor:not-allowed;{% endif %}"
+                                        >
+                                            Load into Editor
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div style="margin-top:14px; border:1px dashed #cfd6e0; border-radius:10px; padding:14px; color:#5a6477; background:#f8fafc;">
+                No saved configuration versions are available yet.
+            </div>
+        {% endif %}
+    </section>
+
+    <section class="panel-section">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
             <div>
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Configuration Editor</div>

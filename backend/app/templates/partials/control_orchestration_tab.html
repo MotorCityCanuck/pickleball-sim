@@ -470,57 +470,14 @@
                 </div>
             </div>
 
-            <form
-                style="display:grid; gap:10px; align-items:start;"
-                hx-post="/control/export/student-dataset/start"
-                hx-target="#control-tab-content"
-                hx-swap="innerHTML"
-            >
-                <input type="hidden" name="return_target" value="orchestration">
-                <input type="hidden" name="generation_run_id" value="{{ export_config.generation_run_id }}">
-                <input type="hidden" name="initial_history_month_count" value="{{ export_config.initial_history_month_count }}">
-                <input type="hidden" name="subsequent_month_count" value="{{ export_config.subsequent_month_count }}">
-                <input type="hidden" name="output_root" value="{{ export_config.output_root }}">
-                <input type="hidden" name="release_name" value="{{ export_config.release_name }}">
-                <input type="hidden" name="data_quality_level" value="{{ export_config.data_quality_level }}">
-                <input type="hidden" name="clean_subfolder" value="{{ export_config.clean_subfolder or 'clean' }}">
-                <input type="hidden" name="tainted_subfolder" value="{{ export_config.tainted_subfolder or 'tainted' }}">
-                <label style="display:flex; gap:8px; align-items:center; color:#5a6477; font-size:13px;">
-                    <input
-                        type="checkbox"
-                        name="overwrite_existing"
-                        value="yes"
-                        {% if export_config.overwrite_existing %}checked{% endif %}
-                    >
-                    Delete the expected release folder first if it already exists
-                </label>
-                <div style="font-size:12px; color:#5a6477;">
-                    Without confirmation, the export fails immediately if <code>{{ export_config.output_root }}/{{ export_config.release_name }}</code> already exists.
-                </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                    <button
-                        type="submit"
-                        {% if not snapshot.allowed_actions.can_generate_student_dataset %}disabled{% endif %}
-                        style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_generate_student_dataset %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
-                    >
-                        Start Student Dataset Baseline + Incremental Export
-                    </button>
-                    <button
-                        type="button"
-                        onclick="window.loadControlPanelTab(document.getElementById('control-tab-button-export'))"
-                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer;"
-                    >
-                        Open Export Configuration
-                    </button>
-                </div>
-            </form>
+            {% include "partials/control_student_dataset_export_run_form.html" %}
 
             {% include "partials/control_export_progress.html" %}
         </section>
     </details>
 
     <details
-        class="panel-section {% if not snapshot.student_dataset_export_summary.latest_export_job_is_active %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        class="panel-section {% if compare_ready %}state-card-ready{% else %}state-card-blocked{% endif %}"
         data-orchestration-section="data-quality-compare"
     >
         <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Data Quality Comparison</summary>

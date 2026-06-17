@@ -18,7 +18,7 @@ from app.seed_data_ingest import SUPPORTED_RAW_DATASETS
 from app.seed_data_normalize.pickleball_clubs import ClubGenerationConfig
 
 
-MAX_LIVE_HISTORICAL_BATCH_COUNT = 12
+MAX_LIVE_HISTORICAL_BATCH_COUNT = 36
 
 
 @dataclass(frozen=True)

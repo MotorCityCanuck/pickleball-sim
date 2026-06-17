@@ -1,6 +1,7 @@
 """FastAPI routes for the operator control panel."""
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 from datetime import timedelta
 import os
@@ -36,6 +37,7 @@ from app.exports.data_quality import compare_export_locations, normalize_data_qu
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
 from app.models import (
+    ConfigurationProfileVersion,
     JobStatus,
     StudentDatasetComparison,
     StudentDatasetRelease,
@@ -135,7 +137,7 @@ def build_control_panel_router() -> APIRouter:
         return templates.TemplateResponse(
             request,
             "control_panel.html",
-            _build_config_template_context(snapshot, editor),
+            _build_config_template_context(snapshot, editor, session=session),
         )
 
     @router.get("/control/partials/config", response_class=HTMLResponse)
@@ -196,6 +198,10 @@ def build_control_panel_router() -> APIRouter:
                 "export_launch_message": None,
                 "export_launch_error": None,
                 "comparison_config": _default_export_comparison_config(snapshot),
+                **_comparison_readiness_context(
+                    snapshot,
+                    _default_export_comparison_config(snapshot),
+                ),
                 "comparison_result": None,
                 "compare_message": None,
                 "compare_error": None,
@@ -246,6 +252,7 @@ def build_control_panel_router() -> APIRouter:
             _build_config_template_context(
                 snapshot,
                 editor,
+                session=session,
                 active_config_scope=_normalize_config_scope(active_config_scope),
             ),
         )
@@ -280,7 +287,97 @@ def build_control_panel_router() -> APIRouter:
             _build_config_template_context(
                 snapshot,
                 editor,
+                session=session,
                 active_config_scope=_normalize_config_scope(active_config_scope),
+            ),
+        )
+
+    @router.post("/control/config/load-version", response_class=HTMLResponse)
+    def control_panel_config_load_version(
+        request: Request,
+        config_version_id: int = Form(...),
+        active_config_scope: str | None = Form(None),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        lifecycle: ConfigurationLifecycleService = Depends(get_configuration_lifecycle),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        normalized_scope = _normalize_config_scope(active_config_scope)
+        if not snapshot.allowed_actions.can_edit_config:
+            default_editor = queries.get_config_editor_state(session)
+            editor = replace(
+                default_editor,
+                validation_errors=(
+                    "Configuration loading is blocked while a generation run is active.",
+                ),
+                status_message=None,
+            )
+            return templates.TemplateResponse(
+                request,
+                "partials/control_config_tab.html",
+                _build_config_template_context(
+                    snapshot,
+                    editor,
+                    session=session,
+                    active_config_scope=normalized_scope,
+                ),
+            )
+
+        version = session.get(ConfigurationProfileVersion, config_version_id)
+        if version is None:
+            default_editor = queries.get_config_editor_state(session)
+            editor = replace(
+                default_editor,
+                validation_errors=(
+                    f"Configuration version {config_version_id} was not found.",
+                ),
+                status_message=None,
+            )
+            return templates.TemplateResponse(
+                request,
+                "partials/control_config_tab.html",
+                _build_config_template_context(
+                    snapshot,
+                    editor,
+                    session=session,
+                    active_config_scope=normalized_scope,
+                ),
+            )
+
+        profile_name = version.profile.profile_name if version.profile else "default"
+        loaded_title = f"{version.title} copy"
+        loaded_notes = (
+            f"Loaded from {profile_name} version {version.version_number}. "
+            "Validate and Save to make this draft the current valid configuration."
+        )
+        snapshot, editor = _config_context(
+            session,
+            queries=queries,
+            lifecycle=lifecycle,
+            title=loaded_title,
+            notes=loaded_notes,
+            working_payload_json=json.dumps(
+                version.config_payload or {},
+                indent=2,
+                sort_keys=True,
+            ),
+            action="validate",
+        )
+        editor = replace(
+            editor,
+            status_message=(
+                f"Loaded {profile_name} version {version.version_number} into the "
+                "editor draft. Validate and Save to create a new active version."
+            ),
+        )
+        return templates.TemplateResponse(
+            request,
+            "partials/control_config_tab.html",
+            _build_config_template_context(
+                snapshot,
+                editor,
+                session=session,
+                active_config_scope=normalized_scope,
             ),
         )
 
@@ -718,12 +815,14 @@ def build_control_panel_router() -> APIRouter:
             )
         else:
             try:
+                resolved_output_root = _resolve_control_panel_path(output_root)
+                export_config["output_root"] = str(resolved_output_root)
                 registration = export_service.register_export_job(
                     session=session,
                     generation_run_id=generation_run_id,
                     initial_history_month_count=initial_history_month_count,
                     subsequent_month_count=subsequent_month_count,
-                    output_root=Path(output_root),
+                    output_root=resolved_output_root,
                     release_name=release_name.strip(),
                     data_quality_level=normalize_data_quality_level(
                         data_quality_level.strip() or "none"
@@ -739,7 +838,7 @@ def build_control_panel_router() -> APIRouter:
                     generation_run_id=generation_run_id,
                     initial_history_month_count=initial_history_month_count,
                     subsequent_month_count=subsequent_month_count,
-                    output_root=output_root,
+                    output_root=str(resolved_output_root),
                     release_name=release_name.strip(),
                     data_quality_level=normalize_data_quality_level(
                         data_quality_level.strip() or "none"
@@ -778,6 +877,10 @@ def build_control_panel_router() -> APIRouter:
                 "export_launch_message": export_launch_message,
                 "export_launch_error": export_launch_error,
                 "comparison_config": _default_export_comparison_config(snapshot),
+                **_comparison_readiness_context(
+                    snapshot,
+                    _default_export_comparison_config(snapshot),
+                ),
                 "comparison_result": None,
                 "compare_message": None,
                 "compare_error": None,
@@ -787,6 +890,9 @@ def build_control_panel_router() -> APIRouter:
     @router.post("/control/export/student-dataset/compare", response_class=HTMLResponse)
     def control_panel_student_dataset_export_compare(
         request: Request,
+        export_path: str = Form(""),
+        clean_subfolder: str = Form("clean"),
+        tainted_subfolder: str = Form("tainted"),
         clean_export_path: str = Form(""),
         tainted_export_path: str = Form(""),
         return_target: str = Form("orchestration"),
@@ -798,13 +904,42 @@ def build_control_panel_router() -> APIRouter:
         compare_error = None
         comparison_result = None
         comparison_config = {
+            "export_path": export_path,
+            "clean_subfolder": clean_subfolder,
+            "tainted_subfolder": tainted_subfolder,
             "clean_export_path": clean_export_path,
             "tainted_export_path": tainted_export_path,
         }
         try:
-            clean_resolved = _resolve_control_panel_path(clean_export_path)
-            tainted_resolved = _resolve_control_panel_path(tainted_export_path)
+            if export_path.strip():
+                export_resolved = _resolve_control_panel_path(export_path)
+                clean_folder = _normalize_comparison_subfolder(
+                    clean_subfolder.strip() or "/clean",
+                    label="Clean export subfolder",
+                )
+                tainted_folder = _normalize_comparison_subfolder(
+                    tainted_subfolder.strip() or "/tainted",
+                    label="Tainted export subfolder",
+                )
+                if clean_folder == tainted_folder:
+                    raise ValueError(
+                        "Clean export subfolder and tainted export subfolder must differ."
+                    )
+                clean_resolved = (export_resolved / clean_folder).resolve()
+                tainted_resolved = (export_resolved / tainted_folder).resolve()
+            else:
+                clean_resolved = _resolve_control_panel_path(clean_export_path)
+                tainted_resolved = _resolve_control_panel_path(tainted_export_path)
+                export_resolved, clean_folder, tainted_folder = (
+                    _comparison_config_from_resolved_paths(
+                        clean_resolved=clean_resolved,
+                        tainted_resolved=tainted_resolved,
+                    )
+                )
             comparison_config = {
+                "export_path": str(export_resolved),
+                "clean_subfolder": _display_comparison_subfolder(clean_folder),
+                "tainted_subfolder": _display_comparison_subfolder(tainted_folder),
                 "clean_export_path": str(clean_resolved),
                 "tainted_export_path": str(tainted_resolved),
             }
@@ -849,6 +984,7 @@ def build_control_panel_router() -> APIRouter:
                     "export_launch_message": None,
                     "export_launch_error": None,
                     "comparison_config": comparison_config,
+                    **_comparison_readiness_context(snapshot, comparison_config),
                     "comparison_result": comparison_result,
                     "compare_message": compare_message,
                     "compare_error": compare_error,
@@ -1259,10 +1395,138 @@ def _default_export_comparison_config(snapshot: ControlPanelSnapshot) -> dict[st
             clean_path = str(Path(release.output_path).parent)
         elif release.data_quality_level not in {None, "none"} and not tainted_path:
             tainted_path = str(Path(release.output_path).parent)
+    export_path, clean_subfolder, tainted_subfolder = _comparison_config_from_paths(
+        clean_path=clean_path,
+        tainted_path=tainted_path,
+        fallback_export_path=_default_comparison_export_path(snapshot),
+    )
     return {
+        "export_path": export_path,
+        "clean_subfolder": clean_subfolder,
+        "tainted_subfolder": tainted_subfolder,
         "clean_export_path": clean_path,
         "tainted_export_path": tainted_path,
     }
+
+
+def _comparison_config_from_paths(
+    *,
+    clean_path: str,
+    tainted_path: str,
+    fallback_export_path: str = "",
+) -> tuple[str, str, str]:
+    if clean_path and tainted_path:
+        return _comparison_config_from_resolved_paths(
+            clean_resolved=Path(clean_path),
+            tainted_resolved=Path(tainted_path),
+        )
+    if clean_path:
+        clean_resolved = Path(clean_path)
+        return str(clean_resolved.parent), _display_comparison_subfolder(clean_resolved.name or "clean"), "/tainted"
+    if tainted_path:
+        tainted_resolved = Path(tainted_path)
+        return str(tainted_resolved.parent), "/clean", _display_comparison_subfolder(tainted_resolved.name or "tainted")
+    return fallback_export_path, "/clean", "/tainted"
+
+
+def _default_comparison_export_path(snapshot: ControlPanelSnapshot) -> str:
+    export_config = _default_export_config(snapshot)
+    return str(
+        Path(str(export_config["output_root"]))
+        / str(export_config["release_name"])
+        / "YYYYMMDD"
+        / "HHMMSSZ"
+    )
+
+
+def _comparison_readiness_context(
+    snapshot: ControlPanelSnapshot,
+    comparison_config: dict[str, str],
+) -> dict[str, object]:
+    if snapshot.student_dataset_export_summary.latest_export_job_is_active:
+        return {
+            "compare_ready": False,
+            "compare_readiness_message": (
+                "Finish the active student dataset export before comparing release folders."
+            ),
+        }
+    try:
+        export_path = str(comparison_config.get("export_path") or "").strip()
+        clean_subfolder = _normalize_comparison_subfolder(
+            str(comparison_config.get("clean_subfolder") or "/clean"),
+            label="Clean export subfolder",
+        )
+        tainted_subfolder = _normalize_comparison_subfolder(
+            str(comparison_config.get("tainted_subfolder") or "/tainted"),
+            label="Tainted export subfolder",
+        )
+        export_root = _resolve_control_panel_path(export_path)
+        clean_path = (export_root / clean_subfolder).resolve()
+        tainted_path = (export_root / tainted_subfolder).resolve()
+    except Exception as exc:
+        return {
+            "compare_ready": False,
+            "compare_readiness_message": str(exc),
+        }
+
+    missing: list[str] = []
+    if not _export_folder_has_data(clean_path):
+        missing.append(f"{clean_path}")
+    if not _export_folder_has_data(tainted_path):
+        missing.append(f"{tainted_path}")
+    if missing:
+        return {
+            "compare_ready": False,
+            "compare_readiness_message": (
+                "Comparison requires existing clean and tainted export folders with "
+                f"Parquet data. Missing or empty: {', '.join(missing)}"
+            ),
+        }
+    return {
+        "compare_ready": True,
+        "compare_readiness_message": (
+            "Clean and tainted export folders exist and contain Parquet data."
+        ),
+    }
+
+
+def _export_folder_has_data(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        return any(child.is_file() for child in path.rglob("*.parquet"))
+    except OSError:
+        return False
+
+
+def _comparison_config_from_resolved_paths(
+    *,
+    clean_resolved: Path,
+    tainted_resolved: Path,
+) -> tuple[str, str, str]:
+    if clean_resolved.parent == tainted_resolved.parent:
+        return (
+            str(clean_resolved.parent),
+            _display_comparison_subfolder(clean_resolved.name or "clean"),
+            _display_comparison_subfolder(tainted_resolved.name or "tainted"),
+        )
+    return str(clean_resolved), "/clean", "/tainted"
+
+
+def _normalize_comparison_subfolder(value: str, *, label: str) -> str:
+    normalized = value.strip().lstrip("/")
+    path = Path(normalized)
+    if not normalized:
+        raise ValueError(f"{label} is required.")
+    if path.is_absolute() or len(path.parts) != 1 or path.parts[0] in {".", ".."}:
+        raise ValueError(f"{label} must be a single folder name, such as /clean.")
+    if not all(character.isalnum() or character in {"_", "-"} for character in normalized):
+        raise ValueError(f"{label} may only contain letters, numbers, underscores, and hyphens.")
+    return normalized
+
+
+def _display_comparison_subfolder(value: str) -> str:
+    return f"/{value.strip().lstrip('/')}"
 
 
 def _record_student_dataset_comparison(
@@ -1442,6 +1706,7 @@ def _build_orchestration_template_context(
     compare_message: str | None = None,
     compare_error: str | None = None,
 ) -> dict[str, object]:
+    resolved_comparison_config = comparison_config or _default_export_comparison_config(snapshot)
     return {
         "snapshot": snapshot,
         "seed_launch_message": seed_launch_message,
@@ -1453,7 +1718,8 @@ def _build_orchestration_template_context(
         "export_launch_message": export_launch_message,
         "export_launch_error": export_launch_error,
         "export_config": export_config or _default_export_config(snapshot),
-        "comparison_config": comparison_config or _default_export_comparison_config(snapshot),
+        "comparison_config": resolved_comparison_config,
+        **_comparison_readiness_context(snapshot, resolved_comparison_config),
         "comparison_result": comparison_result,
         "compare_message": compare_message,
         "compare_error": compare_error,
@@ -1993,6 +2259,7 @@ def _render_config_tab_response(
         _build_config_template_context(
             snapshot,
             editor,
+            session=session,
             active_config_scope=_normalize_config_scope(active_config_scope),
         ),
     )
@@ -2002,6 +2269,7 @@ def _build_config_template_context(
     snapshot: ControlPanelSnapshot,
     editor: ConfigEditorState,
     *,
+    session: Session | None = None,
     active_config_scope: str = DEFAULT_CONFIG_SCOPE,
 ) -> dict[str, object]:
     payload, errors = _parse_payload_json(
@@ -2061,7 +2329,97 @@ def _build_config_template_context(
         "tournament_sections": tuple(
             section for section in sections if section.definition.scope == "tournament"
         ),
+        "configuration_versions": (
+            _configuration_version_summaries(session)
+            if session is not None
+            else _current_configuration_version_summary(snapshot)
+        ),
     }
+
+
+def _current_configuration_version_summary(
+    snapshot: ControlPanelSnapshot,
+) -> tuple[dict[str, object], ...]:
+    if snapshot.config_summary is None:
+        return ()
+    summary = snapshot.config_summary
+    return (
+        {
+            "version_id": summary.version_id,
+            "profile_name": summary.profile_name,
+            "version_number": summary.version_number,
+            "title": summary.title,
+            "lifecycle_status": "valid",
+            "created_at": summary.created_at,
+            "last_used_at": summary.last_used_at,
+            "player_count": summary.player_count,
+            "historical_batch_count": summary.historical_batch_count,
+            "seed_value": None,
+            "config_hash": summary.config_hash,
+        },
+    )
+
+
+def _configuration_version_summaries(
+    session: Session,
+    *,
+    limit: int = 12,
+) -> tuple[dict[str, object], ...]:
+    versions = tuple(
+        session.scalars(
+            select(ConfigurationProfileVersion)
+            .order_by(
+                ConfigurationProfileVersion.created_at.desc(),
+                ConfigurationProfileVersion.id.desc(),
+            )
+            .limit(limit)
+        )
+    )
+    summaries: list[dict[str, object]] = []
+    for version in versions:
+        payload = version.config_payload or {}
+        simulation = payload.get("simulation", {}) if isinstance(payload, dict) else {}
+        player_generation = (
+            payload.get("player_generation", {}) if isinstance(payload, dict) else {}
+        )
+        profile_name = version.profile.profile_name if version.profile else "default"
+        summaries.append(
+            {
+                "version_id": version.id,
+                "profile_name": profile_name,
+                "version_number": version.version_number,
+                "title": version.title,
+                "lifecycle_status": version.lifecycle_status,
+                "created_at": version.created_at,
+                "last_used_at": version.last_used_at,
+                "player_count": _coerce_optional_int(
+                    player_generation.get("player_count")
+                    if isinstance(player_generation, dict)
+                    else None
+                ),
+                "historical_batch_count": _coerce_optional_int(
+                    simulation.get("historical_batch_count")
+                    if isinstance(simulation, dict)
+                    else None
+                ),
+                "seed_value": _coerce_optional_int(
+                    simulation.get("master_seed")
+                    if isinstance(simulation, dict)
+                    else None
+                ),
+                "config_hash": version.config_hash,
+            }
+        )
+    return tuple(summaries)
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_field_tooltip(definition: object) -> str:

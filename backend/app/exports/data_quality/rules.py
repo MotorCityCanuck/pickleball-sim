@@ -146,7 +146,7 @@ TABLE_REQUIRED_COLUMNS: Mapping[str, tuple[str, ...]] = {
 MISSING_VALUE_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "clubs": ("club_type", "competitiveness_level"),
     "club_memberships": ("membership_type",),
-    "matches": ("court_type", "match_format"),
+    "matches": ("court_type",),
     "player_assessment_history": ("confidence_score",),
     "player_master": ("dominant_hand",),
     "player_registrations": ("registration_source",),

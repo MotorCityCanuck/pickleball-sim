@@ -110,7 +110,7 @@ def test_validate_working_copy_reports_live_seed_dataset_errors():
 def test_validate_working_copy_reports_live_pipeline_bound_errors():
     service = ConfigurationLifecycleService()
     payload = default_config_payload()
-    payload["simulation"]["historical_batch_count"] = 13
+    payload["simulation"]["historical_batch_count"] = 37
     payload["simulation"]["first_batch_month"] = "2026-99-01"
     payload["confidence"]["initial_confidence_score"] = 1.5
     payload["games_and_scores"]["games_per_match"]["league"] = 0
@@ -119,7 +119,7 @@ def test_validate_working_copy_reports_live_pipeline_bound_errors():
 
     assert result.is_valid is False
     assert (
-        "simulation.historical_batch_count must be <= 12 for the live monthly pipeline."
+        "simulation.historical_batch_count must be <= 36 for the live monthly pipeline."
         in result.errors
     )
     assert (

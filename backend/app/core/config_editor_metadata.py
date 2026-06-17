@@ -244,6 +244,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         default_value=_path_default("simulation.historical_batch_count"),
         required=True,
         min_value=1,
+        max_value=36,
         step=1,
     ),
     ConfigEditorFieldDefinition(

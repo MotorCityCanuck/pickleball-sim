@@ -9,6 +9,10 @@ from typing import Mapping
 DEFAULT_STAGE_QUIET_AFTER = timedelta(minutes=15)
 DEFAULT_STAGE_LIKELY_STALLED_AFTER = timedelta(minutes=30)
 STAGE_LIVENESS_OVERRIDES = {
+    "destructive_reset": (
+        timedelta(minutes=5),
+        timedelta(minutes=15),
+    ),
     "matches": (
         timedelta(minutes=20),
         timedelta(minutes=60),
