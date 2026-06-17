@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from datetime import timedelta
+import os
 import logging
 import json
 from pathlib import Path
@@ -31,11 +32,13 @@ from app.core import (
     diff_config_payloads,
 )
 from app.db.session import get_session
-from app.exports.data_quality import normalize_data_quality_level
+from app.exports.data_quality import compare_export_locations, normalize_data_quality_level
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import GenerationRunService, SeedRefreshService
 from app.models import (
     JobStatus,
+    StudentDatasetComparison,
+    StudentDatasetRelease,
     TournamentEvent,
     TournamentSimulationRun,
     TournamentStudentGroup,
@@ -192,6 +195,10 @@ def build_control_panel_router() -> APIRouter:
                 "export_config": _default_export_config(snapshot),
                 "export_launch_message": None,
                 "export_launch_error": None,
+                "comparison_config": _default_export_comparison_config(snapshot),
+                "comparison_result": None,
+                "compare_message": None,
+                "compare_error": None,
             },
         )
 
@@ -679,6 +686,8 @@ def build_control_panel_router() -> APIRouter:
         output_root: str = Form(...),
         release_name: str = Form(...),
         data_quality_level: str = Form("none"),
+        clean_subfolder: str = Form("clean"),
+        tainted_subfolder: str = Form("tainted"),
         overwrite_existing: str | None = Form(None),
         return_target: str = Form("export_config"),
         session: Session = Depends(get_session),
@@ -696,6 +705,8 @@ def build_control_panel_router() -> APIRouter:
             "output_root": output_root,
             "release_name": release_name,
             "data_quality_level": data_quality_level,
+            "clean_subfolder": clean_subfolder,
+            "tainted_subfolder": tainted_subfolder,
             "overwrite_existing": overwrite_existing == "yes",
         }
 
@@ -717,6 +728,8 @@ def build_control_panel_router() -> APIRouter:
                     data_quality_level=normalize_data_quality_level(
                         data_quality_level.strip() or "none"
                     ),
+                    clean_subfolder=clean_subfolder.strip() or "clean",
+                    tainted_subfolder=tainted_subfolder.strip() or "tainted",
                     overwrite_existing=overwrite_existing == "yes",
                 )
                 session.commit()
@@ -731,6 +744,8 @@ def build_control_panel_router() -> APIRouter:
                     data_quality_level=normalize_data_quality_level(
                         data_quality_level.strip() or "none"
                     ),
+                    clean_subfolder=clean_subfolder.strip() or "clean",
+                    tainted_subfolder=tainted_subfolder.strip() or "tainted",
                     overwrite_existing=overwrite_existing == "yes",
                 )
                 snapshot = queries.get_control_panel_snapshot(session)
@@ -762,8 +777,94 @@ def build_control_panel_router() -> APIRouter:
                 "export_config": export_config,
                 "export_launch_message": export_launch_message,
                 "export_launch_error": export_launch_error,
+                "comparison_config": _default_export_comparison_config(snapshot),
+                "comparison_result": None,
+                "compare_message": None,
+                "compare_error": None,
             },
+        )
+
+    @router.post("/control/export/student-dataset/compare", response_class=HTMLResponse)
+    def control_panel_student_dataset_export_compare(
+        request: Request,
+        clean_export_path: str = Form(""),
+        tainted_export_path: str = Form(""),
+        return_target: str = Form("orchestration"),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        compare_message = None
+        compare_error = None
+        comparison_result = None
+        comparison_config = {
+            "clean_export_path": clean_export_path,
+            "tainted_export_path": tainted_export_path,
+        }
+        try:
+            clean_resolved = _resolve_control_panel_path(clean_export_path)
+            tainted_resolved = _resolve_control_panel_path(tainted_export_path)
+            comparison_config = {
+                "clean_export_path": str(clean_resolved),
+                "tainted_export_path": str(tainted_resolved),
+            }
+            comparison_result = compare_export_locations(
+                clean_path=clean_resolved,
+                tainted_path=tainted_resolved,
             )
+            compare_message = (
+                "Compared "
+                f"{comparison_result.compared_release_count} release pair(s) and detected "
+                f"{comparison_result.total_issue_count} issue signal(s)."
+            )
+        except Exception as exc:
+            compare_error = str(exc)
+        try:
+            _record_student_dataset_comparison(
+                session=session,
+                clean_export_path=comparison_config["clean_export_path"],
+                tainted_export_path=comparison_config["tainted_export_path"],
+                comparison_result=comparison_result,
+                error_message=compare_error,
+            )
+            session.commit()
+            snapshot = queries.get_control_panel_snapshot(session)
+        except Exception as exc:
+            session.rollback()
+            logger.exception("Could not persist student dataset comparison history.")
+            if comparison_result is not None:
+                compare_error = (
+                    "Comparison completed, but the control panel history record could not "
+                    f"be stored: {exc}"
+                )
+                compare_message = None
+
+        if return_target == "export_config":
+            return templates.TemplateResponse(
+                request,
+                "partials/control_export_config_tab.html",
+                {
+                    "snapshot": snapshot,
+                    "export_config": _default_export_config(snapshot),
+                    "export_launch_message": None,
+                    "export_launch_error": None,
+                    "comparison_config": comparison_config,
+                    "comparison_result": comparison_result,
+                    "compare_message": compare_message,
+                    "compare_error": compare_error,
+                },
+            )
+        return templates.TemplateResponse(
+            request,
+            "partials/control_orchestration_tab.html",
+            _build_orchestration_template_context(
+                snapshot,
+                comparison_config=comparison_config,
+                comparison_result=comparison_result,
+                compare_message=compare_message,
+                compare_error=compare_error,
+            ),
+        )
 
     @router.post("/control/tournaments/events", response_class=JSONResponse)
     def control_panel_tournament_event_create(
@@ -960,6 +1061,27 @@ def build_control_panel_router() -> APIRouter:
             }
         )
 
+    @router.post("/control/system/select-folder", response_class=JSONResponse)
+    def control_panel_select_folder(current_path: str = Form("")) -> JSONResponse:
+        try:
+            resolved_current_path = (
+                _resolve_control_panel_path(current_path)
+                if str(current_path).strip()
+                else None
+            )
+            selected_path = _select_folder_in_host(resolved_current_path)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "path": str(selected_path),
+            }
+        )
+
     @router.post("/control/export/student-dataset/run-qc", response_class=JSONResponse)
     def control_panel_run_student_dataset_qc(path: str = Form(...)) -> JSONResponse:
         try:
@@ -1123,7 +1245,183 @@ def _default_export_config(snapshot: ControlPanelSnapshot) -> dict[str, object]:
         "output_root": "data/student_dataset_exports",
         "release_name": release_base,
         "data_quality_level": "none",
+        "clean_subfolder": "clean",
+        "tainted_subfolder": "tainted",
         "overwrite_existing": False,
+    }
+
+
+def _default_export_comparison_config(snapshot: ControlPanelSnapshot) -> dict[str, str]:
+    clean_path = ""
+    tainted_path = ""
+    for release in snapshot.student_dataset_export_summary.latest_releases:
+        if release.data_quality_level == "none" and not clean_path:
+            clean_path = str(Path(release.output_path).parent)
+        elif release.data_quality_level not in {None, "none"} and not tainted_path:
+            tainted_path = str(Path(release.output_path).parent)
+    return {
+        "clean_export_path": clean_path,
+        "tainted_export_path": tainted_path,
+    }
+
+
+def _record_student_dataset_comparison(
+    *,
+    session: Session,
+    clean_export_path: str,
+    tainted_export_path: str,
+    comparison_result: Any | None,
+    error_message: str | None,
+) -> None:
+    _ensure_student_dataset_comparison_table(session)
+    release_lookup = _student_dataset_release_lookup_by_path(session)
+    payload = _comparison_history_payload(
+        comparison_result=comparison_result,
+        release_lookup=release_lookup,
+        error_message=error_message,
+    )
+    clean_generation_run_ids = sorted(
+        {
+            clean_release["generation_run_id"]
+            for release in payload["releases"]
+            for clean_release in [release.get("clean_release") or {}]
+            if clean_release.get("generation_run_id") is not None
+        }
+    )
+    tainted_generation_run_ids = sorted(
+        {
+            tainted_release["generation_run_id"]
+            for release in payload["releases"]
+            for tainted_release in [release.get("tainted_release") or {}]
+            if tainted_release.get("generation_run_id") is not None
+        }
+    )
+    session.add(
+        StudentDatasetComparison(
+            clean_export_path=clean_export_path,
+            tainted_export_path=tainted_export_path,
+            clean_generation_run_id=(
+                clean_generation_run_ids[0] if len(clean_generation_run_ids) == 1 else None
+            ),
+            tainted_generation_run_id=(
+                tainted_generation_run_ids[0]
+                if len(tainted_generation_run_ids) == 1
+                else None
+            ),
+            compared_release_count=(
+                int(comparison_result.compared_release_count)
+                if comparison_result is not None
+                else 0
+            ),
+            total_issue_count=(
+                int(comparison_result.total_issue_count)
+                if comparison_result is not None
+                else 0
+            ),
+            missing_clean_release_count=len(payload["missing_clean_releases"]),
+            missing_tainted_release_count=len(payload["missing_tainted_releases"]),
+            status="succeeded" if comparison_result is not None else "failed",
+            summary_payload=json.dumps(payload, sort_keys=True),
+            error_message=error_message,
+        )
+    )
+
+
+def _ensure_student_dataset_comparison_table(session: Session) -> None:
+    bind = session.get_bind()
+    if bind is None:
+        return
+    StudentDatasetComparison.__table__.create(bind=bind, checkfirst=True)
+
+
+def _student_dataset_release_lookup_by_path(
+    session: Session,
+) -> dict[str, StudentDatasetRelease]:
+    lookup: dict[str, StudentDatasetRelease] = {}
+    release_rows = list(session.scalars(select(StudentDatasetRelease)))
+    for release in release_rows:
+        lookup[_normalize_control_panel_path(release.output_path)] = release
+    return lookup
+
+
+def _comparison_history_payload(
+    *,
+    comparison_result: Any | None,
+    release_lookup: dict[str, StudentDatasetRelease],
+    error_message: str | None,
+) -> dict[str, Any]:
+    if comparison_result is None:
+        return {
+            "error_message": error_message,
+            "missing_clean_releases": [],
+            "missing_tainted_releases": [],
+            "releases": [],
+        }
+
+    payload_releases: list[dict[str, Any]] = []
+    for release in getattr(comparison_result, "releases", ()):
+        clean_release_path = str(getattr(release, "clean_release_path", ""))
+        tainted_release_path = str(getattr(release, "tainted_release_path", ""))
+        payload_releases.append(
+            {
+                "comparison_key": getattr(release, "comparison_key", None),
+                "release_type": getattr(release, "release_type", None),
+                "snapshot_month": getattr(release, "snapshot_month", None),
+                "clean_release_path": clean_release_path,
+                "tainted_release_path": tainted_release_path,
+                "issue_count": int(getattr(release, "issue_count", 0) or 0),
+                "clean_release": _comparison_release_record(
+                    release_lookup.get(_normalize_control_panel_path(clean_release_path))
+                ),
+                "tainted_release": _comparison_release_record(
+                    release_lookup.get(_normalize_control_panel_path(tainted_release_path))
+                ),
+                "tables": [
+                    {
+                        "table_name": getattr(table, "table_name", None),
+                        "clean_row_count": int(getattr(table, "clean_row_count", 0) or 0),
+                        "tainted_row_count": int(
+                            getattr(table, "tainted_row_count", 0) or 0
+                        ),
+                        "row_delta": int(getattr(table, "row_delta", 0) or 0),
+                        "schema_match": bool(getattr(table, "schema_match", False)),
+                        "issue_labels": list(getattr(table, "issue_labels", ()) or ()),
+                        "issue_count": int(getattr(table, "issue_count", 0) or 0),
+                    }
+                    for table in getattr(release, "tables", ())
+                ],
+            }
+        )
+    return {
+        "error_message": error_message,
+        "missing_clean_releases": list(
+            getattr(comparison_result, "missing_clean_releases", ()) or ()
+        ),
+        "missing_tainted_releases": list(
+            getattr(comparison_result, "missing_tainted_releases", ()) or ()
+        ),
+        "releases": payload_releases,
+    }
+
+
+def _comparison_release_record(
+    release: StudentDatasetRelease | None,
+) -> dict[str, Any] | None:
+    if release is None:
+        return None
+    generation_run = release.generation_run
+    return {
+        "release_id": int(release.id),
+        "release_name": release.release_name,
+        "generation_run_id": int(release.generation_run_id),
+        "generation_name": generation_run.generation_name if generation_run else None,
+        "data_quality_level": release.data_quality_level,
+        "release_type": release.release_type,
+        "release_month": (
+            release.release_month.isoformat() if release.release_month is not None else None
+        ),
+        "status": release.status,
+        "output_path": release.output_path,
     }
 
 
@@ -1139,6 +1437,10 @@ def _build_orchestration_template_context(
     export_launch_message: str | None = None,
     export_launch_error: str | None = None,
     export_config: dict[str, object] | None = None,
+    comparison_config: dict[str, str] | None = None,
+    comparison_result: Any | None = None,
+    compare_message: str | None = None,
+    compare_error: str | None = None,
 ) -> dict[str, object]:
     return {
         "snapshot": snapshot,
@@ -1151,6 +1453,10 @@ def _build_orchestration_template_context(
         "export_launch_message": export_launch_message,
         "export_launch_error": export_launch_error,
         "export_config": export_config or _default_export_config(snapshot),
+        "comparison_config": comparison_config or _default_export_comparison_config(snapshot),
+        "comparison_result": comparison_result,
+        "compare_message": compare_message,
+        "compare_error": compare_error,
     }
 
 
@@ -1161,6 +1467,10 @@ def _safe_release_name(value: str) -> str:
     )
     parts = [part for part in cleaned.split("_") if part]
     return "_".join(parts) or "student_dataset_release"
+
+
+def _normalize_control_panel_path(value: str | Path) -> str:
+    return str(Path(value).expanduser().resolve())
 
 
 def _copy_to_windows_clipboard(value: str) -> None:
@@ -1201,6 +1511,68 @@ def _open_folder_in_host(path: Path) -> None:
         [explorer_exe, windows_path],
         check=True,
     )
+
+
+def _select_folder_in_host(current_path: Path | None = None) -> Path:
+    wslpath_exe = shutil.which("wslpath")
+    powershell_exe = shutil.which("powershell.exe")
+    if wslpath_exe is None or powershell_exe is None:
+        raise RuntimeError(
+            "wslpath or powershell.exe is not available in this environment."
+        )
+
+    initial_path = current_path
+    if initial_path is not None and not initial_path.exists():
+        initial_path = initial_path.parent if initial_path.parent.exists() else None
+
+    initial_windows_path = ""
+    if initial_path is not None:
+        initial_windows_path = subprocess.run(
+            [wslpath_exe, "-w", str(initial_path)],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+
+    powershell_script = """
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = 'Select export folder'
+$dialog.ShowNewFolderButton = $false
+$initialPath = $env:CONTROL_PANEL_INITIAL_FOLDER
+if ($initialPath) {
+    $dialog.SelectedPath = $initialPath
+}
+if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+    exit 1
+}
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Output $dialog.SelectedPath
+""".strip()
+
+    result = subprocess.run(
+        [powershell_exe, "-NoProfile", "-STA", "-Command", powershell_script],
+        text=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "CONTROL_PANEL_INITIAL_FOLDER": initial_windows_path,
+        },
+        check=False,
+    )
+    windows_path = result.stdout.strip()
+    if result.returncode != 0 or not windows_path:
+        raise RuntimeError("Folder selection was cancelled or no folder was returned.")
+
+    linux_path = subprocess.run(
+        [wslpath_exe, "-u", windows_path],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    if not linux_path:
+        raise RuntimeError("Could not convert the selected folder path.")
+    return Path(linux_path).resolve()
 
 
 def _run_student_dataset_qc(path: Path) -> dict[str, Any]:

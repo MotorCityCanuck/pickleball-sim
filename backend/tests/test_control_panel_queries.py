@@ -1,5 +1,6 @@
 """Tests for control panel read-side queries."""
 from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 import sys
 
@@ -267,6 +268,28 @@ def session():
                 checksum varchar(128),
                 created_at datetime default current_timestamp not null,
                 foreign key(release_id) references student_dataset_releases(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_comparisons (
+                id integer primary key autoincrement,
+                clean_export_path text not null,
+                tainted_export_path text not null,
+                clean_generation_run_id bigint,
+                tainted_generation_run_id bigint,
+                compared_release_count bigint not null default 0,
+                total_issue_count bigint not null default 0,
+                missing_clean_release_count bigint not null default 0,
+                missing_tainted_release_count bigint not null default 0,
+                status varchar(30) not null default 'succeeded',
+                summary_payload text not null,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                foreign key(clean_generation_run_id) references generation_runs(id),
+                foreign key(tainted_generation_run_id) references generation_runs(id)
             )
             """
         )
@@ -622,6 +645,115 @@ def test_get_control_panel_snapshot_reports_missing_valid_config(session):
     assert snapshot.allowed_actions.can_start_generation_run is False
     assert "A single valid configuration is required." in snapshot.allowed_actions.start_generation_blockers
     assert snapshot.allowed_actions.can_generate_student_dataset is True
+
+
+def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, completed_at, created_at, updated_at
+            ) VALUES (
+                8, 'Comparison clean run', 12, 'v1', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ), (
+                9, 'Comparison tainted run', 12, 'v1', 'succeeded', '2026-05-20 10:05:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_releases (
+                id, release_name, release_type, release_month, generation_run_id, data_quality_level,
+                output_path, status, created_at, updated_at, completed_at
+            ) VALUES
+                (81, 'clean_snapshot', 'historical_baseline', '2026-05-01', 8, 'none',
+                 'data/student_dataset_exports/clean_snapshot', 'succeeded',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:10:00'),
+                (82, 'tainted_snapshot', 'historical_baseline', '2026-05-01', 9, 'medium',
+                 'data/student_dataset_exports/tainted_snapshot', 'succeeded',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:12:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_comparisons (
+                id, clean_export_path, tainted_export_path, clean_generation_run_id, tainted_generation_run_id,
+                compared_release_count, total_issue_count, missing_clean_release_count, missing_tainted_release_count,
+                status, summary_payload, error_message, created_at, updated_at
+            ) VALUES (
+                1,
+                'data/student_dataset_exports/clean_snapshot',
+                'data/student_dataset_exports/tainted_snapshot',
+                8,
+                9,
+                1,
+                3,
+                0,
+                0,
+                'succeeded',
+                :summary_payload,
+                NULL,
+                '2026-05-20 12:00:00',
+                '2026-05-20 12:00:00'
+            )
+            """
+        ),
+        {
+            "summary_payload": json.dumps(
+                {
+                    "releases": [
+                        {
+                            "release_type": "historical_baseline",
+                            "snapshot_month": "2026-05-01",
+                            "clean_release": {
+                                "generation_run_id": 8,
+                                "generation_name": "Comparison clean run",
+                            },
+                            "tainted_release": {
+                                "generation_run_id": 9,
+                                "generation_name": "Comparison tainted run",
+                            },
+                        }
+                    ],
+                    "missing_clean_releases": [],
+                    "missing_tainted_releases": [],
+                }
+            )
+        },
+    )
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 30, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert len(snapshot.student_dataset_export_summary.comparison_history) == 1
+    comparison = snapshot.student_dataset_export_summary.comparison_history[0]
+    assert comparison.status == "succeeded"
+    assert comparison.clean_generation_context == "#8 Comparison clean run"
+    assert comparison.tainted_generation_context == "#9 Comparison tainted run"
+    assert comparison.release_context == "historical_baseline 2026-05-01"
+    assert comparison.total_issue_count == 3
+    assert comparison.clean_export_path == "data/student_dataset_exports/clean_snapshot"
+
+
+def test_get_control_panel_snapshot_tolerates_missing_comparison_history_table(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(text("DROP TABLE student_dataset_comparisons"))
+    session.commit()
+
+    snapshot = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 30, 0)
+    ).get_control_panel_snapshot(session)
+
+    assert snapshot.student_dataset_export_summary.comparison_history == ()
 
 
 def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(session):

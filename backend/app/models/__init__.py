@@ -40,6 +40,7 @@ from .job_stage_progress import JobStageProgress
 from .generation_runtime_metrics import GenerationRuntimeMetric
 from .configuration_profiles import ConfigurationProfile, ConfigurationProfileVersion
 from .student_dataset_releases import (
+    StudentDatasetComparison,
     StudentDatasetRelease,
     StudentDatasetReleaseFile,
 )
@@ -93,6 +94,7 @@ __all__ = [
     'GenerationRuntimeMetric',
     'ConfigurationProfile',
     'ConfigurationProfileVersion',
+    'StudentDatasetComparison',
     'StudentDatasetRelease',
     'StudentDatasetReleaseFile',
     'RawSeedLoadRun',

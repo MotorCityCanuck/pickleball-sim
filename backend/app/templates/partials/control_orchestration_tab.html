@@ -483,6 +483,8 @@
                 <input type="hidden" name="output_root" value="{{ export_config.output_root }}">
                 <input type="hidden" name="release_name" value="{{ export_config.release_name }}">
                 <input type="hidden" name="data_quality_level" value="{{ export_config.data_quality_level }}">
+                <input type="hidden" name="clean_subfolder" value="{{ export_config.clean_subfolder or 'clean' }}">
+                <input type="hidden" name="tainted_subfolder" value="{{ export_config.tainted_subfolder or 'tainted' }}">
                 <label style="display:flex; gap:8px; align-items:center; color:#5a6477; font-size:13px;">
                     <input
                         type="checkbox"
@@ -514,6 +516,17 @@
             </form>
 
             {% include "partials/control_export_progress.html" %}
+        </section>
+    </details>
+
+    <details
+        class="panel-section {% if not snapshot.student_dataset_export_summary.latest_export_job_is_active %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-orchestration-section="data-quality-compare"
+    >
+        <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Data Quality Comparison</summary>
+        <section style="margin-top:14px;">
+            {% set comparison_return_target = "orchestration" %}
+            {% include "partials/control_data_quality_comparison.html" %}
         </section>
     </details>
 

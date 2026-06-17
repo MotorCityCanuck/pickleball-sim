@@ -2,8 +2,8 @@
 -- Pickleball Simulation Platform - Database Schema
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
--- Total Tables: 48
--- Explicit Indexes: 128
+-- Total Tables: 49
+-- Explicit Indexes: 132
 -- PostgreSQL 16+
 -- ============================================
 
@@ -624,6 +624,28 @@ CREATE TABLE student_dataset_release_files (
 	FOREIGN KEY(release_id) REFERENCES student_dataset_releases (id)
 );
 
+CREATE TABLE student_dataset_comparisons (
+	id BIGSERIAL NOT NULL, 
+	clean_export_path TEXT NOT NULL, 
+	tainted_export_path TEXT NOT NULL, 
+	clean_generation_run_id BIGINT, 
+	tainted_generation_run_id BIGINT, 
+	compared_release_count BIGINT DEFAULT 0 NOT NULL, 
+	total_issue_count BIGINT DEFAULT 0 NOT NULL, 
+	missing_clean_release_count BIGINT DEFAULT 0 NOT NULL, 
+	missing_tainted_release_count BIGINT DEFAULT 0 NOT NULL, 
+	status VARCHAR(30) DEFAULT 'succeeded' NOT NULL, 
+	summary_payload TEXT NOT NULL, 
+	error_message TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_student_dataset_comparison_counts CHECK (compared_release_count >= 0 AND total_issue_count >= 0 AND missing_clean_release_count >= 0 AND missing_tainted_release_count >= 0), 
+	CONSTRAINT chk_student_dataset_comparison_status CHECK (status IN ('succeeded', 'failed')), 
+	FOREIGN KEY(clean_generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(tainted_generation_run_id) REFERENCES generation_runs (id)
+);
+
 CREATE TABLE team_lifecycle_events (
 	id BIGSERIAL NOT NULL, 
 	generation_run_id BIGINT NOT NULL, 
@@ -1061,6 +1083,10 @@ CREATE INDEX idx_raw_state_prov_biases_load_run ON raw_state_prov_biases (load_r
 CREATE INDEX idx_raw_state_prov_biases_lookup ON raw_state_prov_biases (country_code, state_province_code, last_name);
 CREATE INDEX idx_student_dataset_release_files_release ON student_dataset_release_files (release_id);
 CREATE INDEX idx_student_dataset_release_files_table ON student_dataset_release_files (table_name);
+CREATE INDEX idx_student_dataset_comparisons_clean_run ON student_dataset_comparisons (clean_generation_run_id);
+CREATE INDEX idx_student_dataset_comparisons_created ON student_dataset_comparisons (created_at);
+CREATE INDEX idx_student_dataset_comparisons_status ON student_dataset_comparisons (status);
+CREATE INDEX idx_student_dataset_comparisons_tainted_run ON student_dataset_comparisons (tainted_generation_run_id);
 CREATE INDEX idx_student_dataset_releases_generation_run ON student_dataset_releases (generation_run_id);
 CREATE INDEX idx_student_dataset_releases_status ON student_dataset_releases (status);
 CREATE INDEX idx_team_lifecycle_events_batch ON team_lifecycle_events (batch_id);

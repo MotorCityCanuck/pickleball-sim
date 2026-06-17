@@ -65,13 +65,23 @@
         <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); gap:12px;">
             <label style="display:grid; gap:6px;">
                 <span style="font-size:13px; color:#5a6477;">Output root</span>
-                <input
-                    type="text"
-                    name="output_root"
-                    required
-                    value="{{ export_config.output_root }}"
-                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-                >
+                <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+                    <input
+                        id="export-output-root"
+                        type="text"
+                        name="output_root"
+                        required
+                        value="{{ export_config.output_root }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                    <button
+                        type="button"
+                        onclick="window.selectControlPanelFolder('export-output-root', 'data')"
+                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
+                    >
+                        Choose Folder
+                    </button>
+                </div>
             </label>
             <label style="display:grid; gap:6px;">
                 <span style="font-size:13px; color:#5a6477;">Release name</span>
@@ -85,9 +95,32 @@
             </label>
         </div>
 
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">Clean output subfolder</span>
+                <input
+                    type="text"
+                    name="clean_subfolder"
+                    required
+                    value="{{ export_config.clean_subfolder or 'clean' }}"
+                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                >
+            </label>
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">Tainted output subfolder</span>
+                <input
+                    type="text"
+                    name="tainted_subfolder"
+                    required
+                    value="{{ export_config.tainted_subfolder or 'tainted' }}"
+                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                >
+            </label>
+        </div>
+
         <div style="display:grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap:12px; align-items:end;">
             <label style="display:grid; gap:6px;">
-                <span style="font-size:13px; color:#5a6477;">Data quality level</span>
+                <span style="font-size:13px; color:#5a6477;">Data Quality Issue Injection Level</span>
                 <select
                     name="data_quality_level"
                     style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:white;"
@@ -121,6 +154,11 @@
                 <code>{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
             </div>
             <div style="margin-top:6px; color:#5a6477;">
+                When issue injection is enabled, clean and tainted outputs are written under
+                <code>{{ export_config.clean_subfolder or 'clean' }}</code> and
+                <code>{{ export_config.tainted_subfolder or 'tainted' }}</code>.
+            </div>
+            <div style="margin-top:6px; color:#5a6477;">
                 Monthly incremental releases use <code>_snapshot_YYYY_MM</code> suffixes keyed to the release snapshot month.
             </div>
         </div>
@@ -151,4 +189,9 @@
     </form>
 
     {% include "partials/control_export_progress.html" %}
+
+    <div class="panel-section">
+        {% set comparison_return_target = "export_config" %}
+        {% include "partials/control_data_quality_comparison.html" %}
+    </div>
 </section>

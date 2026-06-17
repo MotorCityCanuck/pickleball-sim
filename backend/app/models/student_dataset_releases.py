@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     text,
@@ -91,4 +92,85 @@ class StudentDatasetReleaseFile(Base):
     __table_args__ = (
         Index("idx_student_dataset_release_files_release", "release_id"),
         Index("idx_student_dataset_release_files_table", "table_name"),
+    )
+
+
+class StudentDatasetComparison(Base, TimestampMixin):
+    """Operator-facing history of clean-vs-tainted export comparisons."""
+
+    __tablename__ = "student_dataset_comparisons"
+
+    id = Column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    clean_export_path = Column(Text, nullable=False)
+    tainted_export_path = Column(Text, nullable=False)
+    clean_generation_run_id = Column(
+        BigInteger,
+        ForeignKey("generation_runs.id"),
+    )
+    tainted_generation_run_id = Column(
+        BigInteger,
+        ForeignKey("generation_runs.id"),
+    )
+    compared_release_count = Column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    total_issue_count = Column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    missing_clean_release_count = Column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    missing_tainted_release_count = Column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    status = Column(
+        String(30),
+        nullable=False,
+        default="succeeded",
+        server_default=text("'succeeded'"),
+    )
+    summary_payload = Column(Text, nullable=False)
+    error_message = Column(Text)
+
+    clean_generation_run = relationship(
+        "GenerationRun",
+        foreign_keys=[clean_generation_run_id],
+    )
+    tainted_generation_run = relationship(
+        "GenerationRun",
+        foreign_keys=[tainted_generation_run_id],
+    )
+
+    __table_args__ = (
+        Index("idx_student_dataset_comparisons_clean_run", "clean_generation_run_id"),
+        Index("idx_student_dataset_comparisons_created", "created_at"),
+        Index("idx_student_dataset_comparisons_status", "status"),
+        Index("idx_student_dataset_comparisons_tainted_run", "tainted_generation_run_id"),
+        CheckConstraint(
+            "compared_release_count >= 0 "
+            "AND total_issue_count >= 0 "
+            "AND missing_clean_release_count >= 0 "
+            "AND missing_tainted_release_count >= 0",
+            name="chk_student_dataset_comparison_counts",
+        ),
+        CheckConstraint(
+            "status IN ('succeeded', 'failed')",
+            name="chk_student_dataset_comparison_status",
+        ),
     )

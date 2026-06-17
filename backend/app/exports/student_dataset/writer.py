@@ -53,6 +53,7 @@ class StudentDatasetBuildParameters:
     release_name: str
     data_quality_level: str = "none"
     overwrite_existing: bool = False
+    final_root: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -72,6 +73,7 @@ class StudentDatasetBuildParameters:
             "release_name": self.release_name,
             "data_quality_level": self.data_quality_level,
             "overwrite_existing": self.overwrite_existing,
+            "final_root": str(self.final_root) if self.final_root is not None else None,
         }
 
 

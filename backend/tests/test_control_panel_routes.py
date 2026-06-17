@@ -408,6 +408,28 @@ def session_factory():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_comparisons (
+                id integer primary key autoincrement,
+                clean_export_path text not null,
+                tainted_export_path text not null,
+                clean_generation_run_id bigint,
+                tainted_generation_run_id bigint,
+                compared_release_count bigint not null default 0,
+                total_issue_count bigint not null default 0,
+                missing_clean_release_count bigint not null default 0,
+                missing_tainted_release_count bigint not null default 0,
+                status varchar(30) not null default 'succeeded',
+                summary_payload text not null,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                foreign key(clean_generation_run_id) references generation_runs(id),
+                foreign key(tainted_generation_run_id) references generation_runs(id)
+            )
+            """
+        )
     yield sessionmaker(bind=engine, autoflush=False, future=True)
 
 
@@ -1055,7 +1077,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
-    assert "Export Configuration" in body
+    assert "Export Config & Run" in body
     assert "Orchestration" in body
     assert "Tournament Config" in body
     assert "Tournament" in body
@@ -1147,6 +1169,7 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Raw Ingest &amp; Normalization" in orchestration.body.decode()
     assert "Player &amp; Match Generation" in orchestration.body.decode()
     assert "Data Export" in orchestration.body.decode()
+    assert "Data Quality Comparison" in orchestration.body.decode()
     assert "<details open" not in orchestration.body.decode()
     assert "Generate seed data" in orchestration.body.decode()
     assert "Generate player and match data" in orchestration.body.decode()
@@ -1176,6 +1199,7 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         in orchestration.body.decode()
     )
     assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
+    assert 'data-orchestration-section="data-quality-compare"' in orchestration.body.decode()
     assert 'id="generation-run-name"' in orchestration.body.decode()
     assert "hx-preserve" in orchestration.body.decode()
     assert "control-panel-orchestration-section:" in orchestration.body.decode()
@@ -1186,6 +1210,10 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/export/student-dataset/start"' in export_config.body.decode()
     assert "Start Student Dataset Baseline + Incremental Export" in export_config.body.decode()
     assert "copyControlPanelText" in export_config.body.decode()
+    assert "Choose Folder" in export_config.body.decode()
+    assert "/control/system/select-folder" in export_config.body.decode()
+    assert 'name="clean_subfolder"' in export_config.body.decode()
+    assert 'name="tainted_subfolder"' in export_config.body.decode()
 
     assert tournament_config.status_code == 200
     assert "Tournament Configuration" in tournament_config.body.decode()
@@ -1702,6 +1730,8 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
             output_root="data/student_dataset_exports",
             release_name="ui_export",
             data_quality_level="none",
+            clean_subfolder="clean",
+            tainted_subfolder="tainted",
             overwrite_existing=None,
             session=session,
             queries=ControlPanelQueries(),
@@ -1718,10 +1748,14 @@ def test_student_dataset_export_start_route_queues_background_job(session_factor
     assert "started in background" in body
     assert export_service.calls[0]["generation_run_id"] == 2
     assert export_service.calls[0]["release_name"] == "ui_export"
+    assert export_service.calls[0]["clean_subfolder"] == "clean"
+    assert export_service.calls[0]["tainted_subfolder"] == "tainted"
     assert export_service.calls[0]["overwrite_existing"] is False
     assert len(background_runner.submissions) == 1
     assert background_runner.submissions[0][2]["job_status_id"] == 91
     assert background_runner.submissions[0][2]["release_name"] == "ui_export"
+    assert background_runner.submissions[0][2]["clean_subfolder"] == "clean"
+    assert background_runner.submissions[0][2]["tainted_subfolder"] == "tainted"
 
 
 def test_student_dataset_export_start_route_can_return_orchestration_partial(session_factory):
@@ -1740,6 +1774,8 @@ def test_student_dataset_export_start_route_can_return_orchestration_partial(ses
             output_root="data/student_dataset_exports",
             release_name="ui_export",
             data_quality_level="none",
+            clean_subfolder="clean",
+            tainted_subfolder="tainted",
             overwrite_existing=None,
             return_target="orchestration",
             session=session,
@@ -1774,6 +1810,8 @@ def test_student_dataset_export_start_route_passes_delete_confirmation(session_f
             output_root="data/student_dataset_exports",
             release_name="ui_export",
             data_quality_level="none",
+            clean_subfolder="clean",
+            tainted_subfolder="tainted",
             overwrite_existing="yes",
             session=session,
             queries=ControlPanelQueries(),
@@ -1905,6 +1943,8 @@ def test_student_dataset_export_start_route_records_incremental_export_metadata(
             output_root="data/student_dataset_exports",
             release_name="ui_export",
             data_quality_level="none",
+            clean_subfolder="clean",
+            tainted_subfolder="tainted",
             overwrite_existing=None,
             session=session,
             queries=ControlPanelQueries(),
@@ -1952,6 +1992,129 @@ def test_student_dataset_export_start_route_records_incremental_export_metadata(
         assert metadata["incremental_month_count"] == 3
 
 
+def test_student_dataset_compare_route_renders_comparison_summary(session_factory, monkeypatch):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        monkeypatch.setattr(
+            routes_module,
+            "_resolve_control_panel_path",
+            lambda value: Path(f"/tmp/{value}"),
+        )
+        monkeypatch.setattr(
+            routes_module,
+            "compare_export_locations",
+            lambda **kwargs: SimpleNamespace(
+                compared_release_count=1,
+                total_issue_count=3,
+                missing_clean_releases=(),
+                missing_tainted_releases=(),
+                releases=(
+                    SimpleNamespace(
+                        release_type="historical_baseline",
+                        snapshot_month="2026-05-01",
+                        clean_release_path="/tmp/clean_release",
+                        tainted_release_path="/tmp/tainted_release",
+                        issue_count=3,
+                        tables=(
+                            SimpleNamespace(
+                                table_name="player_master",
+                                clean_row_count=10,
+                                tainted_row_count=10,
+                                row_delta=0,
+                                schema_match=True,
+                                issue_labels=("dominant_hand: missing_optional_values (1)",),
+                                issue_count=1,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        response = routes["/control/export/student-dataset/compare"](
+            request=_request("/control/export/student-dataset/compare", method="POST"),
+            clean_export_path="clean_release",
+            tainted_export_path="tainted_release",
+            return_target="orchestration",
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        session.commit()
+        history_row = session.execute(
+            text(
+                """
+                SELECT clean_export_path, tainted_export_path, status, compared_release_count, total_issue_count
+                FROM student_dataset_comparisons
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            )
+        ).mappings().one()
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Compare clean and injected exports" in body
+    assert "Comparison History" in body
+    assert "Compared 1 release pair(s) and detected 3 issue signal(s)." in body
+    assert "/tmp/clean_release" in body
+    assert "/tmp/tainted_release" in body
+    assert history_row["clean_export_path"] == "/tmp/clean_release"
+    assert history_row["tainted_export_path"] == "/tmp/tainted_release"
+    assert history_row["status"] == "succeeded"
+    assert history_row["compared_release_count"] == 1
+    assert history_row["total_issue_count"] == 3
+
+
+def test_student_dataset_compare_route_creates_missing_history_table(
+    session_factory,
+    monkeypatch,
+):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(text("DROP TABLE student_dataset_comparisons"))
+        session.commit()
+        monkeypatch.setattr(
+            routes_module,
+            "_resolve_control_panel_path",
+            lambda value: Path(f"/tmp/{value}"),
+        )
+        monkeypatch.setattr(
+            routes_module,
+            "compare_export_locations",
+            lambda **kwargs: SimpleNamespace(
+                compared_release_count=1,
+                total_issue_count=0,
+                missing_clean_releases=(),
+                missing_tainted_releases=(),
+                releases=(),
+            ),
+        )
+
+        response = routes["/control/export/student-dataset/compare"](
+            request=_request("/control/export/student-dataset/compare", method="POST"),
+            clean_export_path="clean_release",
+            tainted_export_path="tainted_release",
+            return_target="orchestration",
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        history_count = session.execute(
+            text("SELECT COUNT(*) FROM student_dataset_comparisons")
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert response.status_code == 200
+    assert history_count == 1
+
+
 def test_copy_path_route_uses_windows_clipboard_helper(monkeypatch):
     app = create_app()
     routes = _route_map(app)
@@ -1990,6 +2153,32 @@ def test_open_folder_route_uses_host_folder_helper(monkeypatch):
     assert captured["raw"] == "data/student_dataset_exports/release"
     assert captured["path"] == Path("/tmp/student-release")
     assert "Opened folder: /tmp/student-release" in response.body.decode()
+
+
+def test_select_folder_route_uses_host_folder_picker(monkeypatch):
+    app = create_app()
+    routes = _route_map(app)
+    captured: dict[str, object] = {}
+
+    def fake_resolve(value: str):
+        captured["raw"] = value
+        return Path("/tmp/current-folder")
+
+    def fake_select(path: Path | None) -> Path:
+        captured["path"] = path
+        return Path("/tmp/selected-folder")
+
+    monkeypatch.setattr(routes_module, "_resolve_control_panel_path", fake_resolve)
+    monkeypatch.setattr(routes_module, "_select_folder_in_host", fake_select)
+
+    response = routes["/control/system/select-folder"](
+        current_path="data/student_dataset_exports/current"
+    )
+
+    assert response.status_code == 200
+    assert captured["raw"] == "data/student_dataset_exports/current"
+    assert captured["path"] == Path("/tmp/current-folder")
+    assert response.body.decode() == '{"ok":true,"path":"/tmp/selected-folder"}'
 
 
 def test_run_qc_route_returns_qc_summary(monkeypatch):

@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "validation_results",
     "student_dataset_releases",
     "student_dataset_release_files",
+    "student_dataset_comparisons",
     "team_lifecycle_events",
     "tournament_division_results",
     "tournament_events",
@@ -144,6 +145,10 @@ EXPECTED_INDEXES = {
     "idx_ratings_update_log_batch",
     "idx_student_dataset_release_files_release",
     "idx_student_dataset_release_files_table",
+    "idx_student_dataset_comparisons_clean_run",
+    "idx_student_dataset_comparisons_created",
+    "idx_student_dataset_comparisons_status",
+    "idx_student_dataset_comparisons_tainted_run",
     "idx_student_dataset_releases_generation_run",
     "idx_student_dataset_releases_status",
     "idx_team_memberships_dates",
@@ -313,6 +318,10 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "chk_student_release_status",
         "chk_student_release_type",
     },
+    "student_dataset_comparisons": {
+        "chk_student_dataset_comparison_counts",
+        "chk_student_dataset_comparison_status",
+    },
     "validation_results": {"chk_severity"},
 }
 
@@ -422,6 +431,10 @@ EXPECTED_FOREIGN_KEYS = {
     "student_dataset_release_files": {
         "release_id->student_dataset_releases.id",
     },
+    "student_dataset_comparisons": {
+        "clean_generation_run_id->generation_runs.id",
+        "tainted_generation_run_id->generation_runs.id",
+    },
     "student_dataset_releases": {
         "generation_run_id->generation_runs.id",
     },
@@ -489,6 +502,13 @@ EXPECTED_SERVER_DEFAULTS = {
     },
     "regions": {"competitiveness_multiplier": "1.0"},
     "raw_seed_load_runs": {"status": "'pending'"},
+    "student_dataset_comparisons": {
+        "compared_release_count": "0",
+        "missing_clean_release_count": "0",
+        "missing_tainted_release_count": "0",
+        "status": "'succeeded'",
+        "total_issue_count": "0",
+    },
     "student_dataset_releases": {"status": "'pending'"},
     "tournament_events": {"status": "'draft'"},
     "tournament_official_games": {

@@ -70,24 +70,38 @@
                         <th style="padding:8px 10px;">Month</th>
                         <th style="padding:8px 10px;">Files</th>
                         <th style="padding:8px 10px;">Rows</th>
-                        <th style="padding:8px 10px;">Actions</th>
                         <th style="padding:8px 10px;">Path</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for release in snapshot.student_dataset_export_summary.latest_releases %}
-                        <tr style="border-bottom:1px solid #eef1f5;">
-                            <td style="padding:8px 10px;">{{ release.release_name }}</td>
-                            <td style="padding:8px 10px;">{{ release.release_type }}</td>
-                            <td style="padding:8px 10px;">{{ release.release_month or "n/a" }}</td>
-                            <td style="padding:8px 10px;">{{ release.file_count }}</td>
-                            <td style="padding:8px 10px;">{{ "{:,}".format(release.total_row_count) }}</td>
-                            <td style="padding:8px 10px;">
-                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <tr>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_name }}</td>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_type }}</td>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_month or "n/a" }}</td>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.file_count }}</td>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ "{:,}".format(release.total_row_count) }}</td>
+                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">
+                                <div style="display:grid; gap:8px;">
+                                    <code>{{ release.output_path }}</code>
+                                    <button
+                                        type="button"
+                                        onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
+                                        style="justify-self:start; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
+                                        title="Copy release path"
+                                    >
+                                        Copy Path
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td colspan="6" style="padding:0 10px 10px 10px; border-bottom:1px solid #d6d9df;">
+                                <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px;">
                                     <button
                                         type="button"
                                         onclick="window.downloadControlPanelReleasePackage({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
                                         title="Download a zip package containing manifest.json and all Parquet files"
                                     >
                                         Download Package
@@ -95,7 +109,7 @@
                                     <button
                                         type="button"
                                         onclick="window.openControlPanelFolder({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
                                         title="Open release folder"
                                     >
                                         Open Folder
@@ -103,22 +117,13 @@
                                     <button
                                         type="button"
                                         onclick="window.runControlPanelReleaseQc({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
+                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center;"
                                         title="Run DuckDB quality checks for this release"
                                     >
                                         Run QC
                                     </button>
-                                    <button
-                                        type="button"
-                                        onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;"
-                                        title="Copy release path"
-                                    >
-                                        Copy Path
-                                    </button>
                                 </div>
                             </td>
-                            <td style="padding:8px 10px;"><code>{{ release.output_path }}</code></td>
                         </tr>
                     {% endfor %}
                 </tbody>

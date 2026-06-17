@@ -15,6 +15,7 @@ from app.exports.student_dataset import (  # noqa: E402
     ReleaseWindowValidationError,
     STUDENT_TABLE_ORDER,
     StudentDatasetBuildResult,
+    StudentDatasetExportService,
     StudentDatasetExportPreflightError,
     build_student_dataset_release,
 )
@@ -140,6 +141,67 @@ def test_build_student_dataset_release_deletes_existing_final_folder_when_confir
     assert not (result.published_family.final_root / "obsolete.txt").exists()
 
 
+def test_registered_export_writes_paired_clean_and_tainted_outputs(session, tmp_path):
+    seed_snapshot_query_data(session)
+    _seed_succeeded_generation_run(session)
+    _create_job_tracking_tables(session)
+    service = StudentDatasetExportService()
+    registration = service.register_export_job(
+        session=session,
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        clean_subfolder="clean",
+        tainted_subfolder="tainted",
+    )
+
+    result = service.execute_registered_export(
+        session=session,
+        job_status_id=registration.job_status.id,
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        clean_subfolder="clean",
+        tainted_subfolder="tainted",
+    )
+
+    assert result is not None
+    assert result.clean_published_family is not None
+    assert result.clean_published_family.final_root == tmp_path / "napa_student_release" / "clean"
+    assert result.published_family.final_root == tmp_path / "napa_student_release" / "tainted"
+    assert (
+        tmp_path
+        / "napa_student_release"
+        / "clean"
+        / "napa_student_release_initial_history"
+    ).is_dir()
+    assert (
+        tmp_path
+        / "napa_student_release"
+        / "tainted"
+        / "napa_student_release_initial_history"
+    ).is_dir()
+
+    release_rows = session.execute(
+        text(
+            """
+            SELECT data_quality_level, output_path
+            FROM student_dataset_releases
+            ORDER BY data_quality_level
+            """
+        )
+    ).mappings().all()
+    assert [row["data_quality_level"] for row in release_rows] == ["medium", "none"]
+    assert any("/clean/" in row["output_path"] for row in release_rows)
+    assert any("/tainted/" in row["output_path"] for row in release_rows)
+
+
 def _seed_succeeded_generation_run(session, *, status: str = "succeeded") -> None:
     session.execute(
         text(
@@ -169,5 +231,57 @@ def _seed_succeeded_generation_run(session, *, status: str = "succeeded") -> Non
             """
         ),
         {"status": status},
+    )
+    session.commit()
+
+
+def _create_job_tracking_tables(session) -> None:
+    session.execute(
+        text(
+            """
+            CREATE TABLE job_status (
+                id integer primary key autoincrement,
+                job_type varchar(50) not null,
+                job_id varchar(100) not null unique,
+                status varchar(30) not null default 'pending',
+                current_phase varchar(100),
+                percent_complete numeric(5,2),
+                current_message text,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            CREATE TABLE job_stage_progress (
+                id integer primary key autoincrement,
+                job_status_id bigint not null,
+                generation_run_id bigint,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                stage_sequence integer,
+                status varchar(30) not null default 'pending',
+                progress_current bigint not null default 0,
+                progress_total bigint,
+                progress_unit varchar(100),
+                progress_percent numeric(5,2),
+                last_heartbeat_at datetime,
+                progress_message text,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                metadata_json text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique(job_status_id, batch_id, stage_name)
+            )
+            """
+        )
     )
     session.commit()

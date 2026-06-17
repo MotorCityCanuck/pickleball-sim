@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import json
 from typing import Callable
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, inspect, select
 from sqlalchemy.orm import Session
 
 from app.core import ConfigValidationIssue
@@ -26,6 +26,7 @@ from app.models import (
     LastName,
     MonthlyBatch,
     RawSeedLoadRun,
+    StudentDatasetComparison,
     Region,
     StudentDatasetRelease,
     StudentDatasetReleaseFile,
@@ -202,6 +203,25 @@ class StudentDatasetReleaseSummary:
 
 
 @dataclass(frozen=True)
+class StudentDatasetComparisonSummary:
+    """UI-ready student dataset comparison history row."""
+
+    comparison_id: int
+    created_at: datetime | None
+    status: str
+    clean_export_path: str
+    tainted_export_path: str
+    clean_generation_context: str
+    tainted_generation_context: str
+    release_context: str
+    compared_release_count: int
+    total_issue_count: int
+    missing_clean_release_count: int
+    missing_tainted_release_count: int
+    error_message: str | None
+
+
+@dataclass(frozen=True)
 class StudentDatasetExportSummary:
     """UI-ready student dataset export state."""
 
@@ -209,6 +229,7 @@ class StudentDatasetExportSummary:
     latest_export_job_is_active: bool
     latest_export_stage_progress: tuple[StageProgressSummary, ...]
     latest_releases: tuple[StudentDatasetReleaseSummary, ...]
+    comparison_history: tuple[StudentDatasetComparisonSummary, ...]
 
 
 @dataclass(frozen=True)
@@ -651,6 +672,18 @@ class ControlPanelQueries:
             )
         )
         file_counts = _student_release_file_counts(session, release_rows)
+        comparison_rows: list[StudentDatasetComparison] = []
+        if _table_exists(session, StudentDatasetComparison.__tablename__):
+            comparison_rows = list(
+                session.scalars(
+                    select(StudentDatasetComparison)
+                    .order_by(
+                        StudentDatasetComparison.created_at.desc(),
+                        StudentDatasetComparison.id.desc(),
+                    )
+                    .limit(10)
+                )
+            )
         return StudentDatasetExportSummary(
             latest_export_job=latest_job,
             latest_export_job_is_active=latest_job_is_active,
@@ -670,6 +703,10 @@ class ControlPanelQueries:
                     total_row_count=file_counts.get(release.id, (0, 0))[1],
                 )
                 for release in release_rows
+            ),
+            comparison_history=tuple(
+                _student_dataset_comparison_summary(comparison)
+                for comparison in comparison_rows
             ),
         )
 
@@ -1470,6 +1507,88 @@ def _student_release_file_counts(
         int(release_id): (int(file_count or 0), int(row_count or 0))
         for release_id, file_count, row_count in rows
     }
+
+
+def _table_exists(session: Session, table_name: str) -> bool:
+    bind = session.get_bind()
+    return bind is not None and inspect(bind).has_table(table_name)
+
+
+def _student_dataset_comparison_summary(
+    comparison: StudentDatasetComparison,
+) -> StudentDatasetComparisonSummary:
+    payload = _coerce_mapping(comparison.summary_payload)
+    releases = payload.get("releases")
+    release_payloads = releases if isinstance(releases, list) else []
+    return StudentDatasetComparisonSummary(
+        comparison_id=int(comparison.id),
+        created_at=comparison.created_at,
+        status=comparison.status,
+        clean_export_path=comparison.clean_export_path,
+        tainted_export_path=comparison.tainted_export_path,
+        clean_generation_context=_comparison_generation_context(
+            release_payloads,
+            side="clean_release",
+        ),
+        tainted_generation_context=_comparison_generation_context(
+            release_payloads,
+            side="tainted_release",
+        ),
+        release_context=_comparison_release_context(release_payloads),
+        compared_release_count=int(comparison.compared_release_count or 0),
+        total_issue_count=int(comparison.total_issue_count or 0),
+        missing_clean_release_count=int(comparison.missing_clean_release_count or 0),
+        missing_tainted_release_count=int(comparison.missing_tainted_release_count or 0),
+        error_message=comparison.error_message,
+    )
+
+
+def _comparison_generation_context(
+    release_payloads: list[object],
+    *,
+    side: str,
+) -> str:
+    labels: list[str] = []
+    seen: set[tuple[int | None, str | None]] = set()
+    for release_payload in release_payloads:
+        release_mapping = _coerce_mapping(release_payload)
+        release_info = _coerce_mapping(release_mapping.get(side))
+        run_id = _coerce_int(release_info.get("generation_run_id"))
+        generation_name = _coerce_str(release_info.get("generation_name"))
+        token = (run_id, generation_name)
+        if token in seen or token == (None, None):
+            continue
+        seen.add(token)
+        if run_id is not None and generation_name:
+            labels.append(f"#{run_id} {generation_name}")
+        elif run_id is not None:
+            labels.append(f"#{run_id}")
+        elif generation_name:
+            labels.append(generation_name)
+    return _summarize_labels(labels)
+
+
+def _comparison_release_context(release_payloads: list[object]) -> str:
+    labels: list[str] = []
+    for release_payload in release_payloads:
+        release_mapping = _coerce_mapping(release_payload)
+        release_type = _coerce_str(release_mapping.get("release_type")) or "unknown"
+        snapshot_month = _coerce_str(release_mapping.get("snapshot_month"))
+        labels.append(
+            f"{release_type} {snapshot_month}".strip()
+            if snapshot_month
+            else release_type
+        )
+    return _summarize_labels(labels)
+
+
+def _summarize_labels(labels: list[str]) -> str:
+    if not labels:
+        return "n/a"
+    unique_labels = list(dict.fromkeys(label for label in labels if label))
+    if len(unique_labels) <= 2:
+        return ", ".join(unique_labels)
+    return f"{', '.join(unique_labels[:2])} +{len(unique_labels) - 2} more"
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:

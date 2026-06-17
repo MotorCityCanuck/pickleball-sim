@@ -1,0 +1,298 @@
+{% set compare_ready = not snapshot.student_dataset_export_summary.latest_export_job_is_active %}
+
+<section style="display:grid; gap:16px;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+        <div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 4</div>
+            <div style="margin-top:6px; font-size:18px;">Compare clean and injected exports</div>
+            <div style="margin-top:6px; color:#5a6477;">
+                Compare a no-issues export location against a tainted export location and summarize the visible data-quality differences in the released Parquet data.
+            </div>
+        </div>
+        {% if compare_ready %}
+            <div style="border:1px solid #7bc693; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:600; color:#1f5f30; background:#edf8f0;">
+                Ready to Compare
+            </div>
+        {% else %}
+            <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                Blocked
+            </div>
+        {% endif %}
+    </div>
+
+    {% if compare_message %}
+        <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+            {{ compare_message }}
+        </div>
+    {% endif %}
+    {% if compare_error %}
+        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+            {{ compare_error }}
+        </div>
+    {% endif %}
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+        <div class="info-card {% if compare_ready %}state-card-ready{% else %}state-card-blocked{% endif %}">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Comparison Preconditions</div>
+            <div style="margin-top:8px; font-size:18px;">
+                {% if compare_ready %}Ready{% else %}Blocked{% endif %}
+            </div>
+            {% if not compare_ready %}
+                <div style="margin-top:8px; color:#5a6477;">
+                    Finish the active student dataset export before comparing release folders.
+                </div>
+            {% else %}
+                <div style="margin-top:8px; color:#5a6477;">
+                    Provide the clean export location and the tainted export location. Each path may point to a single release folder or a release-family root.
+                </div>
+            {% endif %}
+        </div>
+        <div class="info-card">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Suggested Paths</div>
+            <div style="margin-top:8px; color:#5a6477;">
+                The form defaults to the latest `none` release and the latest non-`none` release when those are available in export history.
+            </div>
+        </div>
+    </div>
+
+    <form
+        style="display:grid; gap:12px;"
+        hx-post="/control/export/student-dataset/compare"
+        hx-target="#control-tab-content"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="return_target" value="{{ comparison_return_target or 'orchestration' }}">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">No Issues Export Location</span>
+                <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+                    <input
+                        id="comparison-clean-export-path"
+                        type="text"
+                        name="clean_export_path"
+                        required
+                        value="{{ comparison_config.clean_export_path }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                    <button
+                        type="button"
+                        onclick="window.selectControlPanelFolder('comparison-clean-export-path')"
+                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
+                    >
+                        Choose Folder
+                    </button>
+                </div>
+            </label>
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">Tainted Export Location</span>
+                <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+                    <input
+                        id="comparison-tainted-export-path"
+                        type="text"
+                        name="tainted_export_path"
+                        required
+                        value="{{ comparison_config.tainted_export_path }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                    >
+                    <button
+                        type="button"
+                        onclick="window.selectControlPanelFolder('comparison-tainted-export-path')"
+                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
+                    >
+                        Choose Folder
+                    </button>
+                </div>
+            </label>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button
+                type="submit"
+                {% if not compare_ready %}disabled{% endif %}
+                style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not compare_ready %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            >
+                Compare Exported Data
+            </button>
+            {% if (comparison_return_target or 'orchestration') != 'export_config' %}
+                <button
+                    type="button"
+                    onclick="window.loadControlPanelTab(document.getElementById('control-tab-button-export'))"
+                    style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                >
+                    Open Export Configuration
+                </button>
+            {% endif %}
+        </div>
+    </form>
+
+    {% if comparison_result %}
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+            <div class="metric-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Compared Releases</div>
+                <div style="margin-top:8px; font-size:20px;">{{ comparison_result.compared_release_count }}</div>
+            </div>
+            <div class="metric-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Issue Signals</div>
+                <div style="margin-top:8px; font-size:20px;">{{ comparison_result.total_issue_count }}</div>
+            </div>
+            <div class="metric-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Missing Clean Releases</div>
+                <div style="margin-top:8px; font-size:20px;">{{ comparison_result.missing_clean_releases|length }}</div>
+            </div>
+            <div class="metric-card">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Missing Tainted Releases</div>
+                <div style="margin-top:8px; font-size:20px;">{{ comparison_result.missing_tainted_releases|length }}</div>
+            </div>
+        </div>
+
+        {% if comparison_result.missing_clean_releases or comparison_result.missing_tainted_releases %}
+            <div class="info-card">
+                {% if comparison_result.missing_clean_releases %}
+                    <div style="color:#5a6477;">
+                        Missing from no-issues location: {{ comparison_result.missing_clean_releases|join(', ') }}
+                    </div>
+                {% endif %}
+                {% if comparison_result.missing_tainted_releases %}
+                    <div style="margin-top:6px; color:#5a6477;">
+                        Missing from tainted location: {{ comparison_result.missing_tainted_releases|join(', ') }}
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <div style="display:grid; gap:12px;">
+            {% for release in comparison_result.releases %}
+                <div class="info-card" style="display:grid; gap:10px;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                        <div>
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Pair</div>
+                            <div style="margin-top:6px; font-size:18px;">{{ release.release_type }}{% if release.snapshot_month %} | {{ release.snapshot_month }}{% endif %}</div>
+                            <div style="margin-top:6px; color:#5a6477;"><code>{{ release.clean_release_path }}</code></div>
+                            <div style="margin-top:4px; color:#5a6477;"><code>{{ release.tainted_release_path }}</code></div>
+                        </div>
+                        <div style="font-size:18px; color:{% if release.issue_count > 0 %}#9a6700{% else %}#247a3d{% endif %};">
+                            {{ release.issue_count }} issue signals
+                        </div>
+                    </div>
+                    <div style="overflow:auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                            <thead>
+                                <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
+                                    <th style="padding:8px 10px;">Table</th>
+                                    <th style="padding:8px 10px;">Clean Rows</th>
+                                    <th style="padding:8px 10px;">Tainted Rows</th>
+                                    <th style="padding:8px 10px;">Delta</th>
+                                    <th style="padding:8px 10px;">Schema</th>
+                                    <th style="padding:8px 10px;">Detected Signals</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for table in release.tables if table.issue_count > 0 or table.row_delta != 0 or not table.schema_match %}
+                                    <tr style="border-bottom:1px solid #eef1f5;">
+                                        <td style="padding:8px 10px;">{{ table.table_name }}</td>
+                                        <td style="padding:8px 10px;">{{ table.clean_row_count }}</td>
+                                        <td style="padding:8px 10px;">{{ table.tainted_row_count }}</td>
+                                        <td style="padding:8px 10px;">{{ table.row_delta }}</td>
+                                        <td style="padding:8px 10px;">{{ "match" if table.schema_match else "mismatch" }}</td>
+                                        <td style="padding:8px 10px;">
+                                            {% if table.issue_labels %}
+                                                {{ table.issue_labels|join(', ') }}
+                                            {% else %}
+                                                none
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if snapshot.student_dataset_export_summary.comparison_history %}
+        <div class="info-card" style="display:grid; gap:12px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Comparison History</div>
+                    <div style="margin-top:6px; font-size:18px;">Recent comparison runs</div>
+                    <div style="margin-top:6px; color:#5a6477;">
+                        The control panel stores each comparison attempt with its timestamp, generation-run context, paths, and summary findings.
+                    </div>
+                </div>
+            </div>
+            <div style="overflow:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                    <thead>
+                        <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
+                            <th style="padding:8px 10px;">Compared At</th>
+                            <th style="padding:8px 10px;">Status</th>
+                            <th style="padding:8px 10px;">Clean Run Context</th>
+                            <th style="padding:8px 10px;">Tainted Run Context</th>
+                            <th style="padding:8px 10px;">Release Context</th>
+                            <th style="padding:8px 10px;">Compared</th>
+                            <th style="padding:8px 10px;">Issue Signals</th>
+                            <th style="padding:8px 10px;">Missing</th>
+                            <th style="padding:8px 10px;">Locations</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for comparison in snapshot.student_dataset_export_summary.comparison_history %}
+                            <tr style="border-bottom:1px solid #eef1f5; vertical-align:top;">
+                                <td style="padding:8px 10px;">{{ comparison.created_at or "n/a" }}</td>
+                                <td style="padding:8px 10px; color:{% if comparison.status == 'failed' %}#b42318{% else %}#247a3d{% endif %};">
+                                    {{ comparison.status }}
+                                    {% if comparison.error_message %}
+                                        <div style="margin-top:4px; color:#8f1d18;">{{ comparison.error_message }}</div>
+                                    {% endif %}
+                                </td>
+                                <td style="padding:8px 10px;">{{ comparison.clean_generation_context }}</td>
+                                <td style="padding:8px 10px;">{{ comparison.tainted_generation_context }}</td>
+                                <td style="padding:8px 10px;">{{ comparison.release_context }}</td>
+                                <td style="padding:8px 10px;">{{ comparison.compared_release_count }}</td>
+                                <td style="padding:8px 10px;">{{ comparison.total_issue_count }}</td>
+                                <td style="padding:8px 10px;">
+                                    clean {{ comparison.missing_clean_release_count }},
+                                    tainted {{ comparison.missing_tainted_release_count }}
+                                </td>
+                                <td style="padding:8px 10px;">
+                                    <div><code>{{ comparison.clean_export_path }}</code></div>
+                                    <div style="margin-top:4px;"><code>{{ comparison.tainted_export_path }}</code></div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+</section>
+<script>
+    (() => {
+        window.selectControlPanelFolder = async function selectControlPanelFolder(inputId, fallbackPath) {
+            const input = document.getElementById(inputId);
+            if (!input) {
+                return;
+            }
+            try {
+                const response = await window.fetch("/control/system/select-folder", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                    },
+                    body: new URLSearchParams({ current_path: input.value || fallbackPath || "" }),
+                });
+                const payload = await response.json();
+                if (!response.ok || !payload.ok) {
+                    throw new Error(payload.error || "Could not select a folder.");
+                }
+                input.value = payload.path || "";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+            } catch (error) {
+                console.error(error);
+                window.alert(error.message || "Could not select a folder.");
+            }
+        };
+    })();
+</script>

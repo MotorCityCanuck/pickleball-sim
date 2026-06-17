@@ -54,7 +54,9 @@ def promote_staged_release_family(
     """Promote a validated staging folder and persist release/file metadata."""
 
     _validate_staged_family_for_promotion(staged_family)
-    final_root = build_parameters.output_root / staged_family.release_name
+    final_root = build_parameters.final_root or (
+        build_parameters.output_root / staged_family.release_name
+    )
 
     if final_root.exists():
         if not build_parameters.overwrite_existing:

@@ -35,6 +35,8 @@ class StudentDatasetBuildResult:
     release_windows: tuple[StudentDatasetReleaseWindow, ...]
     staged_family: StagedStudentDatasetFamily
     published_family: PublishedStudentDatasetFamily
+    clean_staged_family: StagedStudentDatasetFamily | None = None
+    clean_published_family: PublishedStudentDatasetFamily | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,8 @@ class StudentDatasetExportService:
         output_root: Path,
         release_name: str,
         data_quality_level: str = "none",
+        clean_subfolder: str = "clean",
+        tainted_subfolder: str = "tainted",
         overwrite_existing: bool = False,
     ) -> StudentDatasetExportRegistration:
         """Create a pending export job and progress rows."""
@@ -106,6 +110,8 @@ class StudentDatasetExportService:
                         "output_root": str(output_root),
                         "release_name": release_name,
                         "data_quality_level": normalize_data_quality_level(data_quality_level),
+                        "clean_subfolder": clean_subfolder,
+                        "tainted_subfolder": tainted_subfolder,
                         "overwrite_existing": overwrite_existing,
                     },
                 )
@@ -123,6 +129,8 @@ class StudentDatasetExportService:
         output_root: str,
         release_name: str,
         data_quality_level: str = "none",
+        clean_subfolder: str = "clean",
+        tainted_subfolder: str = "tainted",
         overwrite_existing: bool = False,
     ) -> None:
         """Run a registered export job with durable background commits."""
@@ -138,6 +146,8 @@ class StudentDatasetExportService:
                 output_root=Path(output_root),
                 release_name=release_name,
                 data_quality_level=data_quality_level,
+                clean_subfolder=clean_subfolder,
+                tainted_subfolder=tainted_subfolder,
                 overwrite_existing=overwrite_existing,
                 checkpoint=session.commit,
                 re_raise=False,
@@ -160,6 +170,8 @@ class StudentDatasetExportService:
         output_root: Path,
         release_name: str,
         data_quality_level: str = "none",
+        clean_subfolder: str = "clean",
+        tainted_subfolder: str = "tainted",
         overwrite_existing: bool = False,
         checkpoint=None,
         re_raise: bool = True,
@@ -175,13 +187,20 @@ class StudentDatasetExportService:
             )
 
         try:
+            normalized_level = normalize_data_quality_level(data_quality_level)
+            clean_subfolder = _validate_output_subfolder("clean_subfolder", clean_subfolder)
+            tainted_subfolder = _validate_output_subfolder("tainted_subfolder", tainted_subfolder)
+            if clean_subfolder == tainted_subfolder:
+                raise StudentDatasetExportPreflightError(
+                    "Clean and tainted output subfolders must be different."
+                )
             build_parameters = StudentDatasetBuildParameters(
                 generation_run_id=generation_run_id,
                 initial_history_month_count=initial_history_month_count,
                 subsequent_month_count=subsequent_month_count,
                 output_root=output_root,
                 release_name=release_name,
-                data_quality_level=normalize_data_quality_level(data_quality_level),
+                data_quality_level=normalized_level,
                 overwrite_existing=overwrite_existing,
             )
             self._set_job_status(
@@ -202,7 +221,11 @@ class StudentDatasetExportService:
             )
             self._checkpoint(session, checkpoint)
 
-            self._prepare_output_root(build_parameters)
+            self._prepare_output_roots(
+                build_parameters,
+                clean_subfolder=clean_subfolder,
+                tainted_subfolder=tainted_subfolder,
+            )
             release_windows = plan_release_windows(
                 session=session,
                 generation_run_id=generation_run_id,
@@ -234,20 +257,64 @@ class StudentDatasetExportService:
             )
             self._checkpoint(session, checkpoint)
 
-            staged_family = write_staged_release_family(
-                session=session,
-                output_root=output_root,
-                release_name=release_name,
-                release_windows=release_windows,
-                build_parameters=build_parameters,
-            )
+            clean_staged_family = None
+            clean_published_family = None
+            if normalized_level == "none":
+                staged_family = write_staged_release_family(
+                    session=session,
+                    output_root=output_root,
+                    release_name=release_name,
+                    release_windows=release_windows,
+                    build_parameters=build_parameters,
+                )
+            else:
+                paired_output_root = output_root / release_name
+                clean_build_parameters = StudentDatasetBuildParameters(
+                    generation_run_id=generation_run_id,
+                    initial_history_month_count=initial_history_month_count,
+                    subsequent_month_count=subsequent_month_count,
+                    output_root=paired_output_root,
+                    release_name=release_name,
+                    data_quality_level="none",
+                    overwrite_existing=overwrite_existing,
+                    final_root=paired_output_root / clean_subfolder,
+                )
+                build_parameters = StudentDatasetBuildParameters(
+                    generation_run_id=generation_run_id,
+                    initial_history_month_count=initial_history_month_count,
+                    subsequent_month_count=subsequent_month_count,
+                    output_root=paired_output_root,
+                    release_name=release_name,
+                    data_quality_level=normalized_level,
+                    overwrite_existing=overwrite_existing,
+                    final_root=paired_output_root / tainted_subfolder,
+                )
+                clean_staged_family = write_staged_release_family(
+                    session=session,
+                    output_root=paired_output_root,
+                    release_name=release_name,
+                    release_windows=release_windows,
+                    build_parameters=clean_build_parameters,
+                )
+                staged_family = write_staged_release_family(
+                    session=session,
+                    output_root=paired_output_root,
+                    release_name=release_name,
+                    release_windows=release_windows,
+                    build_parameters=build_parameters,
+                )
             self._mark_stage(
                 session,
                 job_status_id=job_status.id,
                 stage_name="write_validate_parquet",
                 status="succeeded",
                 current=1,
-                message=f"Validated {len(staged_family.releases)} release folder(s).",
+                message=(
+                    f"Validated {len(staged_family.releases)} tainted and "
+                    f"{len(clean_staged_family.releases)} clean release folder(s)."
+                    if clean_staged_family is not None
+                    else f"Validated {len(staged_family.releases)} release folder(s)."
+                ),
             )
 
             self._set_job_status(
@@ -267,6 +334,12 @@ class StudentDatasetExportService:
             )
             self._checkpoint(session, checkpoint)
 
+            if clean_staged_family is not None:
+                clean_published_family = promote_staged_release_family(
+                    session=session,
+                    staged_family=clean_staged_family,
+                    build_parameters=clean_build_parameters,
+                )
             published_family = promote_staged_release_family(
                 session=session,
                 staged_family=staged_family,
@@ -278,7 +351,12 @@ class StudentDatasetExportService:
                 stage_name="promote_metadata",
                 status="succeeded",
                 current=1,
-                message=f"Published {len(published_family.releases)} release folder(s).",
+                message=(
+                    f"Published {len(published_family.releases)} tainted and "
+                    f"{len(clean_published_family.releases)} clean release folder(s)."
+                    if clean_published_family is not None
+                    else f"Published {len(published_family.releases)} release folder(s)."
+                ),
             )
             self._set_job_status(
                 job_status,
@@ -294,6 +372,8 @@ class StudentDatasetExportService:
                 release_windows=release_windows,
                 staged_family=staged_family,
                 published_family=published_family,
+                clean_staged_family=clean_staged_family,
+                clean_published_family=clean_published_family,
             )
         except Exception as exc:
             self._fail_incomplete_stages(session, job_status.id, str(exc))
@@ -328,10 +408,37 @@ class StudentDatasetExportService:
 
     @staticmethod
     def _prepare_output_root(build_parameters: StudentDatasetBuildParameters) -> None:
-        final_root = build_parameters.output_root / build_parameters.release_name
+        StudentDatasetExportService._prepare_final_root(
+            build_parameters.final_root
+            or build_parameters.output_root / build_parameters.release_name,
+            overwrite_existing=build_parameters.overwrite_existing,
+        )
+
+    @staticmethod
+    def _prepare_output_roots(
+        build_parameters: StudentDatasetBuildParameters,
+        *,
+        clean_subfolder: str,
+        tainted_subfolder: str,
+    ) -> None:
+        if build_parameters.data_quality_level == "none":
+            StudentDatasetExportService._prepare_output_root(build_parameters)
+            return
+        paired_root = build_parameters.output_root / build_parameters.release_name
+        for final_root in (
+            paired_root / clean_subfolder,
+            paired_root / tainted_subfolder,
+        ):
+            StudentDatasetExportService._prepare_final_root(
+                final_root,
+                overwrite_existing=build_parameters.overwrite_existing,
+            )
+
+    @staticmethod
+    def _prepare_final_root(final_root: Path, *, overwrite_existing: bool) -> None:
         if not final_root.exists():
             return
-        if not build_parameters.overwrite_existing:
+        if not overwrite_existing:
             raise StudentDatasetExportPreflightError(
                 "Expected release folder already exists. Enable delete confirmation to remove it before export."
             )
@@ -481,6 +588,22 @@ def build_student_dataset_release(
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _validate_output_subfolder(field_name: str, value: str) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        raise StudentDatasetExportPreflightError(f"{field_name} is required.")
+    candidate = Path(cleaned)
+    if candidate.is_absolute() or ".." in candidate.parts or len(candidate.parts) != 1:
+        raise StudentDatasetExportPreflightError(
+            f"{field_name} must be a single relative folder name."
+        )
+    if not all(character.isalnum() or character in {"_", "-"} for character in cleaned):
+        raise StudentDatasetExportPreflightError(
+            f"{field_name} may only contain letters, numbers, underscores, and hyphens."
+        )
+    return cleaned
 
 
 def _percent(current: int, total: int) -> Decimal:
