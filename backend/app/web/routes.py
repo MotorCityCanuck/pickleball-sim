@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import lru_cache
-from datetime import timedelta
+from datetime import datetime, timedelta
 import os
 import logging
 import json
@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 import zipfile
 from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -32,20 +33,25 @@ from app.core import (
     build_config_editor_sections,
     diff_config_payloads,
 )
-from app.db.session import get_session
+from app.db.session import SessionLocal, get_session
 from app.exports.data_quality import compare_export_locations, normalize_data_quality_level
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import (
     DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
     GenerationRunService,
+    RealismAuditExecution,
+    RealismAuditRunner,
     RealismAuditService,
     SeedRefreshService,
+    resolve_realism_audit_parameters,
     save_realism_audit_snapshot,
     snapshot_payload_to_markdown,
 )
 from app.models import (
     ConfigurationProfileVersion,
+    JobStageProgress,
     JobStatus,
+    MonthlyBatch,
     StudentDatasetComparison,
     StudentDatasetRelease,
     TournamentEvent,
@@ -79,6 +85,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_CONFIG_SCOPE = "seed"
 DEFAULT_REALISM_AUDIT_REPORT_DIR = Path("data/realism_audit_reports")
+REALISM_AUDIT_STAGE_NAME = "run_realism_audit"
 TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="CA", division="mens_doubles"),
     PortfolioSlot(country_code="CA", division="womens_doubles"),
@@ -88,6 +95,10 @@ TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="US", division="mixed_doubles"),
 )
 TOURNAMENT_GROUP_COUNT = 6
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.utcnow().replace(microsecond=0)
 
 
 @lru_cache(maxsize=1)
@@ -763,6 +774,7 @@ def build_control_panel_router() -> APIRouter:
         report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
+        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         snapshot = queries.get_control_panel_snapshot(session)
         realism_audit_message = None
@@ -780,16 +792,29 @@ def build_control_panel_router() -> APIRouter:
             )
         else:
             try:
-                execution = RealismAuditService(session).run()
-                snapshot_path = save_realism_audit_snapshot(
-                    execution,
-                    snapshot_dir=DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+                latest_run_id = (
+                    snapshot.generation_run_summary.generation_run_id
+                    if snapshot.generation_run_summary
+                    else None
+                )
+                latest_batch_id = (
+                    snapshot.batch_summaries[-1].batch_id
+                    if snapshot.batch_summaries
+                    else None
+                )
+                job_status = _register_realism_audit_job(
+                    session=session,
+                    generation_run_id=latest_run_id,
+                    batch_id=latest_batch_id,
                 )
                 session.commit()
+                background_runner.submit(
+                    _execute_realism_audit_job_in_background,
+                    job_status_id=job_status.id,
+                )
                 snapshot = queries.get_control_panel_snapshot(session)
                 realism_audit_message = (
-                    "Realism audit completed and saved "
-                    f"{len(execution.results)} query result(s) to {snapshot_path}."
+                    "Realism audit started in background."
                 )
             except Exception as exc:
                 session.rollback()
@@ -1572,6 +1597,184 @@ def _normalize_comparison_subfolder(value: str, *, label: str) -> str:
 
 def _display_comparison_subfolder(value: str) -> str:
     return f"/{value.strip().lstrip('/')}"
+
+
+def _register_realism_audit_job(
+    *,
+    session: Session,
+    generation_run_id: int | None,
+    batch_id: int | None,
+) -> JobStatus:
+    if session.scalar(
+        select(JobStatus.id).where(
+            JobStatus.job_type == "realism_audit",
+            JobStatus.status.in_(("pending", "running")),
+        )
+    ):
+        raise ValueError("A realism audit is already running.")
+
+    query_count = len(RealismAuditRunner(session).available_queries())
+    job_status = JobStatus(
+        job_type="realism_audit",
+        job_id=f"realism-audit-{uuid4().hex[:8]}",
+        status="pending",
+        current_phase="queued",
+        percent_complete=Decimal("0.00"),
+        current_message="Queued realism audit.",
+    )
+    session.add(job_status)
+    session.flush()
+    session.add(
+        JobStageProgress(
+            job_status_id=job_status.id,
+            generation_run_id=generation_run_id,
+            batch_id=None,
+            stage_name=REALISM_AUDIT_STAGE_NAME,
+            stage_sequence=1,
+            status="pending",
+            progress_current=0,
+            progress_total=query_count,
+            progress_unit="query",
+            progress_percent=Decimal("0.00"),
+            progress_message="Queued realism audit.",
+        )
+    )
+    session.flush()
+    return job_status
+
+
+def _execute_realism_audit_job_in_background(*, job_status_id: int) -> None:
+    session = SessionLocal()
+    try:
+        _execute_realism_audit_job(session=session, job_status_id=job_status_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _execute_realism_audit_job(*, session: Session, job_status_id: int) -> None:
+    job_status = session.get(JobStatus, job_status_id)
+    if job_status is None:
+        raise ValueError(f"Realism audit job {job_status_id} was not found.")
+
+    stage_row = session.scalar(
+        select(JobStageProgress)
+        .where(JobStageProgress.job_status_id == job_status_id)
+        .order_by(JobStageProgress.stage_sequence.asc(), JobStageProgress.id.asc())
+        .limit(1)
+    )
+    if stage_row is None:
+        raise ValueError(f"Realism audit stage row for job {job_status_id} was not found.")
+
+    started_at = _utc_now_naive()
+    query_runner = RealismAuditRunner(session)
+    params = resolve_realism_audit_parameters(session)
+    query_definitions = query_runner.available_queries()
+    total_queries = len(query_definitions)
+
+    job_status.status = "running"
+    job_status.current_phase = "running"
+    job_status.started_at = job_status.started_at or started_at
+    job_status.percent_complete = Decimal("0.00")
+    job_status.current_message = f"Running realism audit query 0 of {total_queries}."
+    stage_row.status = "running"
+    stage_row.started_at = stage_row.started_at or started_at
+    stage_row.last_heartbeat_at = started_at
+    stage_row.progress_current = 0
+    stage_row.progress_total = total_queries
+    stage_row.progress_unit = "query"
+    stage_row.progress_percent = Decimal("0.00")
+    stage_row.progress_message = f"Running realism audit query 0 of {total_queries}."
+    session.flush()
+    session.commit()
+
+    results = []
+    try:
+        for index, query in enumerate(query_definitions, start=1):
+            query_result = query_runner.run(
+                query_names=[query.name],
+                params=params,
+            )[0]
+            results.append(query_result)
+
+            heartbeat_at = _utc_now_naive()
+            stage_row = session.get(JobStageProgress, stage_row.id)
+            job_status = session.get(JobStatus, job_status.id)
+            if stage_row is None or job_status is None:
+                raise ValueError("Realism audit job state disappeared during execution.")
+            stage_row.last_heartbeat_at = heartbeat_at
+            stage_row.progress_current = index
+            stage_row.progress_total = total_queries
+            stage_row.progress_percent = (
+                Decimal(index) * Decimal("100.00") / Decimal(total_queries)
+            ).quantize(Decimal("0.01"))
+            stage_row.progress_message = (
+                f"Completed realism audit query {index} of {total_queries}: {query.name}."
+            )
+            job_status.status = "running"
+            job_status.current_phase = query.name
+            job_status.percent_complete = stage_row.progress_percent
+            job_status.current_message = stage_row.progress_message
+            session.flush()
+            session.commit()
+
+        resolved_batch_id = params.get("batch_id")
+        batch_month = None
+        if resolved_batch_id is not None:
+            batch_month = session.scalar(
+                select(MonthlyBatch.batch_month).where(MonthlyBatch.id == resolved_batch_id)
+            )
+        execution = RealismAuditExecution(
+            generation_run_id=params.get("generation_run_id"),
+            batch_id=resolved_batch_id,
+            batch_month=batch_month,
+            executed_at=datetime.now().astimezone(),
+            results=tuple(results),
+        )
+        save_realism_audit_snapshot(
+            execution,
+            snapshot_dir=DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+        )
+
+        completed_at = _utc_now_naive()
+        stage_row = session.get(JobStageProgress, stage_row.id)
+        job_status = session.get(JobStatus, job_status.id)
+        if stage_row is None or job_status is None:
+            raise ValueError("Realism audit job state disappeared before completion.")
+        stage_row.status = "succeeded"
+        stage_row.completed_at = completed_at
+        stage_row.last_heartbeat_at = completed_at
+        stage_row.progress_current = total_queries
+        stage_row.progress_total = total_queries
+        stage_row.progress_percent = Decimal("100.00")
+        stage_row.progress_message = "Realism audit completed successfully."
+        job_status.status = "succeeded"
+        job_status.current_phase = "completed"
+        job_status.completed_at = completed_at
+        job_status.percent_complete = Decimal("100.00")
+        job_status.current_message = "Realism audit completed successfully."
+        session.flush()
+    except Exception as exc:
+        failed_at = _utc_now_naive()
+        stage_row = session.get(JobStageProgress, stage_row.id)
+        job_status = session.get(JobStatus, job_status.id)
+        if stage_row is not None:
+            stage_row.status = "failed"
+            stage_row.completed_at = failed_at
+            stage_row.last_heartbeat_at = failed_at
+            stage_row.error_message = str(exc)
+            stage_row.progress_message = f"Realism audit failed: {exc}"
+        if job_status is not None:
+            job_status.status = "failed"
+            job_status.current_phase = "failed"
+            job_status.completed_at = failed_at
+            job_status.error_message = str(exc)
+            job_status.current_message = f"Realism audit failed: {exc}"
+        session.flush()
+        raise
 
 
 def _record_student_dataset_comparison(

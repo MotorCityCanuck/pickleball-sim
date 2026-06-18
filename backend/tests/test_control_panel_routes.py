@@ -1731,74 +1731,6 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     _seed_completed_generation_state(session_factory)
     snapshot_root = tmp_path / "realism_audit_snapshots"
     report_root = tmp_path / "realism_audit_reports"
-
-    class FakeRealismAuditService:
-        def __init__(self, session):
-            self.session = session
-
-        def run(self):
-            return SimpleNamespace(
-                generation_run_id=2,
-                batch_id=22,
-                batch_month="2026-02-01",
-                executed_at=datetime.fromisoformat("2026-06-18T12:00:00+00:00"),
-                results=(
-                    SimpleNamespace(
-                        query=SimpleNamespace(
-                            name="player_roster_summary",
-                            scope="generation_run",
-                            category="players",
-                            description="Top-line player counts.",
-                            tags=("players",),
-                            related_config_keys=(),
-                        ),
-                        rows=(
-                            {
-                                "generation_run_id": 2,
-                                "player_count": 1020,
-                            },
-                        ),
-                    ),
-                ),
-            )
-
-    def fake_save_realism_audit_snapshot(execution, *, snapshot_dir):
-        target_dir = Path(snapshot_dir) / "generation_run_000002"
-        target_dir.mkdir(parents=True)
-        target_path = target_dir / "run_000002_batch_000022_2026-02-01_test.json"
-        payload = {
-            "executed_at": execution.executed_at.isoformat(),
-            "generation_run_id": execution.generation_run_id,
-            "batch_id": execution.batch_id,
-            "batch_month": execution.batch_month,
-            "query_count": 1,
-            "snapshot_path": str(target_path),
-            "results": [
-                {
-                    "query": "player_roster_summary",
-                    "scope": "generation_run",
-                    "category": "players",
-                    "description": "Top-line player counts.",
-                    "tags": ["players"],
-                    "related_config_keys": [],
-                    "rows": [
-                        {
-                            "generation_run_id": 2,
-                            "player_count": 1020,
-                        }
-                    ],
-                }
-            ],
-        }
-        target_path.write_text(json.dumps(payload), encoding="utf-8")
-        return target_path
-
-    monkeypatch.setattr(routes_module, "RealismAuditService", FakeRealismAuditService)
-    monkeypatch.setattr(
-        routes_module,
-        "save_realism_audit_snapshot",
-        fake_save_realism_audit_snapshot,
-    )
     monkeypatch.setattr(
         routes_module,
         "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
@@ -1813,13 +1745,79 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     app = create_app()
     routes = _route_map(app)
     session = session_factory()
+    background_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/realism-audit/run"](
             request=_request("/control/realism-audit/run", method="POST"),
             report_output_dir=str(report_root),
             session=session,
             queries=ControlPanelQueries(),
+            background_runner=background_runner,
         )
+        target_dir = snapshot_root / "generation_run_000002"
+        target_dir.mkdir(parents=True)
+        target_path = target_dir / "run_000002_batch_000022_2026-02-01_test.json"
+        target_path.write_text(
+            json.dumps(
+                {
+                    "executed_at": "2026-06-18T12:00:00+00:00",
+                    "generation_run_id": 2,
+                    "batch_id": 22,
+                    "batch_month": "2026-02-01",
+                    "query_count": 1,
+                    "snapshot_path": str(target_path),
+                    "results": [
+                        {
+                            "query": "player_roster_summary",
+                            "scope": "generation_run",
+                            "category": "players",
+                            "description": "Top-line player counts.",
+                            "tags": ["players"],
+                            "related_config_keys": [],
+                            "rows": [
+                                {
+                                    "generation_run_id": 2,
+                                    "player_count": 1020,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        session.execute(
+            text(
+                """
+                UPDATE job_status
+                SET status = 'succeeded',
+                    current_phase = 'completed',
+                    percent_complete = 100.00,
+                    current_message = 'Realism audit completed successfully.',
+                    started_at = '2026-06-18 12:00:00',
+                    completed_at = '2026-06-18 12:01:00'
+                WHERE job_type = 'realism_audit'
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                UPDATE job_stage_progress
+                SET status = 'succeeded',
+                    progress_current = 1,
+                    progress_total = 1,
+                    progress_unit = 'query',
+                    progress_percent = 100.00,
+                    progress_message = 'Realism audit completed successfully.',
+                    started_at = '2026-06-18 12:00:00',
+                    completed_at = '2026-06-18 12:01:00',
+                    last_heartbeat_at = '2026-06-18 12:01:00'
+                WHERE stage_name = 'run_realism_audit'
+                """
+            )
+        )
+        session.commit()
         download = routes["/control/realism-audit/download"](
             report_output_dir=str(report_root),
             session=session,
@@ -1830,12 +1828,12 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Realism audit completed and saved 1 query result" in body
-    assert "Latest Audit Snapshot" in body
-    assert "Completed UI run" in body
-    assert "succeeded" in body
-    assert "Run Realism Audit - Available" in body
-    assert "players" in body
+    assert "Realism audit started in background." in body
+    assert "Audit in progress" in body
+    assert "Audit Progress" in body
+    assert "Run Realism Audit - Not Available" in body
+    assert len(background_runner.submissions) == 1
+    assert background_runner.submissions[0][2]["job_status_id"] is not None
 
     report_path = Path(download.path)
     assert download.status_code == 200

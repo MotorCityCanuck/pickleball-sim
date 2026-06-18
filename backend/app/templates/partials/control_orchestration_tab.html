@@ -9,7 +9,7 @@
 
 <section
     style="display:grid; gap:16px;"
-    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
         hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
         hx-swap="outerHTML"
@@ -440,7 +440,7 @@
                     {% endif %}
                 </div>
                 {% if snapshot.allowed_actions.can_run_realism_audit %}
-                    <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    <div style="border:1px solid #8fd0a3; border-radius:999px; padding:6px 10px; font-size:12px; color:#174d28; background:#ddefe1;">
                         Available
                     </div>
                 {% else %}
@@ -450,6 +450,16 @@
                 {% endif %}
             </div>
 
+            {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'succeeded' and not snapshot.realism_audit_summary.latest_job_is_active %}
+                <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                    {{ snapshot.realism_audit_summary.latest_job.current_message or "Realism audit completed successfully." }}
+                </div>
+            {% endif %}
+            {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed' and not snapshot.realism_audit_summary.latest_job_is_active %}
+                <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                    {{ snapshot.realism_audit_summary.latest_job.current_message or snapshot.realism_audit_summary.latest_job.error_message or "Realism audit failed." }}
+                </div>
+            {% endif %}
             {% if realism_audit_message %}
                 <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
                     {{ realism_audit_message }}
@@ -494,16 +504,16 @@
                 </div>
                 <div class="info-card">
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Audit Snapshot</div>
-                    {% if snapshot.realism_audit_summary %}
-                        <div style="margin-top:8px; font-size:18px;">{{ snapshot.realism_audit_summary.query_count }} queries</div>
+                    {% if snapshot.realism_audit_summary.latest_snapshot %}
+                        <div style="margin-top:8px; font-size:18px;">{{ snapshot.realism_audit_summary.latest_snapshot.query_count }} queries</div>
                         <div style="margin-top:6px; color:#5a6477;">
-                            {{ snapshot.realism_audit_summary.total_row_count }} result rows
-                            {% if snapshot.realism_audit_summary.batch_month %}
-                                | Batch {{ snapshot.realism_audit_summary.batch_month }}
+                            {{ snapshot.realism_audit_summary.latest_snapshot.total_row_count }} result rows
+                            {% if snapshot.realism_audit_summary.latest_snapshot.batch_month %}
+                                | Batch {{ snapshot.realism_audit_summary.latest_snapshot.batch_month }}
                             {% endif %}
                         </div>
-                        {% if snapshot.realism_audit_summary.executed_at %}
-                            <div style="margin-top:6px; color:#5a6477;">Executed {{ snapshot.realism_audit_summary.executed_at.replace("T", " ") }}</div>
+                        {% if snapshot.realism_audit_summary.latest_snapshot.executed_at %}
+                            <div style="margin-top:6px; color:#5a6477;">Executed {{ snapshot.realism_audit_summary.latest_snapshot.executed_at.replace("T", " ") }}</div>
                         {% endif %}
                     {% else %}
                         <div style="margin-top:8px; font-size:18px;">No audit snapshot yet</div>
@@ -512,14 +522,14 @@
                 </div>
             </div>
 
-            {% if snapshot.realism_audit_summary and snapshot.realism_audit_summary.category_counts %}
+            {% if snapshot.realism_audit_summary.latest_snapshot and snapshot.realism_audit_summary.latest_snapshot.category_counts %}
                 <section class="info-card" style="display:grid; gap:12px;">
                     <div>
                         <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Summary Results</div>
                         <div style="margin-top:6px; color:#5a6477;">Query coverage by audit category from the latest saved snapshot.</div>
                     </div>
                     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
-                        {% for category, count in snapshot.realism_audit_summary.category_counts %}
+                        {% for category, count in snapshot.realism_audit_summary.latest_snapshot.category_counts %}
                             <div class="metric-card">
                                 <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ category }}</div>
                                 <div style="margin-top:6px;">{{ count }}</div>
@@ -556,7 +566,7 @@
                     </div>
                 </label>
 
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                     <button
                         type="submit"
                         {% if not snapshot.allowed_actions.can_run_realism_audit %}disabled{% endif %}
@@ -564,8 +574,69 @@
                     >
                         {% if snapshot.allowed_actions.can_run_realism_audit %}Run Realism Audit - Available{% else %}Run Realism Audit - Not Available{% endif %}
                     </button>
+                    <div style="font-size:13px; color:#5a6477;">
+                        {% if snapshot.realism_audit_summary.latest_job_is_active %}
+                            Audit in progress{% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.current_message %}: {{ snapshot.realism_audit_summary.latest_job.current_message }}{% endif %}
+                        {% elif snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'succeeded' %}
+                            Audit completed successfully.
+                        {% elif snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed' %}
+                            Audit failed.
+                        {% else %}
+                            No realism audit currently running.
+                        {% endif %}
+                    </div>
                 </div>
             </form>
+
+            <section class="info-card" style="display:grid; gap:12px;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Audit Progress</div>
+                    <div style="margin-top:6px; color:#5a6477;">Live progress for the current realism audit job.</div>
+                </div>
+                {% if snapshot.realism_audit_summary.latest_stage_progress %}
+                    <div style="display:grid; gap:10px;">
+                        {% for stage in snapshot.realism_audit_summary.latest_stage_progress %}
+                            <div>
+                                <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+                                    <span>{{ stage.stage_name }}</span>
+                                    <span>
+                                        {{ stage.status }}
+                                        {% if stage.progress_percent is not none %}
+                                            | {{ stage.progress_percent }}%
+                                        {% endif %}
+                                        {% if stage.progress_total %}
+                                            | {{ stage.progress_current }}/{{ stage.progress_total }} {{ stage.progress_unit or 'units' }}
+                                        {% endif %}
+                                        {% if stage.liveness_state == 'quiet' %}
+                                            | heartbeat quiet
+                                        {% elif stage.liveness_state == 'likely_stalled' %}
+                                            | likely stalled
+                                        {% endif %}
+                                    </span>
+                                </div>
+                                <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                                    <div
+                                        style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
+                                    ></div>
+                                </div>
+                                {% if stage.completion_message or stage.progress_message or stage.elapsed_label %}
+                                    <div style="margin-top:4px; color:#5a6477; font-size:12px;">
+                                        {{ stage.completion_message or stage.progress_message }}{% if stage.elapsed_label %} | Duration {{ stage.elapsed_label }}{% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div style="color:#5a6477; font-size:12px;">
+                        {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.current_message %}
+                            {{ snapshot.realism_audit_summary.latest_job.current_message }}
+                        {% else %}
+                            Progress will appear here while the audit is running.
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </section>
 
             <form
                 method="post"
@@ -580,9 +651,9 @@
                 >
                 <button
                     type="submit"
-                    {% if not snapshot.realism_audit_summary or not snapshot.allowed_actions.can_run_realism_audit %}disabled{% endif %}
+                    {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed') %}disabled{% endif %}
                     onclick="const input = document.getElementById('realism-audit-report-output-dir'); const hidden = this.form.querySelector('[data-realism-audit-download-dir]'); if (input && hidden) hidden.value = input.value;"
-                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.realism_audit_summary or not snapshot.allowed_actions.can_run_realism_audit %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed') %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
                 >
                     Create &amp; Download Markdown Report
                 </button>
