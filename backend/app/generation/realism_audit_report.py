@@ -44,6 +44,81 @@ def results_to_json_ready(
     return serialized
 
 
+def execution_to_markdown(execution: RealismAuditExecution) -> str:
+    """Render one realism-audit execution as a markdown report."""
+    return snapshot_payload_to_markdown(execution_to_json_ready(execution))
+
+
+def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
+    """Render a JSON-ready realism-audit payload as a markdown report."""
+    lines = [
+        "# Realism Audit Report",
+        "",
+        f"- Executed at: {_display_markdown_value(payload.get('executed_at'))}",
+        f"- Generation run ID: {_display_markdown_value(payload.get('generation_run_id'))}",
+        f"- Batch ID: {_display_markdown_value(payload.get('batch_id'))}",
+        f"- Batch month: {_display_markdown_value(payload.get('batch_month'))}",
+        f"- Query count: {_display_markdown_value(payload.get('query_count', len(payload.get('results') or [])))}",
+    ]
+    snapshot_path = payload.get("snapshot_path")
+    if snapshot_path:
+        lines.append(f"- Source snapshot: `{snapshot_path}`")
+    lines.append("")
+
+    results = payload.get("results") or []
+    if not results:
+        lines.extend(["No audit results were found.", ""])
+        return "\n".join(lines).rstrip() + "\n"
+
+    category_counts: dict[str, int] = {}
+    for result in results:
+        category = str(result.get("category") or "general")
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    lines.append("## Summary")
+    lines.append("")
+    for category, count in sorted(category_counts.items()):
+        lines.append(f"- {category}: {count} query{'ies' if count != 1 else ''}")
+    lines.append("")
+
+    for result in results:
+        query_name = str(result.get("query") or "unnamed_query")
+        description = str(result.get("description") or "")
+        category = str(result.get("category") or "general")
+        scope = str(result.get("scope") or "")
+        rows = result.get("rows") or []
+
+        lines.append(f"## {query_name}")
+        lines.append("")
+        if description:
+            lines.append(description)
+            lines.append("")
+        lines.append(f"- Category: {category}")
+        if scope:
+            lines.append(f"- Scope: {scope}")
+        lines.append(f"- Row count: {len(rows)}")
+        lines.append("")
+        if rows:
+            normalized_rows = [
+                {
+                    str(key): _display_value(value)
+                    for key, value in dict(row).items()
+                }
+                for row in rows
+                if isinstance(row, dict)
+            ]
+            if normalized_rows:
+                lines.append("```text")
+                lines.append(format_table(normalized_rows))
+                lines.append("```")
+                lines.append("")
+        else:
+            lines.append("(no rows)")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def format_table(rows: Sequence[dict[str, Any]]) -> str:
     """Render rows as a simple aligned plain-text table."""
     headers = list(rows[0].keys())
@@ -89,3 +164,9 @@ def _display_value(value: Any) -> str:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+def _display_markdown_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return _display_value(value)

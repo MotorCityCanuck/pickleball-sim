@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import json
+from pathlib import Path
 from typing import Callable
 
 from sqlalchemy import case, func, inspect, select
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core import ConfigValidationIssue
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
+from app.generation import DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR
 from app.generation.progress_liveness import (
     DEFAULT_STAGE_LIKELY_STALLED_AFTER,
     liveness_state_for_stage,
@@ -233,15 +235,31 @@ class StudentDatasetExportSummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditSnapshotSummary:
+    """UI-ready summary of the latest saved realism-audit snapshot."""
+
+    snapshot_path: str
+    generation_run_id: int | None
+    batch_id: int | None
+    batch_month: str | None
+    executed_at: str | None
+    query_count: int
+    total_row_count: int
+    category_counts: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
 class AllowedActions:
     """Current operator actions and the blockers that disable them."""
 
     can_edit_config: bool
     can_start_seed_refresh: bool
     can_start_generation_run: bool
+    can_run_realism_audit: bool
     can_generate_student_dataset: bool
     seed_refresh_blockers: tuple[str, ...]
     start_generation_blockers: tuple[str, ...]
+    realism_audit_blockers: tuple[str, ...]
     student_dataset_blockers: tuple[str, ...]
 
 
@@ -270,6 +288,7 @@ class ControlPanelSnapshot:
     seed_data_summary: SeedDataSummary
     generation_run_summary: GenerationRunSummary | None
     batch_summaries: tuple[BatchSummary, ...]
+    realism_audit_summary: RealismAuditSnapshotSummary | None
     student_dataset_export_summary: StudentDatasetExportSummary
     active_job_summary: JobSummary | None
     active_job_stage_progress: tuple[StageProgressSummary, ...]
@@ -392,11 +411,20 @@ class ControlPanelQueries:
             active_job=active_job,
             active_job_stage_progress=active_job_stage_progress,
         )
+        realism_audit_summary = self.get_realism_audit_summary(
+            generation_run_id=run_summary.generation_run_id if run_summary else None,
+            batch_id=(
+                batch_summaries[-1].batch_id
+                if batch_summaries
+                else None
+            ),
+        )
         return ControlPanelSnapshot(
             config_summary=config_summary,
             seed_data_summary=seed_summary,
             generation_run_summary=run_summary,
             batch_summaries=batch_summaries,
+            realism_audit_summary=realism_audit_summary,
             active_job_summary=active_job,
             active_job_stage_progress=active_job_stage_progress,
             student_dataset_export_summary=export_summary,
@@ -708,6 +736,51 @@ class ControlPanelQueries:
                 _student_dataset_comparison_summary(comparison)
                 for comparison in comparison_rows
             ),
+        )
+
+    def get_realism_audit_summary(
+        self,
+        *,
+        generation_run_id: int | None,
+        batch_id: int | None,
+    ) -> RealismAuditSnapshotSummary | None:
+        payload = latest_realism_audit_snapshot_payload(
+            generation_run_id=generation_run_id,
+            batch_id=batch_id,
+        )
+        if payload is None:
+            return None
+        results = payload.get("results") or []
+        category_counts: dict[str, int] = {}
+        total_row_count = 0
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            category = str(result.get("category") or "general")
+            category_counts[category] = category_counts.get(category, 0) + 1
+            rows = result.get("rows") or []
+            if isinstance(rows, list):
+                total_row_count += len(rows)
+        return RealismAuditSnapshotSummary(
+            snapshot_path=str(payload.get("snapshot_path") or ""),
+            generation_run_id=_coerce_int(payload.get("generation_run_id")),
+            batch_id=_coerce_int(payload.get("batch_id")),
+            batch_month=(
+                str(payload.get("batch_month"))
+                if payload.get("batch_month") is not None
+                else None
+            ),
+            executed_at=(
+                str(payload.get("executed_at"))
+                if payload.get("executed_at") is not None
+                else None
+            ),
+            query_count=_coerce_int(
+                payload.get("query_count"),
+                default=len(results),
+            ) or 0,
+            total_row_count=total_row_count,
+            category_counts=tuple(sorted(category_counts.items())),
         )
 
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
@@ -1043,6 +1116,22 @@ class ControlPanelQueries:
         if export_summary.latest_export_job_is_active:
             student_blockers.append("A student dataset export job is already running.")
 
+        realism_blockers: list[str] = []
+        if generation_run is None:
+            realism_blockers.append("No generation run exists yet.")
+        elif generation_run.status != "succeeded":
+            realism_blockers.append("Realism audit requires a succeeded generation run.")
+        if not seed_summary.is_ready:
+            realism_blockers.append("Seed/reference readiness must be restored before realism audit.")
+        if any(batch.processing_status != "succeeded" for batch in batch_summaries):
+            realism_blockers.append("All monthly batches must be succeeded before realism audit.")
+        if active_job is not None and active_job.status in {"pending", "running"}:
+            realism_blockers.append("No write-heavy generation job can be active during realism audit.")
+        if seed_summary.latest_seed_job_is_active:
+            realism_blockers.append("No seed preparation job can be active during realism audit.")
+        if export_summary.latest_export_job_is_active:
+            realism_blockers.append("Student dataset export must finish before realism audit.")
+
         can_edit_config = (
             not generation_run_active
             and (
@@ -1053,9 +1142,11 @@ class ControlPanelQueries:
             can_edit_config=can_edit_config,
             can_start_seed_refresh=not seed_blockers,
             can_start_generation_run=not start_blockers,
+            can_run_realism_audit=not realism_blockers,
             can_generate_student_dataset=not student_blockers,
             seed_refresh_blockers=tuple(seed_blockers),
             start_generation_blockers=tuple(start_blockers),
+            realism_audit_blockers=tuple(realism_blockers),
             student_dataset_blockers=tuple(student_blockers),
         )
 
@@ -1512,6 +1603,69 @@ def _student_release_file_counts(
 def _table_exists(session: Session, table_name: str) -> bool:
     bind = session.get_bind()
     return bind is not None and inspect(bind).has_table(table_name)
+
+
+def latest_realism_audit_snapshot_payload(
+    *,
+    generation_run_id: int | None,
+    batch_id: int | None,
+    snapshot_dir: str | Path | None = None,
+) -> dict[str, object] | None:
+    """Return the latest saved realism-audit snapshot for the current dataset."""
+    base_dir = Path(snapshot_dir or DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR)
+    if generation_run_id is not None:
+        candidates = list(
+            (base_dir / f"generation_run_{generation_run_id:06d}").glob("*.json")
+        )
+    else:
+        candidates = list(base_dir.glob("generation_run_*/*.json"))
+    candidates.extend(
+        _backend_realism_audit_snapshot_candidates(base_dir, generation_run_id)
+    )
+    if not candidates:
+        return None
+
+    latest_payload: dict[str, object] | None = None
+    latest_sort_key: tuple[str, float] | None = None
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if (
+            generation_run_id is not None
+            and _coerce_int(payload.get("generation_run_id")) != generation_run_id
+        ):
+            continue
+        if batch_id is not None and _coerce_int(payload.get("batch_id")) != batch_id:
+            continue
+        payload = dict(payload)
+        payload["snapshot_path"] = str(payload.get("snapshot_path") or path)
+        sort_key = (
+            str(payload.get("executed_at") or ""),
+            path.stat().st_mtime,
+        )
+        if latest_sort_key is None or sort_key > latest_sort_key:
+            latest_payload = payload
+            latest_sort_key = sort_key
+    return latest_payload
+
+
+def _backend_realism_audit_snapshot_candidates(
+    snapshot_dir: Path,
+    generation_run_id: int | None,
+) -> list[Path]:
+    if snapshot_dir.is_absolute():
+        return []
+    backend_dir = Path(__file__).resolve().parents[2]
+    backend_snapshot_dir = backend_dir / snapshot_dir
+    if generation_run_id is not None:
+        return list(
+            (backend_snapshot_dir / f"generation_run_{generation_run_id:06d}").glob("*.json")
+        )
+    return list(backend_snapshot_dir.glob("generation_run_*/*.json"))
 
 
 def _student_dataset_comparison_summary(

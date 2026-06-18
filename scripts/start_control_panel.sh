@@ -12,7 +12,7 @@ fi
 HOST="0.0.0.0"
 PORT="8000"
 OPEN_BROWSER="true"
-RELOAD="true"
+RELOAD="false"
 SERVER_PID=""
 
 usage() {
@@ -26,7 +26,9 @@ Options:
   --host <host>       Bind host for uvicorn. Default: 0.0.0.0
   --port <port>       Bind port for uvicorn. Default: 8000
   --no-browser        Do not open the browser automatically
-  --no-reload         Disable uvicorn --reload
+  --reload            Enable uvicorn --reload for UI-only development.
+                      Do not use reload while running background jobs.
+  --no-reload         Explicitly disable uvicorn --reload. This is the default.
   --help              Show this help text
 EOF
 }
@@ -178,6 +180,10 @@ while [[ $# -gt 0 ]]; do
             OPEN_BROWSER="false"
             shift
             ;;
+        --reload)
+            RELOAD="true"
+            shift
+            ;;
         --no-reload)
             RELOAD="false"
             shift
@@ -240,6 +246,7 @@ if port_in_use; then
 fi
 
 if [[ "$RELOAD" == "true" ]]; then
+    log "Uvicorn reload is enabled. Avoid starting generation/export/compare background jobs in this mode."
     RELOAD_ARGS=(--reload --reload-dir "$BACKEND_DIR")
 else
     RELOAD_ARGS=()

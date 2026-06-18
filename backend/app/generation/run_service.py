@@ -287,18 +287,6 @@ class GenerationRunService:
                 session,
                 job_status_id=job_status.id,
             )
-            self._checkpoint(session, checkpoint)
-            self._perform_destructive_reset(
-                session,
-                job_status=job_status,
-                preserve_job_status_id=job_status.id,
-                checkpoint=checkpoint,
-            )
-            self._mark_setup_stage_succeeded(
-                session,
-                job_status_id=job_status.id,
-            )
-
             monthly_batches = self._create_monthly_batches(
                 session,
                 generation_run_id=generation_run.id,
@@ -310,6 +298,17 @@ class GenerationRunService:
                 job_status=job_status,
                 generation_run=generation_run,
                 monthly_batches=monthly_batches,
+            )
+            self._checkpoint(session, checkpoint)
+            self._perform_destructive_reset(
+                session,
+                job_status=job_status,
+                preserve_job_status_id=job_status.id,
+                checkpoint=checkpoint,
+            )
+            self._mark_setup_stage_succeeded(
+                session,
+                job_status_id=job_status.id,
             )
             self._set_job_status(
                 job_status,
@@ -361,7 +360,20 @@ class GenerationRunService:
                 pipeline_result=pipeline_result,
             )
         except Exception as exc:
+            if not session.is_active:
+                session.rollback()
+                generation_run = session.get(GenerationRun, generation_run_id)
+                job_status = session.get(JobStatus, job_status_id)
+                if generation_run is None:
+                    raise ValueError(f"Generation run {generation_run_id} does not exist.") from exc
+                if job_status is None:
+                    raise ValueError(f"Job status {job_status_id} does not exist.") from exc
             self._fail_incomplete_stages(session, job_status.id)
+            self._fail_incomplete_batches(
+                session,
+                generation_run_id=generation_run.id,
+                error_message=str(exc),
+            )
             self.control_plane.fail_generation_run(generation_run.id, session=session)
             self._set_job_status(
                 job_status,
@@ -777,6 +789,28 @@ class GenerationRunService:
             row.last_heartbeat_at = _utc_now()
             row.error_message = row.error_message or "Stage failed."
             row.progress_percent = Decimal("0.00")
+        session.flush()
+
+    def _fail_incomplete_batches(
+        self,
+        session: Session,
+        *,
+        generation_run_id: int,
+        error_message: str,
+    ) -> None:
+        batches = list(
+            session.scalars(
+                select(MonthlyBatch).where(
+                    MonthlyBatch.generation_run_id == generation_run_id,
+                    MonthlyBatch.processing_status.in_(("pending", "running")),
+                )
+            )
+        )
+        now = _utc_now()
+        for batch in batches:
+            batch.processing_status = "failed"
+            batch.completed_at = batch.completed_at or now
+            batch.error_message = batch.error_message or error_message
         session.flush()
 
     def _overall_percent_complete(self, session: Session, job_status_id: int) -> Decimal:

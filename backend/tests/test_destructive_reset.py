@@ -40,6 +40,9 @@ def test_postgres_truncate_statement_targets_explicit_generated_domain():
     assert "match_team_players" in statement
     assert "match_teams" in statement
     assert "matches" in statement
+    assert "tournament_submissions" in statement
+    assert "tournament_team_results" in statement
+    assert "tournament_official_matches" in statement
 
 
 def test_generated_reset_plan_keeps_history_tables_out_of_runtime_reset():

@@ -546,13 +546,13 @@ def test_pipeline_runs_successive_months_and_skips_run_setup_after_first(session
     } == {"succeeded"}
 
 
-def test_pipeline_rejects_more_than_twelve_months(session):
+def test_pipeline_rejects_more_than_configured_max_months(session):
     seed_run(session)
 
-    with pytest.raises(ValueError, match="between 1 and 12"):
+    with pytest.raises(ValueError, match="between 1 and 36"):
         fake_pipeline().run_months(
             generation_run_id=1,
-            months=13,
+            months=37,
             session=session,
         )
 

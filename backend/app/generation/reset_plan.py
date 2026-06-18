@@ -41,6 +41,15 @@ from app.models import (
     TeamLifecycleEvent,
     TeamMembership,
     Tournament,
+    TournamentDivisionResult,
+    TournamentEvent,
+    TournamentGroupResult,
+    TournamentOfficialGame,
+    TournamentOfficialMatch,
+    TournamentSimulationRun,
+    TournamentStudentGroup,
+    TournamentSubmission,
+    TournamentTeamResult,
     UploadedFile,
     ValidationResult,
 )
@@ -94,6 +103,15 @@ RAW_SEED_STAGING_REBUILDABLE_MODELS = (
 )
 
 GENERATED_OPERATIONAL_REBUILDABLE_MODELS = (
+    TournamentOfficialGame,
+    TournamentOfficialMatch,
+    TournamentDivisionResult,
+    TournamentGroupResult,
+    TournamentTeamResult,
+    TournamentSimulationRun,
+    TournamentSubmission,
+    TournamentStudentGroup,
+    TournamentEvent,
     RatingsUpdateLog,
     PlayerRatingHistory,
     PlayerAssessmentHistory,

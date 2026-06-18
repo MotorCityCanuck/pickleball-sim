@@ -16,7 +16,7 @@ from typing import Any
 import zipfile
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Body, Depends, Form, Query, Request
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.background import BackgroundTask
 from fastapi.templating import Jinja2Templates
@@ -35,7 +35,14 @@ from app.core import (
 from app.db.session import get_session
 from app.exports.data_quality import compare_export_locations, normalize_data_quality_level
 from app.exports.student_dataset import StudentDatasetExportService
-from app.generation import GenerationRunService, SeedRefreshService
+from app.generation import (
+    DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+    GenerationRunService,
+    RealismAuditService,
+    SeedRefreshService,
+    save_realism_audit_snapshot,
+    snapshot_payload_to_markdown,
+)
 from app.models import (
     ConfigurationProfileVersion,
     JobStatus,
@@ -60,6 +67,7 @@ from .control_panel_queries import (
     ConfigEditorState,
     ControlPanelQueries,
     ControlPanelSnapshot,
+    latest_realism_audit_snapshot_payload,
     merge_payload_sections,
     split_payload_sections,
 )
@@ -70,6 +78,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_CONFIG_SCOPE = "seed"
+DEFAULT_REALISM_AUDIT_REPORT_DIR = Path("data/realism_audit_reports")
 TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="CA", division="mens_doubles"),
     PortfolioSlot(country_code="CA", division="womens_doubles"),
@@ -180,32 +189,6 @@ def build_control_panel_router() -> APIRouter:
             queries=queries,
             templates=templates,
             active_config_scope="synthetic",
-        )
-
-    @router.get("/control/partials/config/export", response_class=HTMLResponse)
-    def control_panel_export_config_partial(
-        request: Request,
-        session: Session = Depends(get_session),
-        queries: ControlPanelQueries = Depends(get_control_panel_queries),
-    ) -> HTMLResponse:
-        snapshot = queries.get_control_panel_snapshot(session)
-        return templates.TemplateResponse(
-            request,
-            "partials/control_export_config_tab.html",
-            {
-                "snapshot": snapshot,
-                "export_config": _default_export_config(snapshot),
-                "export_launch_message": None,
-                "export_launch_error": None,
-                "comparison_config": _default_export_comparison_config(snapshot),
-                **_comparison_readiness_context(
-                    snapshot,
-                    _default_export_comparison_config(snapshot),
-                ),
-                "comparison_result": None,
-                "compare_message": None,
-                "compare_error": None,
-            },
         )
 
     @router.get("/control/partials/config/tournament", response_class=HTMLResponse)
@@ -774,6 +757,103 @@ def build_control_panel_router() -> APIRouter:
             ),
         )
 
+    @router.post("/control/realism-audit/run", response_class=HTMLResponse)
+    def control_panel_realism_audit_run(
+        request: Request,
+        report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        realism_audit_message = None
+        realism_audit_error = None
+        realism_audit_config = {
+            "report_output_dir": report_output_dir.strip()
+            or str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+        }
+
+        if not snapshot.allowed_actions.can_run_realism_audit:
+            realism_audit_error = (
+                snapshot.allowed_actions.realism_audit_blockers[0]
+                if snapshot.allowed_actions.realism_audit_blockers
+                else "Realism audit cannot be started."
+            )
+        else:
+            try:
+                execution = RealismAuditService(session).run()
+                snapshot_path = save_realism_audit_snapshot(
+                    execution,
+                    snapshot_dir=DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+                )
+                session.commit()
+                snapshot = queries.get_control_panel_snapshot(session)
+                realism_audit_message = (
+                    "Realism audit completed and saved "
+                    f"{len(execution.results)} query result(s) to {snapshot_path}."
+                )
+            except Exception as exc:
+                session.rollback()
+                snapshot = queries.get_control_panel_snapshot(session)
+                realism_audit_error = str(exc)
+
+        return templates.TemplateResponse(
+            request,
+            "partials/control_orchestration_tab.html",
+            _build_orchestration_template_context(
+                snapshot,
+                realism_audit_message=realism_audit_message,
+                realism_audit_error=realism_audit_error,
+                realism_audit_config=realism_audit_config,
+            ),
+        )
+
+    @router.post("/control/realism-audit/download", response_class=FileResponse)
+    def control_panel_realism_audit_download(
+        report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> FileResponse:
+        snapshot = queries.get_control_panel_snapshot(session)
+        if not snapshot.allowed_actions.can_run_realism_audit:
+            blocker = (
+                snapshot.allowed_actions.realism_audit_blockers[0]
+                if snapshot.allowed_actions.realism_audit_blockers
+                else "Realism audit report cannot be downloaded."
+            )
+            raise HTTPException(status_code=409, detail=blocker)
+        payload = latest_realism_audit_snapshot_payload(
+            generation_run_id=(
+                snapshot.generation_run_summary.generation_run_id
+                if snapshot.generation_run_summary
+                else None
+            ),
+            batch_id=(
+                snapshot.batch_summaries[-1].batch_id
+                if snapshot.batch_summaries
+                else None
+            ),
+        )
+        if payload is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Run realism audit before downloading the markdown report.",
+            )
+
+        output_dir = _resolve_control_panel_path(
+            report_output_dir.strip() or str(DEFAULT_REALISM_AUDIT_REPORT_DIR)
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_path = output_dir / _realism_audit_markdown_filename(payload)
+        report_path.write_text(
+            snapshot_payload_to_markdown(payload),
+            encoding="utf-8",
+        )
+        return FileResponse(
+            report_path,
+            media_type="text/markdown",
+            filename=report_path.name,
+        )
+
     @router.post("/control/export/student-dataset/start", response_class=HTMLResponse)
     def control_panel_student_dataset_export_start(
         request: Request,
@@ -786,7 +866,7 @@ def build_control_panel_router() -> APIRouter:
         clean_subfolder: str = Form("clean"),
         tainted_subfolder: str = Form("tainted"),
         overwrite_existing: str | None = Form(None),
-        return_target: str = Form("export_config"),
+        return_target: str = Form("orchestration"),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         export_service: StudentDatasetExportService = Depends(get_student_dataset_export_service),
@@ -857,34 +937,15 @@ def build_control_panel_router() -> APIRouter:
                 snapshot = queries.get_control_panel_snapshot(session)
                 export_launch_error = str(exc)
 
-        if return_target == "orchestration":
-            return templates.TemplateResponse(
-                request,
-                "partials/control_orchestration_tab.html",
-                _build_orchestration_template_context(
-                    snapshot,
-                    export_launch_message=export_launch_message,
-                    export_launch_error=export_launch_error,
-                    export_config=export_config,
-                ),
-            )
         return templates.TemplateResponse(
             request,
-            "partials/control_export_config_tab.html",
-            {
-                "snapshot": snapshot,
-                "export_config": export_config,
-                "export_launch_message": export_launch_message,
-                "export_launch_error": export_launch_error,
-                "comparison_config": _default_export_comparison_config(snapshot),
-                **_comparison_readiness_context(
-                    snapshot,
-                    _default_export_comparison_config(snapshot),
-                ),
-                "comparison_result": None,
-                "compare_message": None,
-                "compare_error": None,
-            },
+            "partials/control_orchestration_tab.html",
+            _build_orchestration_template_context(
+                snapshot,
+                export_launch_message=export_launch_message,
+                export_launch_error=export_launch_error,
+                export_config=export_config,
+            ),
         )
 
     @router.post("/control/export/student-dataset/compare", response_class=HTMLResponse)
@@ -974,22 +1035,6 @@ def build_control_panel_router() -> APIRouter:
                 )
                 compare_message = None
 
-        if return_target == "export_config":
-            return templates.TemplateResponse(
-                request,
-                "partials/control_export_config_tab.html",
-                {
-                    "snapshot": snapshot,
-                    "export_config": _default_export_config(snapshot),
-                    "export_launch_message": None,
-                    "export_launch_error": None,
-                    "comparison_config": comparison_config,
-                    **_comparison_readiness_context(snapshot, comparison_config),
-                    "comparison_result": comparison_result,
-                    "compare_message": compare_message,
-                    "compare_error": compare_error,
-                },
-            )
         return templates.TemplateResponse(
             request,
             "partials/control_orchestration_tab.html",
@@ -1696,6 +1741,9 @@ def _build_orchestration_template_context(
     seed_launch_error: str | None = None,
     launch_message: str | None = None,
     launch_error: str | None = None,
+    realism_audit_message: str | None = None,
+    realism_audit_error: str | None = None,
+    realism_audit_config: dict[str, object] | None = None,
     status_recovery_message: str | None = None,
     status_recovery_error: str | None = None,
     export_launch_message: str | None = None,
@@ -1713,6 +1761,14 @@ def _build_orchestration_template_context(
         "seed_launch_error": seed_launch_error,
         "launch_message": launch_message,
         "launch_error": launch_error,
+        "realism_audit_message": realism_audit_message,
+        "realism_audit_error": realism_audit_error,
+        "realism_audit_config": (
+            realism_audit_config
+            or {
+                "report_output_dir": str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+            }
+        ),
         "status_recovery_message": status_recovery_message,
         "status_recovery_error": status_recovery_error,
         "export_launch_message": export_launch_message,
@@ -1733,6 +1789,28 @@ def _safe_release_name(value: str) -> str:
     )
     parts = [part for part in cleaned.split("_") if part]
     return "_".join(parts) or "student_dataset_release"
+
+
+def _realism_audit_markdown_filename(payload: dict[str, object]) -> str:
+    run_id = payload.get("generation_run_id")
+    batch_id = payload.get("batch_id")
+    executed_at = str(payload.get("executed_at") or "")
+    timestamp = "".join(
+        character
+        for character in executed_at.replace("+00:00", "Z")
+        if character.isalnum() or character in ("-", "_")
+    )
+    run_token = (
+        f"run_{int(run_id):06d}"
+        if isinstance(run_id, int)
+        else "run_unknown"
+    )
+    batch_token = (
+        f"batch_{int(batch_id):06d}"
+        if isinstance(batch_id, int)
+        else "batch_unknown"
+    )
+    return f"realism_audit_{run_token}_{batch_token}_{timestamp or 'latest'}.md"
 
 
 def _normalize_control_panel_path(value: str | Path) -> str:

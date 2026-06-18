@@ -24,6 +24,7 @@ from app.main import create_app  # noqa: E402
 from app.web.routes import get_configuration_lifecycle  # noqa: E402
 import app.web.routes as routes_module  # noqa: E402
 from app.web.control_panel_queries import ControlPanelQueries  # noqa: E402
+import app.web.control_panel_queries as queries_module  # noqa: E402
 
 
 @pytest.fixture()
@@ -1067,7 +1068,6 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config" in routes
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
-    assert "/control/partials/config/export" in routes
     assert "/control/partials/config/tournament" in routes
     assert "/control/partials/tournament" in routes
     assert "/control/partials/tournament/simulation" in routes
@@ -1077,18 +1077,20 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
-    assert "Export Config & Run" in body
     assert "Orchestration" in body
     assert "Tournament Config" in body
     assert "Tournament" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
-    assert 'data-tab-url="/control/partials/config/export"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
     assert 'data-tab-url="/control/partials/config/tournament"' in body
     assert 'data-tab-url="/control/partials/tournament"' in body
     assert "window.loadControlPanelTab" in body
     assert "window.htmx?.process?.(target)" in body
+    assert "window.copyControlPanelText" in body
+    assert "window.openControlPanelFolder" in body
+    assert "window.downloadControlPanelReleasePackage" in body
+    assert "window.runControlPanelReleaseQc" in body
     assert "Read only config" in body
 
 
@@ -1120,11 +1122,6 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         )
         orchestration = routes["/control/partials/orchestration"](
             request=_request("/control/partials/orchestration"),
-            session=session,
-            queries=ControlPanelQueries(),
-        )
-        export_config = routes["/control/partials/config/export"](
-            request=_request("/control/partials/config/export"),
             session=session,
             queries=ControlPanelQueries(),
         )
@@ -1168,6 +1165,12 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert orchestration.status_code == 200
     assert "Raw Ingest &amp; Normalization" in orchestration.body.decode()
     assert "Player &amp; Match Generation" in orchestration.body.decode()
+    assert "Realism Audit" in orchestration.body.decode()
+    assert "Last current run:" in orchestration.body.decode()
+    assert "UI run" in orchestration.body.decode()
+    assert "running" in orchestration.body.decode()
+    assert "Run Realism Audit - Not Available" in orchestration.body.decode()
+    assert "Not Available" in orchestration.body.decode()
     assert "Data Export" in orchestration.body.decode()
     assert "Data Quality Comparison" in orchestration.body.decode()
     assert "<details open" not in orchestration.body.decode()
@@ -1198,11 +1201,15 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         'data-orchestration-section="player-match-generation"'
         in orchestration.body.decode()
     )
+    assert 'data-orchestration-section="realism-audit"' in orchestration.body.decode()
     assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
     assert 'data-orchestration-section="data-quality-compare"' in orchestration.body.decode()
     assert 'id="generation-run-name"' in orchestration.body.decode()
     assert 'id="export-config-form"' in orchestration.body.decode()
     assert 'hx-post="/control/export/student-dataset/start"' in orchestration.body.decode()
+    assert 'hx-post="/control/realism-audit/run"' in orchestration.body.decode()
+    assert 'action="/control/realism-audit/download"' in orchestration.body.decode()
+    assert 'id="realism-audit-report-output-dir"' in orchestration.body.decode()
     assert 'name="output_root"' in orchestration.body.decode()
     assert 'name="clean_subfolder"' in orchestration.body.decode()
     assert 'name="tainted_subfolder"' in orchestration.body.decode()
@@ -1211,28 +1218,6 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Open Export Configuration" not in orchestration.body.decode()
     assert "hx-preserve" in orchestration.body.decode()
     assert "control-panel-orchestration-section:" in orchestration.body.decode()
-
-    assert export_config.status_code == 200
-    assert "Export Configuration Reference" in export_config.body.decode()
-    assert "Student dataset export settings" in export_config.body.decode()
-    assert 'hx-post="/control/export/student-dataset/start"' not in export_config.body.decode()
-    assert "Start Student Dataset Baseline + Incremental Export" not in export_config.body.decode()
-    assert "Compare Exported Data" not in export_config.body.decode()
-    assert 'id="student-dataset-compare-form"' not in export_config.body.decode()
-    assert "copyControlPanelText" in export_config.body.decode()
-    assert "Choose Folder" not in export_config.body.decode()
-    assert "/control/system/select-folder" not in export_config.body.decode()
-    assert "Open Orchestration" in export_config.body.decode()
-    assert "Output Path Pattern" in export_config.body.decode()
-    assert "Default Export Inputs" in export_config.body.decode()
-    assert "No Issues Export Location" not in export_config.body.decode()
-    assert "Tainted Export Location" not in export_config.body.decode()
-    assert 'name="export_path"' not in export_config.body.decode()
-    assert 'id="comparison-export-path"' not in export_config.body.decode()
-    assert 'id="comparison-tainted-export-path"' not in export_config.body.decode()
-    assert "YYYYMMDD" in export_config.body.decode()
-    assert "HHMMSSZ" in export_config.body.decode()
-    assert "Select the timestamped run folder" not in export_config.body.decode()
 
     assert tournament_config.status_code == 200
     assert "Tournament Configuration" in tournament_config.body.decode()
@@ -1727,11 +1712,138 @@ def test_completed_generation_run_marks_student_dataset_export_ready(session_fac
     body = orchestration.body.decode()
     assert orchestration.status_code == 200
     assert "Data Export" in body
+    assert "Completed UI run" in body
+    assert "succeeded" in body
+    assert "Run Realism Audit - Available" in body
+    assert "Available" in body
     assert "Ready to export" in body
     assert "Open Export Configuration" not in body
     assert 'id="export-config-form"' in body
     assert "Confirm deletion of the expected release folder if it already exists" in body
     assert "Generate Student Dataset (coming soon)" not in body
+
+
+def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
+    _seed_completed_generation_state(session_factory)
+    snapshot_root = tmp_path / "realism_audit_snapshots"
+    report_root = tmp_path / "realism_audit_reports"
+
+    class FakeRealismAuditService:
+        def __init__(self, session):
+            self.session = session
+
+        def run(self):
+            return SimpleNamespace(
+                generation_run_id=2,
+                batch_id=22,
+                batch_month="2026-02-01",
+                executed_at=datetime.fromisoformat("2026-06-18T12:00:00+00:00"),
+                results=(
+                    SimpleNamespace(
+                        query=SimpleNamespace(
+                            name="player_roster_summary",
+                            scope="generation_run",
+                            category="players",
+                            description="Top-line player counts.",
+                            tags=("players",),
+                            related_config_keys=(),
+                        ),
+                        rows=(
+                            {
+                                "generation_run_id": 2,
+                                "player_count": 1020,
+                            },
+                        ),
+                    ),
+                ),
+            )
+
+    def fake_save_realism_audit_snapshot(execution, *, snapshot_dir):
+        target_dir = Path(snapshot_dir) / "generation_run_000002"
+        target_dir.mkdir(parents=True)
+        target_path = target_dir / "run_000002_batch_000022_2026-02-01_test.json"
+        payload = {
+            "executed_at": execution.executed_at.isoformat(),
+            "generation_run_id": execution.generation_run_id,
+            "batch_id": execution.batch_id,
+            "batch_month": execution.batch_month,
+            "query_count": 1,
+            "snapshot_path": str(target_path),
+            "results": [
+                {
+                    "query": "player_roster_summary",
+                    "scope": "generation_run",
+                    "category": "players",
+                    "description": "Top-line player counts.",
+                    "tags": ["players"],
+                    "related_config_keys": [],
+                    "rows": [
+                        {
+                            "generation_run_id": 2,
+                            "player_count": 1020,
+                        }
+                    ],
+                }
+            ],
+        }
+        target_path.write_text(json.dumps(payload), encoding="utf-8")
+        return target_path
+
+    monkeypatch.setattr(routes_module, "RealismAuditService", FakeRealismAuditService)
+    monkeypatch.setattr(
+        routes_module,
+        "save_realism_audit_snapshot",
+        fake_save_realism_audit_snapshot,
+    )
+    monkeypatch.setattr(
+        routes_module,
+        "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
+        snapshot_root,
+    )
+    monkeypatch.setattr(
+        queries_module,
+        "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
+        snapshot_root,
+    )
+
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/realism-audit/run"](
+            request=_request("/control/realism-audit/run", method="POST"),
+            report_output_dir=str(report_root),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+        download = routes["/control/realism-audit/download"](
+            report_output_dir=str(report_root),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Realism audit completed and saved 1 query result" in body
+    assert "Latest Audit Snapshot" in body
+    assert "Completed UI run" in body
+    assert "succeeded" in body
+    assert "Run Realism Audit - Available" in body
+    assert "players" in body
+
+    report_path = Path(download.path)
+    assert download.status_code == 200
+    assert report_path.parent == report_root
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "# Realism Audit Report" in report_text
+    assert "player_roster_summary" in report_text
+    assert "player_count" in report_text
 
 
 def test_student_dataset_export_start_route_queues_background_job(session_factory):
@@ -1873,8 +1985,8 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
         session.commit()
         app = create_app()
         routes = _route_map(app)
-        response = routes["/control/partials/config/export"](
-            request=_request("/control/partials/config/export"),
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
             session=session,
             queries=ControlPanelQueries(),
         )
@@ -1925,8 +2037,8 @@ def test_export_progress_reports_failed_export_job(session_factory):
         session.commit()
         app = create_app()
         routes = _route_map(app)
-        response = routes["/control/partials/config/export"](
-            request=_request("/control/partials/config/export"),
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
             session=session,
             queries=ControlPanelQueries(),
         )
@@ -1971,8 +2083,8 @@ def test_export_progress_renders_release_actions(session_factory):
         session.commit()
         app = create_app()
         routes = _route_map(app)
-        response = routes["/control/partials/config/export"](
-            request=_request("/control/partials/config/export"),
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
             session=session,
             queries=ControlPanelQueries(),
         )

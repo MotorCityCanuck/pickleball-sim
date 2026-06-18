@@ -410,6 +410,187 @@
     </details>
 
     <details
+        class="panel-section {% if snapshot.allowed_actions.can_run_realism_audit %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        data-orchestration-section="realism-audit"
+    >
+        <summary style="cursor:pointer; font-size:18px; font-weight:bold;">Realism Audit</summary>
+        <section style="margin-top:14px; display:grid; gap:16px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 3</div>
+                    <div style="margin-top:6px; font-size:18px;">Audit current generated dataset</div>
+                    <div style="margin-top:6px; color:#5a6477;">
+                        Run the reusable SQL realism checks against the current completed generation dataset before export.
+                    </div>
+                    {% if snapshot.generation_run_summary %}
+                        <div style="margin-top:8px; color:#5a6477; font-size:13px;">
+                            Last current run:
+                            {{ snapshot.generation_run_summary.generation_name }}
+                            {% if snapshot.generation_run_summary.completed_at %}
+                                | {{ snapshot.generation_run_summary.completed_at.isoformat().replace("T", " ") }}
+                            {% elif snapshot.generation_run_summary.started_at %}
+                                | {{ snapshot.generation_run_summary.started_at.isoformat().replace("T", " ") }}
+                            {% endif %}
+                            | {{ snapshot.generation_run_summary.status }}
+                        </div>
+                    {% else %}
+                        <div style="margin-top:8px; color:#5a6477; font-size:13px;">
+                            Last current run: none | not available
+                        </div>
+                    {% endif %}
+                </div>
+                {% if snapshot.allowed_actions.can_run_realism_audit %}
+                    <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                        Available
+                    </div>
+                {% else %}
+                    <div style="border:1px solid #f1b2ad; border-radius:999px; padding:6px 10px; font-size:12px; color:#8f1d18; background:#fef3f2;">
+                        Not Available
+                    </div>
+                {% endif %}
+            </div>
+
+            {% if realism_audit_message %}
+                <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+                    {{ realism_audit_message }}
+                </div>
+            {% endif %}
+            {% if realism_audit_error %}
+                <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                    {{ realism_audit_error }}
+                </div>
+            {% endif %}
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <div class="info-card {% if snapshot.allowed_actions.can_run_realism_audit %}state-card-ready{% else %}state-card-blocked{% endif %}">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Audit Preconditions</div>
+                    <div style="margin-top:8px; font-size:18px;">
+                        {% if snapshot.allowed_actions.can_run_realism_audit %}Available{% else %}Not Available{% endif %}
+                    </div>
+                    {% if snapshot.generation_run_summary %}
+                        <div style="margin-top:8px; color:#5a6477;">
+                            {{ snapshot.generation_run_summary.generation_name }}
+                            {% if snapshot.generation_run_summary.completed_at %}
+                                | {{ snapshot.generation_run_summary.completed_at.isoformat().replace("T", " ") }}
+                            {% elif snapshot.generation_run_summary.started_at %}
+                                | {{ snapshot.generation_run_summary.started_at.isoformat().replace("T", " ") }}
+                            {% endif %}
+                            | {{ snapshot.generation_run_summary.status }}
+                        </div>
+                    {% else %}
+                        <div style="margin-top:8px; color:#5a6477;">
+                            No completed generation run is currently available.
+                        </div>
+                    {% endif %}
+                    {% if snapshot.allowed_actions.realism_audit_blockers %}
+                        <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
+                            {% for blocker in snapshot.allowed_actions.realism_audit_blockers %}
+                                <li>{{ blocker }}</li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <div style="margin-top:8px; color:#5a6477;">Current generation run and monthly batches are complete.</div>
+                    {% endif %}
+                </div>
+                <div class="info-card">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Audit Snapshot</div>
+                    {% if snapshot.realism_audit_summary %}
+                        <div style="margin-top:8px; font-size:18px;">{{ snapshot.realism_audit_summary.query_count }} queries</div>
+                        <div style="margin-top:6px; color:#5a6477;">
+                            {{ snapshot.realism_audit_summary.total_row_count }} result rows
+                            {% if snapshot.realism_audit_summary.batch_month %}
+                                | Batch {{ snapshot.realism_audit_summary.batch_month }}
+                            {% endif %}
+                        </div>
+                        {% if snapshot.realism_audit_summary.executed_at %}
+                            <div style="margin-top:6px; color:#5a6477;">Executed {{ snapshot.realism_audit_summary.executed_at.replace("T", " ") }}</div>
+                        {% endif %}
+                    {% else %}
+                        <div style="margin-top:8px; font-size:18px;">No audit snapshot yet</div>
+                        <div style="margin-top:6px; color:#5a6477;">Run the audit to create summary and detailed report data.</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if snapshot.realism_audit_summary and snapshot.realism_audit_summary.category_counts %}
+                <section class="info-card" style="display:grid; gap:12px;">
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Summary Results</div>
+                        <div style="margin-top:6px; color:#5a6477;">Query coverage by audit category from the latest saved snapshot.</div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
+                        {% for category, count in snapshot.realism_audit_summary.category_counts %}
+                            <div class="metric-card">
+                                <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ category }}</div>
+                                <div style="margin-top:6px;">{{ count }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </section>
+            {% endif %}
+
+            <form
+                style="display:grid; gap:12px;"
+                hx-post="/control/realism-audit/run"
+                hx-target="#control-tab-content"
+                hx-swap="innerHTML"
+            >
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Markdown report directory</span>
+                    <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+                        <input
+                            id="realism-audit-report-output-dir"
+                            type="text"
+                            name="report_output_dir"
+                            required
+                            value="{{ realism_audit_config.report_output_dir }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
+                        >
+                        <button
+                            type="button"
+                            onclick="window.selectControlPanelFolder('realism-audit-report-output-dir', 'data/realism_audit_reports')"
+                            style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
+                        >
+                            Choose Folder
+                        </button>
+                    </div>
+                </label>
+
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button
+                        type="submit"
+                        {% if not snapshot.allowed_actions.can_run_realism_audit %}disabled{% endif %}
+                        style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_run_realism_audit %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                    >
+                        {% if snapshot.allowed_actions.can_run_realism_audit %}Run Realism Audit - Available{% else %}Run Realism Audit - Not Available{% endif %}
+                    </button>
+                </div>
+            </form>
+
+            <form
+                method="post"
+                action="/control/realism-audit/download"
+                style="display:flex; gap:10px; flex-wrap:wrap;"
+            >
+                <input
+                    type="hidden"
+                    name="report_output_dir"
+                    value="{{ realism_audit_config.report_output_dir }}"
+                    data-realism-audit-download-dir
+                >
+                <button
+                    type="submit"
+                    {% if not snapshot.realism_audit_summary or not snapshot.allowed_actions.can_run_realism_audit %}disabled{% endif %}
+                    onclick="const input = document.getElementById('realism-audit-report-output-dir'); const hidden = this.form.querySelector('[data-realism-audit-download-dir]'); if (input && hidden) hidden.value = input.value;"
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.realism_audit_summary or not snapshot.allowed_actions.can_run_realism_audit %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                >
+                    Create &amp; Download Markdown Report
+                </button>
+            </form>
+        </section>
+    </details>
+
+    <details
         class="panel-section {% if snapshot.allowed_actions.can_generate_student_dataset %}state-card-ready{% else %}state-card-blocked{% endif %}"
         data-orchestration-section="data-export"
     >
@@ -417,7 +598,7 @@
         <section style="margin-top:14px; display:grid; gap:16px;">
             <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
                 <div>
-                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 3</div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage 4</div>
                     <div style="margin-top:6px; font-size:18px;">Generate student dataset</div>
                     <div style="margin-top:6px; color:#5a6477;">
                         Build validated Parquet release folders and persist export metadata after generation completes.

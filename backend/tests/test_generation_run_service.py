@@ -238,6 +238,138 @@ def session():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE tournament_events (
+                id integer primary key,
+                generation_run_id bigint,
+                source_batch_id bigint,
+                event_name varchar(255) not null,
+                tournament_date date not null,
+                config_snapshot text not null,
+                status varchar(30) not null default 'draft',
+                foreign key(generation_run_id) references generation_runs(id),
+                foreign key(source_batch_id) references monthly_batches(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_student_groups (
+                id integer primary key,
+                event_id bigint not null,
+                group_name varchar(255) not null,
+                external_group_key varchar(255),
+                foreign key(event_id) references tournament_events(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_submissions (
+                id integer primary key,
+                event_id bigint not null,
+                student_group_id bigint not null,
+                slot_country_code varchar(3) not null,
+                slot_division varchar(50) not null,
+                team_id bigint not null,
+                validation_status varchar(30) not null default 'pending',
+                validation_message text,
+                foreign key(event_id) references tournament_events(id),
+                foreign key(student_group_id) references tournament_student_groups(id),
+                foreign key(team_id) references teams(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_simulation_runs (
+                id integer primary key,
+                event_id bigint not null,
+                run_type varchar(30) not null,
+                status varchar(30) not null default 'pending',
+                seed bigint,
+                iteration_count integer,
+                config_snapshot text not null,
+                job_status_id bigint,
+                started_at datetime,
+                completed_at datetime,
+                error_message text,
+                foreign key(event_id) references tournament_events(id),
+                foreign key(job_status_id) references job_status(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_team_results (
+                id integer primary key,
+                simulation_run_id bigint not null,
+                slot_country_code varchar(3) not null,
+                slot_division varchar(50) not null,
+                team_id bigint not null,
+                foreign key(simulation_run_id) references tournament_simulation_runs(id),
+                foreign key(team_id) references teams(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_group_results (
+                id integer primary key,
+                simulation_run_id bigint not null,
+                student_group_id bigint not null,
+                foreign key(simulation_run_id) references tournament_simulation_runs(id),
+                foreign key(student_group_id) references tournament_student_groups(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_division_results (
+                id integer primary key,
+                simulation_run_id bigint not null,
+                slot_country_code varchar(2) not null,
+                slot_division varchar(50) not null,
+                unique_team_count integer not null,
+                match_count integer not null,
+                champion_team_id bigint,
+                foreign key(simulation_run_id) references tournament_simulation_runs(id),
+                foreign key(champion_team_id) references teams(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_official_matches (
+                id integer primary key,
+                simulation_run_id bigint not null,
+                slot_country_code varchar(2) not null,
+                slot_division varchar(50) not null,
+                match_number integer not null,
+                team_one_id bigint not null,
+                team_two_id bigint not null,
+                winning_team_id bigint not null,
+                foreign key(simulation_run_id) references tournament_simulation_runs(id),
+                foreign key(team_one_id) references teams(id),
+                foreign key(team_two_id) references teams(id),
+                foreign key(winning_team_id) references teams(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE tournament_official_games (
+                id integer primary key,
+                official_match_id bigint not null,
+                game_number integer not null,
+                team_one_score integer not null,
+                team_two_score integer not null,
+                winning_team_number integer not null,
+                foreign key(official_match_id) references tournament_official_matches(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE matches (
                 id integer primary key,
                 tournament_id bigint,
@@ -553,6 +685,7 @@ class FailingPipeline:
 class RecordingPipeline:
     def __init__(self) -> None:
         self.last_skip_existing = None
+        self.calls: list[dict[str, object]] = []
 
     def run_months(
         self,
@@ -565,11 +698,18 @@ class RecordingPipeline:
         progress_listener=None,
         session=None,
     ):
-        del generation_run_id, months, start_batch_id, player_count, progress_listener, session
+        del start_batch_id, player_count, progress_listener, session
         self.last_skip_existing = skip_existing
+        self.calls.append(
+            {
+                "generation_run_id": generation_run_id,
+                "months": months,
+                "skip_existing": skip_existing,
+            }
+        )
         return MultiMonthPipelineResult(
-            generation_run_id=1,
-            months_requested=1,
+            generation_run_id=generation_run_id,
+            months_requested=months,
             batch_results=(),
         )
 
@@ -670,6 +810,65 @@ def test_launch_generation_run_resets_generated_data_and_tracks_progress(session
     assert session.execute(text("SELECT COUNT(*) FROM validation_results")).scalar_one() == 1
     assert session.execute(text("SELECT COUNT(*) FROM export_runs")).scalar_one() == 1
     assert session.execute(text("SELECT COUNT(*) FROM student_dataset_releases")).scalar_one() == 1
+
+
+def test_registered_generation_run_seeds_full_stage_plan_before_reset_checkpoint(session):
+    _seed_valid_config(session, seed=77, historical_months=3)
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=FakePipeline(),
+    )
+    registration = service.register_generation_run("planned progress", session=session)
+    observed_counts: list[tuple[int, int]] = []
+
+    def checkpoint() -> None:
+        observed_counts.append(
+            (
+                session.query(MonthlyBatch)
+                .filter(MonthlyBatch.generation_run_id == registration.generation_run.id)
+                .count(),
+                session.query(JobStageProgress)
+                .filter(JobStageProgress.job_status_id == registration.job_status.id)
+                .count(),
+            )
+        )
+
+    service._execute_registered_generation_run(
+        config_version_id=registration.configuration_version.id,
+        generation_run_id=registration.generation_run.id,
+        job_status_id=registration.job_status.id,
+        session=session,
+        checkpoint=checkpoint,
+    )
+
+    assert observed_counts
+    assert observed_counts[0] == (3, 1 + (3 * len(PIPELINE_STEPS)))
+
+
+def test_launch_generation_run_processes_eighteen_month_stage_plan(session):
+    _seed_valid_config(session, seed=77, historical_months=18)
+    pipeline = RecordingPipeline()
+    service = GenerationRunService(
+        settings=SimulationSettings(config_payload=None),
+        pipeline=pipeline,
+    )
+
+    result = service.launch_generation_run("eighteen month run", session=session)
+    session.commit()
+
+    assert result.generation_run.status == "succeeded"
+    assert result.job_status.status == "succeeded"
+    assert len(result.monthly_batches) == 18
+    assert pipeline.calls == [
+        {
+            "generation_run_id": result.generation_run.id,
+            "months": 18,
+            "skip_existing": True,
+        }
+    ]
+    assert session.query(JobStageProgress).filter(
+        JobStageProgress.job_status_id == result.job_status.id
+    ).count() == 1 + (18 * len(PIPELINE_STEPS))
 
 
 def test_launch_generation_run_rejects_multiple_valid_configs(session):

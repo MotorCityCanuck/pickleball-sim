@@ -159,15 +159,6 @@
                 Player and Match Config
             </button>
             <button
-                id="control-tab-button-export"
-                class="tab-button"
-                type="button"
-                data-tab-url="/control/partials/config/export"
-                onclick="window.loadControlPanelTab(this)"
-            >
-                Export Config & Run
-            </button>
-            <button
                 id="control-tab-button-orchestration"
                 class="tab-button"
                 type="button"
@@ -256,6 +247,129 @@
                     console.error(error);
                 } finally {
                     target.removeAttribute("aria-busy");
+                }
+            };
+
+            window.setControlPanelActionStatus = function setControlPanelActionStatus(message, kind) {
+                const el = document.getElementById("export-release-action-status");
+                if (!el) {
+                    return;
+                }
+                el.style.display = "block";
+                if (kind === "error") {
+                    el.style.borderColor = "#f1b2ad";
+                    el.style.background = "#fef3f2";
+                    el.style.color = "#8f1d18";
+                } else {
+                    el.style.borderColor = "#b7dfc2";
+                    el.style.background = "#edf8f0";
+                    el.style.color = "#1f5f30";
+                }
+                el.textContent = message;
+            };
+
+            window.copyControlPanelText = async function copyControlPanelText(value) {
+                try {
+                    const response = await window.fetch("/control/system/copy-path", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: new URLSearchParams({ path: value }),
+                    });
+                    if (response.ok) {
+                        window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
+                        return;
+                    }
+                } catch (error) {
+                    console.error(error);
+                }
+                try {
+                    if (window.navigator?.clipboard?.writeText) {
+                        await window.navigator.clipboard.writeText(value);
+                        window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
+                        return;
+                    }
+                } catch (error) {
+                    console.error(error);
+                }
+                window.prompt("Copy path:", value);
+            };
+
+            window.openControlPanelFolder = async function openControlPanelFolder(value) {
+                window.setControlPanelActionStatus(`Opening folder for ${value}...`, "success");
+                try {
+                    const response = await window.fetch("/control/system/open-folder", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: new URLSearchParams({ path: value }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok) {
+                        throw new Error(payload.error || "Could not open the release folder.");
+                    }
+                    window.setControlPanelActionStatus(payload.message, "success");
+                } catch (error) {
+                    console.error(error);
+                    window.setControlPanelActionStatus(error.message || "Could not open the release folder.", "error");
+                }
+            };
+
+            window.downloadControlPanelReleasePackage = async function downloadControlPanelReleasePackage(value) {
+                window.setControlPanelActionStatus(`Building release package for ${value}...`, "success");
+                try {
+                    const response = await window.fetch("/control/export/student-dataset/download-package", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: new URLSearchParams({ path: value }),
+                    });
+                    if (!response.ok) {
+                        const message = await response.text();
+                        throw new Error(message || "Could not build the release package.");
+                    }
+                    const blob = await response.blob();
+                    const objectUrl = window.URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    const releaseName = value.split("/").filter(Boolean).pop() || "student_dataset_release";
+                    link.href = objectUrl;
+                    link.download = `${releaseName}.zip`;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(objectUrl);
+                    window.setControlPanelActionStatus(`Downloaded release package for ${releaseName}.`, "success");
+                } catch (error) {
+                    console.error(error);
+                    window.setControlPanelActionStatus(error.message || "Could not build the release package.", "error");
+                }
+            };
+
+            window.runControlPanelReleaseQc = async function runControlPanelReleaseQc(value) {
+                window.setControlPanelActionStatus(`Running DuckDB QC for ${value}...`, "success");
+                try {
+                    const response = await window.fetch("/control/export/student-dataset/run-qc", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: new URLSearchParams({ path: value }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok) {
+                        const failures = (payload.failed_checks || [])
+                            .map((row) => row.check_name)
+                            .join(", ");
+                        const detail = failures ? ` Failed checks: ${failures}.` : "";
+                        throw new Error((payload.message || payload.error || "DuckDB QC failed.") + detail);
+                    }
+                    window.setControlPanelActionStatus(payload.message, "success");
+                } catch (error) {
+                    console.error(error);
+                    window.setControlPanelActionStatus(error.message || "DuckDB QC failed.", "error");
                 }
             };
         })();

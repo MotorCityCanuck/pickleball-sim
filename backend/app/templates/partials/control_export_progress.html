@@ -2,7 +2,7 @@
     class="info-card"
     style="display:grid; gap:12px;"
     {% if snapshot.student_dataset_export_summary.latest_export_job_is_active %}
-        hx-get="/control/partials/config/export"
+        hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
         hx-target="#control-tab-content"
         hx-swap="innerHTML"
@@ -104,12 +104,12 @@
                             </td>
                         </tr>
                         <tr>
-                            <td colspan="6" style="padding:0 10px 10px 10px; border-bottom:1px solid #d6d9df;">
-                                <div style="display:grid; grid-template-columns:repeat(4, minmax(120px, 1fr)); gap:8px;">
+                            <td colspan="6" style="padding:6px 10px 12px 10px; border-bottom:1px solid #d6d9df;">
+                                <div style="display:grid; grid-template-columns:repeat(4, max-content); gap:8px; justify-content:start; align-items:center;">
                                     <button
                                         type="button"
                                         onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
+                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
                                         title="Copy release path"
                                     >
                                         Copy Path
@@ -117,7 +117,7 @@
                                     <button
                                         type="button"
                                         onclick="window.downloadControlPanelReleasePackage({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
+                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
                                         title="Download a zip package containing manifest.json and all Parquet files"
                                     >
                                         Download Package
@@ -125,7 +125,7 @@
                                     <button
                                         type="button"
                                         onclick="window.openControlPanelFolder({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
+                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
                                         title="Open release folder"
                                     >
                                         Open Folder
@@ -133,7 +133,7 @@
                                     <button
                                         type="button"
                                         onclick="window.runControlPanelReleaseQc({{ release.output_path|tojson }})"
-                                        style="width:100%; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:8px 10px; cursor:pointer; font-size:12px; text-align:center; white-space:nowrap;"
+                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
                                         title="Run DuckDB quality checks for this release"
                                     >
                                         Run QC
@@ -147,129 +147,3 @@
         </div>
     {% endif %}
 </section>
-<script>
-    (() => {
-        window.setControlPanelActionStatus = function setControlPanelActionStatus(message, kind) {
-            const el = document.getElementById("export-release-action-status");
-            if (!el) {
-                return;
-            }
-            el.style.display = "block";
-            if (kind === "error") {
-                el.style.borderColor = "#f1b2ad";
-                el.style.background = "#fef3f2";
-                el.style.color = "#8f1d18";
-            } else {
-                el.style.borderColor = "#b7dfc2";
-                el.style.background = "#edf8f0";
-                el.style.color = "#1f5f30";
-            }
-            el.textContent = message;
-        };
-
-        window.copyControlPanelText = async function copyControlPanelText(value) {
-            try {
-                const response = await window.fetch("/control/system/copy-path", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                    },
-                    body: new URLSearchParams({ path: value }),
-                });
-                if (response.ok) {
-                    window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
-                    return;
-                }
-            } catch (error) {
-                console.error(error);
-            }
-            try {
-                if (window.navigator?.clipboard?.writeText) {
-                    await window.navigator.clipboard.writeText(value);
-                    window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
-                    return;
-                }
-            } catch (error) {
-                console.error(error);
-            }
-            window.prompt("Copy path:", value);
-        };
-
-        window.openControlPanelFolder = async function openControlPanelFolder(value) {
-            window.setControlPanelActionStatus(`Opening folder for ${value}...`, "success");
-            try {
-                const response = await window.fetch("/control/system/open-folder", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                    },
-                    body: new URLSearchParams({ path: value }),
-                });
-                const payload = await response.json();
-                if (!response.ok || !payload.ok) {
-                    throw new Error(payload.error || "Could not open the release folder.");
-                }
-                window.setControlPanelActionStatus(payload.message, "success");
-            } catch (error) {
-                console.error(error);
-                window.setControlPanelActionStatus(error.message || "Could not open the release folder.", "error");
-            }
-        };
-
-        window.downloadControlPanelReleasePackage = async function downloadControlPanelReleasePackage(value) {
-            window.setControlPanelActionStatus(`Building release package for ${value}...`, "success");
-            try {
-                const response = await window.fetch("/control/export/student-dataset/download-package", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                    },
-                    body: new URLSearchParams({ path: value }),
-                });
-                if (!response.ok) {
-                    const message = await response.text();
-                    throw new Error(message || "Could not build the release package.");
-                }
-                const blob = await response.blob();
-                const objectUrl = window.URL.createObjectURL(blob);
-                const link = document.createElement("a");
-                const releaseName = value.split("/").filter(Boolean).pop() || "student_dataset_release";
-                link.href = objectUrl;
-                link.download = `${releaseName}.zip`;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                window.URL.revokeObjectURL(objectUrl);
-                window.setControlPanelActionStatus(`Downloaded release package for ${releaseName}.`, "success");
-            } catch (error) {
-                console.error(error);
-                window.setControlPanelActionStatus(error.message || "Could not build the release package.", "error");
-            }
-        };
-
-        window.runControlPanelReleaseQc = async function runControlPanelReleaseQc(value) {
-            window.setControlPanelActionStatus(`Running DuckDB QC for ${value}...`, "success");
-            try {
-                const response = await window.fetch("/control/export/student-dataset/run-qc", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                    },
-                    body: new URLSearchParams({ path: value }),
-                });
-                const payload = await response.json();
-                if (!response.ok || !payload.ok) {
-                    const failures = (payload.failed_checks || [])
-                        .map((row) => row.check_name)
-                        .join(", ");
-                    const detail = failures ? ` Failed checks: ${failures}.` : "";
-                    throw new Error((payload.message || payload.error || "DuckDB QC failed.") + detail);
-                }
-                window.setControlPanelActionStatus(payload.message, "success");
-            } catch (error) {
-                console.error(error);
-                window.setControlPanelActionStatus(error.message || "DuckDB QC failed.", "error");
-            }
-        };
-    })();
-</script>

@@ -439,6 +439,16 @@ class SeedRefreshService:
                 normalize_results=tuple(normalize_results),
             )
         except Exception as exc:
+            if not session.is_active:
+                session.rollback()
+                config_version = session.get(ConfigurationProfileVersion, config_version_id)
+                job_status = session.get(JobStatus, job_status_id)
+                if config_version is None:
+                    raise ValueError(
+                        f"Configuration profile version {config_version_id} does not exist."
+                    ) from exc
+                if job_status is None:
+                    raise ValueError(f"Job status {job_status_id} does not exist.") from exc
             self._fail_incomplete_stages(session, job_status.id)
             self._set_job_status(
                 job_status,

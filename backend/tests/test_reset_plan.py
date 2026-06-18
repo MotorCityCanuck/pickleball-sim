@@ -28,7 +28,12 @@ from app.models import (  # noqa: E402
     RatingsUpdateLog,
     Region,
     StudentDatasetRelease,
+    Team,
     TeamLifecycleEvent,
+    TournamentEvent,
+    TournamentOfficialMatch,
+    TournamentSubmission,
+    TournamentTeamResult,
 )
 
 
@@ -66,6 +71,24 @@ def test_generated_reset_plan_covers_all_generated_tables():
 
     assert "team_lifecycle_events" in reset_tables
     assert "teams" in reset_tables
+    assert "tournament_events" in reset_tables
+    assert "tournament_submissions" in reset_tables
+    assert "tournament_team_results" in reset_tables
+    assert "tournament_official_matches" in reset_tables
+
+
+def test_generated_reset_plan_includes_tournament_dependents_before_teams():
+    reset_models = list(GENERATED_OPERATIONAL_REBUILDABLE_MODELS)
+    team_index = reset_models.index(Team)
+
+    assert TournamentEvent in reset_models
+    assert TournamentSubmission in reset_models
+    assert TournamentTeamResult in reset_models
+    assert TournamentOfficialMatch in reset_models
+    assert reset_models.index(TournamentEvent) < team_index
+    assert reset_models.index(TournamentSubmission) < team_index
+    assert reset_models.index(TournamentTeamResult) < team_index
+    assert reset_models.index(TournamentOfficialMatch) < team_index
 
 
 def test_reset_plan_separates_reference_and_raw_seed_domains():

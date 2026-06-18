@@ -40,7 +40,7 @@ PIPELINE_STEPS = (
     "matches",
     "ratings",
 )
-MAX_PIPELINE_MONTHS = 12
+MAX_PIPELINE_MONTHS = 36
 
 
 @dataclass(frozen=True)
@@ -124,9 +124,9 @@ class MonthlyGenerationPipeline:
         progress_listener: Callable[[PipelineProgressEvent], None] | None = None,
         session: Session | None = None,
     ) -> MultiMonthPipelineResult:
-        """Run the pipeline for up to 12 successive monthly batches."""
+        """Run the pipeline for up to the configured maximum successive monthly batches."""
         if months < 1 or months > MAX_PIPELINE_MONTHS:
-            raise ValueError("months must be between 1 and 12")
+            raise ValueError(f"months must be between 1 and {MAX_PIPELINE_MONTHS}")
 
         if session is not None:
             return self._run_months(

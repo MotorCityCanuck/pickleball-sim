@@ -389,6 +389,11 @@ class StudentDatasetExportService:
                 clean_published_family=clean_published_family,
             )
         except Exception as exc:
+            if not session.is_active:
+                session.rollback()
+                job_status = session.get(JobStatus, job_status_id)
+                if job_status is None:
+                    raise ValueError(f"Job status {job_status_id} does not exist.") from exc
             self._fail_incomplete_stages(session, job_status.id, str(exc))
             self._set_job_status(
                 job_status,

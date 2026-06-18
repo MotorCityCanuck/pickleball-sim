@@ -25,8 +25,10 @@ from .realism_audit_history import (
 )
 from .realism_audit_report import (
     execution_to_json_ready,
+    execution_to_markdown,
     format_table,
     results_to_json_ready,
+    snapshot_payload_to_markdown,
 )
 from .realism_audit_service import (
     RealismAuditExecution,
@@ -60,9 +62,11 @@ __all__ = [
     "SeedRefreshService",
     "build_realism_audit_snapshot_filename",
     "execution_to_json_ready",
+    "execution_to_markdown",
     "format_table",
     "resolve_realism_audit_parameters",
     "results_to_json_ready",
+    "snapshot_payload_to_markdown",
     "run_realism_audit",
     "save_realism_audit_snapshot",
 ]
