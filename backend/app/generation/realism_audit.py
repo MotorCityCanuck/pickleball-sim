@@ -825,35 +825,26 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                     ON r.id = p.home_region_id
                 WHERE p.generation_run_id = :generation_run_id
             ),
-            exact_reference AS (
-                SELECT DISTINCT
-                    ln.country_code,
-                    ln.state_province_code,
-                    ln.last_name
-                FROM last_names ln
-            ),
-            country_reference AS (
-                SELECT DISTINCT
-                    ln.country_code,
-                    ln.last_name
-                FROM last_names ln
-            ),
             aligned AS (
                 SELECT
                     CASE
                         WHEN pc.country_code IS NULL THEN 'missing_reference'
-                        WHEN exact_ref.last_name IS NOT NULL THEN 'exact_state'
-                        WHEN country_ref.last_name IS NOT NULL THEN 'country_other_state'
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM last_names ln
+                            WHERE ln.country_code = pc.country_code
+                                AND ln.state_province_code = pc.state_province_code
+                                AND ln.last_name = pc.last_name
+                        ) THEN 'exact_state'
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM last_names ln
+                            WHERE ln.country_code = pc.country_code
+                                AND ln.last_name = pc.last_name
+                        ) THEN 'country_other_state'
                         ELSE 'missing_reference'
                     END AS alignment_bucket
                 FROM player_context pc
-                LEFT JOIN exact_reference exact_ref
-                    ON exact_ref.country_code = pc.country_code
-                    AND exact_ref.state_province_code = pc.state_province_code
-                    AND exact_ref.last_name = pc.last_name
-                LEFT JOIN country_reference country_ref
-                    ON country_ref.country_code = pc.country_code
-                    AND country_ref.last_name = pc.last_name
             )
             SELECT
                 alignment_bucket,

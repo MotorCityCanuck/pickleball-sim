@@ -1210,6 +1210,9 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/realism-audit/run"' in orchestration.body.decode()
     assert 'action="/control/realism-audit/download"' in orchestration.body.decode()
     assert 'id="realism-audit-report-output-dir"' in orchestration.body.decode()
+    assert 'name="distribution_drift_warning_pct_points"' in orchestration.body.decode()
+    assert 'name="rating_large_delta_error_pct"' in orchestration.body.decode()
+    assert "Assessment Thresholds" in orchestration.body.decode()
     assert 'name="output_root"' in orchestration.body.decode()
     assert 'name="clean_subfolder"' in orchestration.body.decode()
     assert 'name="tainted_subfolder"' in orchestration.body.decode()
@@ -1832,6 +1835,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     assert "Audit in progress" in body
     assert "Audit Progress" in body
     assert "Run Realism Audit - Not Available" in body
+    assert "Assessment Thresholds" in body
     assert len(background_runner.submissions) == 1
     assert background_runner.submissions[0][2]["job_status_id"] is not None
 

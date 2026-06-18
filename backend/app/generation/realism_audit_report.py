@@ -4,14 +4,17 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from .realism_audit import RealismAuditResult
+from .realism_audit_assessment import assess_realism_audit_payload
 from .realism_audit_service import RealismAuditExecution
 
 
 def execution_to_json_ready(
     execution: RealismAuditExecution,
+    *,
+    assessment_thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Serialize one realism-audit execution with scope metadata."""
-    return {
+    payload = {
         "executed_at": execution.executed_at.isoformat(),
         "generation_run_id": execution.generation_run_id,
         "batch_id": execution.batch_id,
@@ -22,6 +25,11 @@ def execution_to_json_ready(
         ),
         "results": results_to_json_ready(execution.results),
     }
+    payload["assessment"] = assess_realism_audit_payload(
+        payload,
+        thresholds=assessment_thresholds,
+    )
+    return payload
 
 
 def results_to_json_ready(
@@ -44,9 +52,18 @@ def results_to_json_ready(
     return serialized
 
 
-def execution_to_markdown(execution: RealismAuditExecution) -> str:
+def execution_to_markdown(
+    execution: RealismAuditExecution,
+    *,
+    assessment_thresholds: dict[str, Any] | None = None,
+) -> str:
     """Render one realism-audit execution as a markdown report."""
-    return snapshot_payload_to_markdown(execution_to_json_ready(execution))
+    return snapshot_payload_to_markdown(
+        execution_to_json_ready(
+            execution,
+            assessment_thresholds=assessment_thresholds,
+        )
+    )
 
 
 def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
@@ -80,6 +97,11 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
     for category, count in sorted(category_counts.items()):
         lines.append(f"- {category}: {count} query{'ies' if count != 1 else ''}")
     lines.append("")
+
+    assessment = payload.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = assess_realism_audit_payload(payload)
+    lines.extend(_assessment_markdown_lines(assessment))
 
     for result in results:
         query_name = str(result.get("query") or "unnamed_query")
@@ -117,6 +139,65 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
+    lines = ["## Assessment Summary", ""]
+    lines.append(
+        f"- Overall status: {_display_markdown_value(assessment.get('overall_status'))}"
+    )
+    lines.append(
+        f"- Finding count: {_display_markdown_value(assessment.get('finding_count'))}"
+    )
+    severity_counts = assessment.get("severity_counts")
+    if isinstance(severity_counts, dict):
+        lines.append(
+            "- Severity counts: "
+            + ", ".join(
+                f"{severity}: {count}"
+                for severity, count in sorted(severity_counts.items())
+            )
+        )
+    lines.append("")
+
+    findings = assessment.get("findings")
+    if isinstance(findings, list) and findings:
+        lines.append("## Assessment Findings")
+        lines.append("")
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            lines.append(
+                f"### {_display_markdown_value(finding.get('title'))}"
+            )
+            lines.append("")
+            lines.append(f"- Severity: {_display_markdown_value(finding.get('severity'))}")
+            lines.append(f"- Category: {_display_markdown_value(finding.get('category'))}")
+            lines.append(f"- Query: `{_display_markdown_value(finding.get('query'))}`")
+            lines.append(f"- Summary: {_display_markdown_value(finding.get('summary'))}")
+            lines.append(f"- Evidence: {_display_markdown_value(finding.get('evidence'))}")
+            lines.append(
+                f"- Recommendation: {_display_markdown_value(finding.get('recommendation'))}"
+            )
+            lines.append("")
+    else:
+        lines.extend(["No assessment findings exceeded the configured thresholds.", ""])
+
+    query_assessments = assessment.get("query_assessments")
+    if isinstance(query_assessments, list) and query_assessments:
+        lines.append("## Query Assessment Index")
+        lines.append("")
+        for query_assessment in query_assessments:
+            if not isinstance(query_assessment, dict):
+                continue
+            lines.append(
+                "- "
+                f"`{_display_markdown_value(query_assessment.get('query'))}`: "
+                f"{_display_markdown_value(query_assessment.get('severity'))} - "
+                f"{_display_markdown_value(query_assessment.get('summary'))}"
+            )
+        lines.append("")
+    return lines
 
 
 def format_table(rows: Sequence[dict[str, Any]]) -> str:

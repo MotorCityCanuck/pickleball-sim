@@ -18,6 +18,12 @@ from .realism_audit import (
     RealismAuditRunner,
     resolve_realism_audit_parameters,
 )
+from .realism_audit_assessment import (
+    DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS,
+    assess_realism_audit_payload,
+    default_realism_audit_assessment_thresholds,
+    normalize_realism_audit_assessment_thresholds,
+)
 from .realism_audit_history import (
     DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
     build_realism_audit_snapshot_filename,
@@ -52,6 +58,7 @@ __all__ = [
     "PipelineProgressEvent",
     "PipelineStepResult",
     "REALISM_AUDIT_QUERIES",
+    "DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS",
     "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
     "RealismAuditExecution",
     "RealismAuditQuery",
@@ -61,9 +68,12 @@ __all__ = [
     "SeedRefreshResult",
     "SeedRefreshService",
     "build_realism_audit_snapshot_filename",
+    "assess_realism_audit_payload",
+    "default_realism_audit_assessment_thresholds",
     "execution_to_json_ready",
     "execution_to_markdown",
     "format_table",
+    "normalize_realism_audit_assessment_thresholds",
     "resolve_realism_audit_parameters",
     "results_to_json_ready",
     "snapshot_payload_to_markdown",

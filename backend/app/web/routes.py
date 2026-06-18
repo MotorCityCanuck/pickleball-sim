@@ -43,6 +43,8 @@ from app.generation import (
     RealismAuditRunner,
     RealismAuditService,
     SeedRefreshService,
+    default_realism_audit_assessment_thresholds,
+    normalize_realism_audit_assessment_thresholds,
     resolve_realism_audit_parameters,
     save_realism_audit_snapshot,
     snapshot_payload_to_markdown,
@@ -772,6 +774,16 @@ def build_control_panel_router() -> APIRouter:
     def control_panel_realism_audit_run(
         request: Request,
         report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
+        distribution_drift_warning_pct_points: str = Form("5.0"),
+        distribution_drift_error_pct_points: str = Form("10.0"),
+        summary_drift_warning_pct_points: str = Form("5.0"),
+        summary_drift_error_pct_points: str = Form("10.0"),
+        duplicate_full_name_warning_pct: str = Form("1.0"),
+        name_alignment_min_reference_pct: str = Form("90.0"),
+        rating_large_delta_warning_pct: str = Form("1.0"),
+        rating_large_delta_error_pct: str = Form("5.0"),
+        rating_outlier_warning_delta: str = Form("250.0"),
+        unteamed_duration_warning_days: str = Form("30.0"),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
         background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
@@ -779,9 +791,24 @@ def build_control_panel_router() -> APIRouter:
         snapshot = queries.get_control_panel_snapshot(session)
         realism_audit_message = None
         realism_audit_error = None
+        assessment_thresholds = normalize_realism_audit_assessment_thresholds(
+            {
+                "distribution_drift_warning_pct_points": distribution_drift_warning_pct_points,
+                "distribution_drift_error_pct_points": distribution_drift_error_pct_points,
+                "summary_drift_warning_pct_points": summary_drift_warning_pct_points,
+                "summary_drift_error_pct_points": summary_drift_error_pct_points,
+                "duplicate_full_name_warning_pct": duplicate_full_name_warning_pct,
+                "name_alignment_min_reference_pct": name_alignment_min_reference_pct,
+                "rating_large_delta_warning_pct": rating_large_delta_warning_pct,
+                "rating_large_delta_error_pct": rating_large_delta_error_pct,
+                "rating_outlier_warning_delta": rating_outlier_warning_delta,
+                "unteamed_duration_warning_days": unteamed_duration_warning_days,
+            }
+        )
         realism_audit_config = {
             "report_output_dir": report_output_dir.strip()
             or str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+            "assessment_thresholds": assessment_thresholds,
         }
 
         if not snapshot.allowed_actions.can_run_realism_audit:
@@ -806,6 +833,7 @@ def build_control_panel_router() -> APIRouter:
                     session=session,
                     generation_run_id=latest_run_id,
                     batch_id=latest_batch_id,
+                    assessment_thresholds=assessment_thresholds,
                 )
                 session.commit()
                 background_runner.submit(
@@ -1604,6 +1632,7 @@ def _register_realism_audit_job(
     session: Session,
     generation_run_id: int | None,
     batch_id: int | None,
+    assessment_thresholds: dict[str, float] | None = None,
 ) -> JobStatus:
     if session.scalar(
         select(JobStatus.id).where(
@@ -1614,6 +1643,9 @@ def _register_realism_audit_job(
         raise ValueError("A realism audit is already running.")
 
     query_count = len(RealismAuditRunner(session).available_queries())
+    normalized_thresholds = normalize_realism_audit_assessment_thresholds(
+        assessment_thresholds
+    )
     job_status = JobStatus(
         job_type="realism_audit",
         job_id=f"realism-audit-{uuid4().hex[:8]}",
@@ -1637,6 +1669,7 @@ def _register_realism_audit_job(
             progress_unit="query",
             progress_percent=Decimal("0.00"),
             progress_message="Queued realism audit.",
+            metadata_json={"assessment_thresholds": normalized_thresholds},
         )
     )
     session.flush()
@@ -1674,6 +1707,10 @@ def _execute_realism_audit_job(*, session: Session, job_status_id: int) -> None:
     params = resolve_realism_audit_parameters(session)
     query_definitions = query_runner.available_queries()
     total_queries = len(query_definitions)
+    stage_metadata = _coerce_dict(stage_row.metadata_json)
+    assessment_thresholds = normalize_realism_audit_assessment_thresholds(
+        stage_metadata.get("assessment_thresholds")
+    )
 
     job_status.status = "running"
     job_status.current_phase = "running"
@@ -1737,6 +1774,7 @@ def _execute_realism_audit_job(*, session: Session, job_status_id: int) -> None:
         save_realism_audit_snapshot(
             execution,
             snapshot_dir=DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+            assessment_thresholds=assessment_thresholds,
         )
 
         completed_at = _utc_now_naive()
@@ -1970,6 +2008,7 @@ def _build_orchestration_template_context(
             realism_audit_config
             or {
                 "report_output_dir": str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+                "assessment_thresholds": default_realism_audit_assessment_thresholds(),
             }
         ),
         "status_recovery_message": status_recovery_message,
@@ -2014,6 +2053,18 @@ def _realism_audit_markdown_filename(payload: dict[str, object]) -> str:
         else "batch_unknown"
     )
     return f"realism_audit_{run_token}_{batch_token}_{timestamp or 'latest'}.md"
+
+
+def _coerce_dict(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _normalize_control_panel_path(value: str | Path) -> str:

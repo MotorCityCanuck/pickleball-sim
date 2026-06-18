@@ -13,11 +13,14 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.generation import (  # noqa: E402
+    REALISM_AUDIT_QUERIES,
     RealismAuditRunner,
     RealismAuditService,
+    assess_realism_audit_payload,
     execution_to_json_ready,
     resolve_realism_audit_parameters,
     save_realism_audit_snapshot,
+    snapshot_payload_to_markdown,
 )
 
 
@@ -1634,6 +1637,57 @@ def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
     assert payload["batch_month"] == "2026-01-01"
     assert payload["executed_at"].endswith("+00:00")
     assert payload["results"][0]["query"] == "weekend_match_share"
+    assert payload["assessment"]["overall_status"] in {
+        "no_material_issues",
+        "review_recommended",
+        "significant_realism_concerns",
+    }
+
+
+def test_realism_audit_assessment_flags_threshold_findings():
+    payload = {
+        "results": [
+            {
+                "query": "player_gender_distribution",
+                "category": "players",
+                "rows": [
+                    {
+                        "gender": "female",
+                        "player_pct": 62.0,
+                        "configured_pct": 50.0,
+                        "pct_point_drift": 12.0,
+                    }
+                ],
+            },
+            {
+                "query": "daily_team_match_cap_violations",
+                "category": "matches",
+                "rows": [{"team_id": 12, "match_date": "2026-01-04"}],
+            },
+        ]
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+
+    assert assessment["overall_status"] == "significant_realism_concerns"
+    assert assessment["finding_count"] == 2
+    assert assessment["severity_counts"]["error"] == 2
+    assert [finding["query"] for finding in assessment["findings"]] == [
+        "player_gender_distribution",
+        "daily_team_match_cap_violations",
+    ]
+
+
+def test_last_name_alignment_query_avoids_full_reference_materialization():
+    query = next(
+        query
+        for query in REALISM_AUDIT_QUERIES
+        if query.name == "player_last_name_alignment"
+    )
+
+    assert "EXISTS (" in query.sql
+    assert "exact_reference AS" not in query.sql
+    assert "country_reference AS" not in query.sql
 
 
 def test_realism_audit_snapshot_is_saved_with_batch_metadata(session, tmp_path):
@@ -1651,3 +1705,35 @@ def test_realism_audit_snapshot_is_saved_with_batch_metadata(session, tmp_path):
     assert payload["batch_month"] == "2026-01-01"
     assert payload["query_count"] == 1
     assert payload["results"][0]["query"] == "weekend_match_share"
+    assert "assessment" in payload
+
+
+def test_realism_audit_markdown_includes_assessment_findings():
+    payload = {
+        "executed_at": "2026-06-18T12:00:00+00:00",
+        "generation_run_id": 2,
+        "batch_id": 22,
+        "batch_month": "2026-02-01",
+        "results": [
+            {
+                "query": "club_fill_ratio_summary",
+                "scope": "generation_run",
+                "category": "clubs",
+                "description": "Club fill summary.",
+                "rows": [
+                    {
+                        "club_count": 8,
+                        "over_capacity_club_count": 2,
+                        "configured_max_fill_ratio": 1.1,
+                    }
+                ],
+            }
+        ],
+    }
+
+    markdown = snapshot_payload_to_markdown(payload)
+
+    assert "## Assessment Summary" in markdown
+    assert "## Assessment Findings" in markdown
+    assert "Club Fill Ratio Summary" in markdown
+    assert "over capacity" in markdown

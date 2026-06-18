@@ -22,6 +22,13 @@ class LastName(Base, TimestampMixin):
     
     __table_args__ = (
         Index('idx_last_names_lookup', 'country_code', 'state_province_code'),
+        Index(
+            'idx_last_names_state_name_lookup',
+            'country_code',
+            'state_province_code',
+            'last_name',
+        ),
+        Index('idx_last_names_country_name_lookup', 'country_code', 'last_name'),
         Index('idx_last_names_country', 'country_code'),
         CheckConstraint('frequency_count > 0', name='chk_last_names_freq'),
         CheckConstraint("country_code IN ('US', 'CA')", name='chk_last_names_country'),

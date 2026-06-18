@@ -15,6 +15,7 @@ def save_realism_audit_snapshot(
     execution: RealismAuditExecution,
     *,
     snapshot_dir: str | Path = DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
+    assessment_thresholds: dict[str, object] | None = None,
 ) -> Path:
     """Persist one realism-audit execution as a JSON snapshot."""
     base_dir = Path(snapshot_dir)
@@ -22,7 +23,10 @@ def save_realism_audit_snapshot(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     snapshot_path = target_dir / build_realism_audit_snapshot_filename(execution)
-    payload = execution_to_json_ready(execution)
+    payload = execution_to_json_ready(
+        execution,
+        assessment_thresholds=assessment_thresholds,
+    )
     payload["snapshot_path"] = str(snapshot_path)
     payload["snapshot_version"] = 1
     payload["query_count"] = len(execution.results)

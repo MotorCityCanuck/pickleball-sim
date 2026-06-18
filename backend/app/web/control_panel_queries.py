@@ -235,6 +235,18 @@ class StudentDatasetExportSummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditFindingSummary:
+    """UI-ready summary of one realism-audit assessment finding."""
+
+    query: str
+    category: str
+    severity: str
+    title: str
+    summary: str
+    evidence: str
+
+
+@dataclass(frozen=True)
 class RealismAuditSnapshotSummary:
     """UI-ready summary of the latest saved realism-audit snapshot."""
 
@@ -246,6 +258,10 @@ class RealismAuditSnapshotSummary:
     query_count: int
     total_row_count: int
     category_counts: tuple[tuple[str, int], ...]
+    overall_status: str | None
+    finding_count: int
+    severity_counts: tuple[tuple[str, int], ...]
+    top_findings: tuple[RealismAuditFindingSummary, ...]
 
 
 @dataclass(frozen=True)
@@ -839,6 +855,10 @@ class ControlPanelQueries:
                 ) or 0,
                 total_row_count=total_row_count,
                 category_counts=tuple(sorted(category_counts.items())),
+                overall_status=_realism_assessment_status(payload),
+                finding_count=_realism_assessment_finding_count(payload),
+                severity_counts=_realism_assessment_severity_counts(payload),
+                top_findings=_realism_assessment_top_findings(payload),
             )
         return RealismAuditSummary(
             latest_snapshot=snapshot_summary,
@@ -1718,6 +1738,62 @@ def latest_realism_audit_snapshot_payload(
             latest_payload = payload
             latest_sort_key = sort_key
     return latest_payload
+
+
+def _realism_assessment_status(payload: dict[str, object]) -> str | None:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    status = assessment.get("overall_status")
+    return str(status) if status is not None else None
+
+
+def _realism_assessment_finding_count(payload: dict[str, object]) -> int:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    return _coerce_int(assessment.get("finding_count"), default=0) or 0
+
+
+def _realism_assessment_severity_counts(
+    payload: dict[str, object],
+) -> tuple[tuple[str, int], ...]:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    severity_counts = _coerce_mapping(assessment.get("severity_counts"))
+    return tuple(
+        sorted(
+            (
+                str(severity),
+                _coerce_int(count, default=0) or 0,
+            )
+            for severity, count in severity_counts.items()
+        )
+    )
+
+
+def _realism_assessment_top_findings(
+    payload: dict[str, object],
+    *,
+    limit: int = 3,
+) -> tuple[RealismAuditFindingSummary, ...]:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    findings = assessment.get("findings")
+    if not isinstance(findings, list):
+        return ()
+    summaries: list[RealismAuditFindingSummary] = []
+    for finding in findings:
+        mapping = _coerce_mapping(finding)
+        if not mapping:
+            continue
+        summaries.append(
+            RealismAuditFindingSummary(
+                query=str(mapping.get("query") or ""),
+                category=str(mapping.get("category") or "general"),
+                severity=str(mapping.get("severity") or "info"),
+                title=str(mapping.get("title") or mapping.get("query") or "Finding"),
+                summary=str(mapping.get("summary") or ""),
+                evidence=str(mapping.get("evidence") or ""),
+            )
+        )
+        if len(summaries) >= limit:
+            break
+    return tuple(summaries)
 
 
 def _backend_realism_audit_snapshot_candidates(
