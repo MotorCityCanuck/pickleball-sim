@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 import logging
 from pathlib import Path
+import random
 import sys
 
 import pytest
@@ -19,7 +20,16 @@ from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
 from app.generators.games import expected_scores, game_score  # noqa: E402
-from app.generators.matches import _active_teams, _expected_win_probability  # noqa: E402
+from app.generators.matches import (  # noqa: E402
+    ActivePlayerCandidate,
+    ActivePlayerPool,
+    _active_player_pool,
+    _active_teams,
+    _ad_hoc_pair_weight,
+    _expected_win_probability,
+    _prior_player_pair_counts,
+    _sample_ad_hoc_pair_candidates,
+)
 from app.models import (  # noqa: E402
     GenerationRuntimeMetric,
     GenerationRun,
@@ -207,6 +217,8 @@ def session_factory():
                 team_score integer not null,
                 expected_win_probability numeric(8, 4),
                 average_team_rating numeric(8, 3),
+                pairing_source varchar(30),
+                source_team_id bigint,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -433,6 +445,67 @@ def add_historical_match(
     session.commit()
 
 
+def active_player_candidate(
+    player_id,
+    *,
+    rating,
+    region_id=1,
+    gender="M",
+    recent_match_count=0,
+    recent_game_count=0,
+):
+    return ActivePlayerCandidate(
+        id=player_id,
+        gender=gender,
+        region_id=region_id,
+        rating=Decimal(str(rating)),
+        club_ids=frozenset({region_id}),
+        primary_club_ids=frozenset({region_id}),
+        active_team_ids=(),
+        is_teamed=False,
+        recent_match_count=recent_match_count,
+        recent_game_count=recent_game_count,
+    )
+
+
+active_player_candidate.__test__ = False
+
+
+def add_unteamed_players(session, *, generation_run_id, batch_id, count, rating_start=1800):
+    players = []
+    for index in range(count):
+        players.append(
+            Player(
+                first_name=f"Unt{index}",
+                last_name="Eamed",
+                gender="M" if index % 2 == 0 else "F",
+                birth_date=date(1985, 1, 1),
+                home_region_id=1,
+                registration_date=date(2024, 1, 1),
+                player_status="ACTIVE",
+                generation_run_id=generation_run_id,
+            )
+        )
+    session.add_all(players)
+    session.flush()
+    for index, player in enumerate(players):
+        session.add(
+            PlayerRatingHistory(
+                player_id=player.id,
+                rating_date=date(2024, 1, 1),
+                rating_type="initial",
+                rating_value=Decimal(rating_start + index),
+                confidence_score=Decimal("0.2"),
+                batch_id=batch_id,
+            )
+        )
+    session.commit()
+    return players
+
+
+add_unteamed_players.__test__ = False
+
+
 def test_generate_for_batch_creates_matches_teams_players_and_games(session):
     _, batch = seed_match_data(session, team_count=8)
 
@@ -491,6 +564,8 @@ def test_active_teams_include_hidden_bias_context_fields(session):
     second_team = next(team for team in teams if team.player_ids == (3, 4))
 
     assert first_team.avg_age == Decimal("44.00")
+    assert first_team.pairing_source == "competitive_team"
+    assert first_team.source_team_id == first_team.id
     assert first_team.formation_date == date(2024, 1, 1)
     assert first_team.club_ids == frozenset()
     assert first_team.primary_club_ids == frozenset()
@@ -501,6 +576,268 @@ def test_active_teams_include_hidden_bias_context_fields(session):
     assert second_team.team_total_prior_matches == 1
     assert second_team.recent_game_count == 1
     assert second_team.recent_pair_counts == {(3, 4): 1}
+
+
+def test_active_player_pool_includes_unteamed_active_players(session):
+    payload = test_payload()
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=2)
+    batch.batch_month = date(2024, 2, 1)
+    session.commit()
+    add_historical_match(
+        session,
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 1, 1),
+        match_date=date(2024, 1, 25),
+        first_team_player_ids=(1, 2),
+        second_team_player_ids=(3, 4),
+        add_game=True,
+    )
+    unteamed_player = Player(
+        first_name="Unt",
+        last_name="Eamed",
+        gender="F",
+        birth_date=date(1985, 1, 1),
+        home_region_id=2,
+        registration_date=date(2024, 1, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(unteamed_player)
+    session.flush()
+    session.add(
+        PlayerRatingHistory(
+            player_id=unteamed_player.id,
+            rating_date=date(2024, 1, 1),
+            rating_type="initial",
+            rating_value=Decimal("1550"),
+            confidence_score=Decimal("0.2"),
+            batch_id=batch.id,
+        )
+    )
+    session.commit()
+
+    pool = _active_player_pool(
+        session,
+        generation_run.id,
+        batch.batch_month,
+        config=MatchGenerationConfig.from_payload(payload),
+    )
+
+    assert unteamed_player.id in pool.by_id
+    candidate = pool.by_id[unteamed_player.id]
+    assert candidate.gender == "F"
+    assert candidate.region_id == 2
+    assert candidate.rating == Decimal("1550")
+    assert candidate.active_team_ids == ()
+    assert candidate.is_teamed is False
+    assert candidate.recent_match_count == 0
+    assert candidate.recent_game_count == 0
+    assert unteamed_player.id in pool.ids_by_team_status["unteamed"]
+    assert unteamed_player.id in pool.ids_by_region[2]
+    assert unteamed_player.id in pool.ids_by_gender["F"]
+    assert unteamed_player.id in pool.ids_by_rating_band["1500_1749"]
+
+    teamed_candidate = pool.by_id[1]
+    assert teamed_candidate.is_teamed is True
+    assert teamed_candidate.active_team_ids
+    assert teamed_candidate.recent_match_count == 1
+    assert teamed_candidate.recent_game_count == 1
+    assert 1 in pool.ids_by_team_status["teamed"]
+
+
+def test_active_player_pool_excludes_players_without_current_rating(session):
+    payload = test_payload()
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=2)
+    unrated_player = Player(
+        first_name="Un",
+        last_name="Rated",
+        gender="M",
+        birth_date=date(1980, 1, 1),
+        home_region_id=1,
+        registration_date=date(2024, 1, 1),
+        player_status="ACTIVE",
+        generation_run_id=generation_run.id,
+    )
+    session.add(unrated_player)
+    session.commit()
+
+    pool = _active_player_pool(session, generation_run.id, batch.batch_month)
+
+    assert unrated_player.id not in pool.by_id
+    assert set(pool.all_ids) == {1, 2, 3, 4}
+
+
+def test_ad_hoc_sampler_returns_two_unique_non_overlapping_sides():
+    payload = test_payload()
+    config = MatchGenerationConfig.from_payload(payload)
+    pool = ActivePlayerPool(
+        [
+            active_player_candidate(1, rating=1500, gender="M"),
+            active_player_candidate(2, rating=1520, gender="F"),
+            active_player_candidate(3, rating=1510, gender="M"),
+            active_player_candidate(4, rating=1530, gender="F"),
+        ]
+    )
+
+    sampled = _sample_ad_hoc_pair_candidates(
+        random.Random(7),
+        player_pool=pool,
+        match_date=date(2024, 2, 1),
+        match_type="recreational",
+        match_class="casual",
+        player_day_counts={},
+        prior_pair_counts={},
+        config=config,
+    )
+
+    assert sampled is not None
+    first_side, second_side = sampled
+    assert first_side.pairing_source == "ad_hoc"
+    assert second_side.pairing_source == "ad_hoc"
+    assert first_side.source_team_id is None
+    assert second_side.source_team_id is None
+    assert len(set(first_side.player_ids)) == 2
+    assert len(set(second_side.player_ids)) == 2
+    assert set(first_side.player_ids).isdisjoint(second_side.player_ids)
+    assert first_side.average_rating == (
+        sum(rating for _, _, rating in first_side.players) / Decimal("2")
+    ).quantize(Decimal("0.001"))
+
+
+def test_ad_hoc_sampler_respects_player_daily_caps():
+    payload = test_payload()
+    payload["match_scheduling"]["max_daily_matches_per_team"] = 1
+    config = MatchGenerationConfig.from_payload(payload)
+    match_date = date(2024, 2, 1)
+    pool = ActivePlayerPool(
+        [
+            active_player_candidate(1, rating=1500),
+            active_player_candidate(2, rating=1510),
+            active_player_candidate(3, rating=1520),
+            active_player_candidate(4, rating=1530),
+            active_player_candidate(5, rating=1540),
+            active_player_candidate(6, rating=1550),
+        ]
+    )
+
+    sampled = _sample_ad_hoc_pair_candidates(
+        random.Random(3),
+        player_pool=pool,
+        match_date=match_date,
+        match_type="recreational",
+        match_class="casual",
+        player_day_counts={
+            (1, match_date): 1,
+            (2, match_date): 1,
+        },
+        prior_pair_counts={},
+        config=config,
+    )
+
+    assert sampled is not None
+    selected_player_ids = set(sampled[0].player_ids) | set(sampled[1].player_ids)
+    assert 1 not in selected_player_ids
+    assert 2 not in selected_player_ids
+
+
+def test_ad_hoc_sampler_uses_rating_band_when_possible():
+    payload = test_payload()
+    payload["matchmaking"]["rating_band_width"]["recreational"] = 60
+    config = MatchGenerationConfig.from_payload(payload)
+    pool = ActivePlayerPool(
+        [
+            active_player_candidate(1, rating=1500),
+            active_player_candidate(2, rating=1540),
+            active_player_candidate(3, rating=1700),
+            active_player_candidate(4, rating=1740),
+        ]
+    )
+
+    sampled = _sample_ad_hoc_pair_candidates(
+        random.Random(4),
+        player_pool=pool,
+        match_date=date(2024, 2, 1),
+        match_type="recreational",
+        match_class="casual",
+        player_day_counts={},
+        prior_pair_counts={},
+        config=config,
+    )
+
+    assert sampled is not None
+    for side in sampled:
+        ratings = [rating for _, _, rating in side.players]
+        assert abs(ratings[0] - ratings[1]) <= Decimal("60")
+
+
+def test_ad_hoc_pair_weight_prefers_local_pairs():
+    same_region_pair = (
+        active_player_candidate(1, rating=1500, region_id=1),
+        active_player_candidate(2, rating=1510, region_id=1),
+    )
+    cross_region_pair = (
+        active_player_candidate(3, rating=1500, region_id=1),
+        active_player_candidate(4, rating=1510, region_id=2),
+    )
+
+    assert _ad_hoc_pair_weight(
+        same_region_pair,
+        target_rating=None,
+        target_region_id=None,
+        prior_pair_counts={},
+        match_class="casual",
+        band=Decimal("400"),
+    ) > _ad_hoc_pair_weight(
+        cross_region_pair,
+        target_rating=None,
+        target_region_id=None,
+        prior_pair_counts={},
+        match_class="casual",
+        band=Decimal("400"),
+    )
+
+
+def test_prior_player_pair_counts_derive_from_match_history(session):
+    payload = test_payload()
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=2)
+    batch.batch_month = date(2024, 2, 1)
+    session.commit()
+    add_historical_match(
+        session,
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 1, 1),
+        match_date=date(2024, 1, 15),
+        first_team_player_ids=(1, 2),
+        second_team_player_ids=(3, 4),
+    )
+
+    pair_counts = _prior_player_pair_counts(
+        session,
+        generation_run_id=generation_run.id,
+        batch_month=batch.batch_month,
+        player_ids={1, 2, 3, 4},
+    )
+
+    assert pair_counts[(1, 2)] == 1
+    assert pair_counts[(3, 4)] == 1
+
+    pool = _active_player_pool(session, generation_run.id, batch.batch_month)
+    sampled = _sample_ad_hoc_pair_candidates(
+        random.Random(1),
+        player_pool=pool,
+        match_date=batch.batch_month,
+        match_type="recreational",
+        match_class="casual",
+        player_day_counts={},
+        prior_pair_counts=pair_counts,
+        config=MatchGenerationConfig.from_payload(payload),
+    )
+
+    assert sampled is not None
+    assert all(
+        side.recent_pair_counts[side.player_ids] == side.team_total_prior_matches
+        for side in sampled
+    )
 
 
 def test_generate_for_batch_uses_visible_probability_when_hidden_bias_disabled(session):
@@ -520,6 +857,80 @@ def test_generate_for_batch_uses_visible_probability_when_hidden_bias_disabled(s
     match = session.query(Match).one()
     expected_winner = 1 if expected_probability >= Decimal("0.5") else 2
     assert match.predicted_winning_team_number == expected_winner
+
+
+def test_generate_for_batch_persists_competitive_team_source_metadata(session):
+    payload = test_payload()
+    _, batch = seed_match_data(session, payload=payload, team_count=4)
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    source_rosters = {
+        team_id: tuple(sorted(player_id for player_id, in rows))
+        for team_id, rows in (
+            (
+                team.id,
+                session.query(TeamMembership.player_id)
+                .where(TeamMembership.team_id == team.id)
+                .all(),
+            )
+            for team in session.query(Team)
+        )
+    }
+    match_teams = session.query(MatchTeam).all()
+
+    assert match_teams
+    assert {match_team.pairing_source for match_team in match_teams} == {
+        "competitive_team"
+    }
+    assert all(match_team.source_team_id is not None for match_team in match_teams)
+    for match_team in match_teams:
+        assert tuple(sorted(player.player_id for player in match_team.players)) == (
+            source_rosters[match_team.source_team_id]
+        )
+
+
+def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enabled(
+    session,
+):
+    payload = test_payload()
+    payload["match_scheduling"]["matches_per_team_per_month"] = 2
+    payload["match_scheduling"]["max_daily_matches_per_team"] = 4
+    payload["matchmaking"]["pairing_source_overrides_by_type"] = {
+        "recreational": {
+            "competitive_team": 0.0,
+            "ad_hoc": 1.0,
+        },
+    }
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=8)
+    unteamed_players = add_unteamed_players(
+        session,
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        count=20,
+    )
+    unteamed_player_ids = {player.id for player in unteamed_players}
+
+    result = MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    assert result.match_count > 0
+    ad_hoc_match_teams = (
+        session.query(MatchTeam)
+        .where(MatchTeam.pairing_source == "ad_hoc")
+        .all()
+    )
+    assert ad_hoc_match_teams
+    assert all(match_team.source_team_id is None for match_team in ad_hoc_match_teams)
+    ad_hoc_player_ids = {
+        player.player_id
+        for match_team in ad_hoc_match_teams
+        for player in match_team.players
+    }
+    assert ad_hoc_player_ids & unteamed_player_ids
+    assert all(
+        len({match_team.pairing_source for match_team in match.match_teams}) == 1
+        for match in session.query(Match).where(Match.batch_id == batch.id)
+    )
 
 
 def test_generate_for_batch_applies_hidden_bias_to_prediction_only(session):
@@ -671,6 +1082,8 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         "load_active_teams",
         "calculate_team_targets",
         "load_recent_pair_dates",
+        "load_active_player_pool",
+        "load_prior_player_pair_counts",
         "planning",
         "planning_under_target_maintenance",
         "planning_first_team_selection",
@@ -937,6 +1350,98 @@ def test_config_validates_rematch_penalty_window_days():
     payload["matchmaking"]["rematch_penalty_window_days"] = -1
 
     with pytest.raises(ValueError, match="rematch_penalty_window_days"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_parses_match_class_and_pairing_source_defaults():
+    config = MatchGenerationConfig.from_payload(test_payload())
+
+    assert config.match_class_by_type == {
+        "recreational": "casual",
+        "clinic": "casual",
+        "challenge": "semi_competitive",
+        "ladder": "semi_competitive",
+        "league": "competitive",
+        "tournament": "competitive",
+    }
+    assert config.pairing_source_weights_by_class["casual"] == (
+        ("competitive_team", Decimal("1.0")),
+        ("ad_hoc", Decimal("0.0")),
+    )
+    assert config.pairing_source_weights_by_class["semi_competitive"] == (
+        ("competitive_team", Decimal("1.0")),
+        ("ad_hoc", Decimal("0.0")),
+    )
+    assert config.pairing_source_weights_by_class["competitive"] == (
+        ("competitive_team", Decimal("1.0")),
+        ("ad_hoc", Decimal("0.0")),
+    )
+    assert config.pairing_source_overrides_by_type["clinic"] == (
+        ("competitive_team", Decimal("1.0")),
+        ("ad_hoc", Decimal("0.0")),
+    )
+    assert config.pairing_source_overrides_by_type["tournament"] == (
+        ("competitive_team", Decimal("1.0")),
+        ("ad_hoc", Decimal("0.0")),
+    )
+
+
+def test_config_parses_match_class_and_pairing_source_overrides():
+    payload = test_payload()
+    payload["match_types"]["class_by_type"]["challenge"] = "competitive"
+    payload["matchmaking"]["pairing_source_weights_by_class"]["casual"] = {
+        "competitive_team": 0.25,
+        "ad_hoc": 0.75,
+    }
+    payload["matchmaking"]["pairing_source_overrides_by_type"] = {
+        "recreational": {
+            "competitive_team": 0.05,
+            "ad_hoc": 0.95,
+        },
+    }
+
+    config = MatchGenerationConfig.from_payload(payload)
+
+    assert config.match_class_by_type["challenge"] == "competitive"
+    assert config.pairing_source_weights_by_class["casual"] == (
+        ("competitive_team", Decimal("0.25")),
+        ("ad_hoc", Decimal("0.75")),
+    )
+    assert config.pairing_source_overrides_by_type == {
+        "recreational": (
+            ("competitive_team", Decimal("0.05")),
+            ("ad_hoc", Decimal("0.95")),
+        ),
+    }
+
+
+def test_config_validates_match_class_values():
+    payload = test_payload()
+    payload["match_types"]["class_by_type"]["recreational"] = "social"
+
+    with pytest.raises(ValueError, match="match_types.class_by_type.recreational"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_pairing_source_names():
+    payload = test_payload()
+    payload["matchmaking"]["pairing_source_weights_by_class"]["casual"] = {
+        "competitive_team": 0.5,
+        "walkup": 0.5,
+    }
+
+    with pytest.raises(ValueError, match="unsupported pairing sources: walkup"):
+        MatchGenerationConfig.from_payload(payload)
+
+
+def test_config_validates_pairing_source_weight_sums():
+    payload = test_payload()
+    payload["matchmaking"]["pairing_source_overrides_by_type"]["clinic"] = {
+        "competitive_team": 0.6,
+        "ad_hoc": 0.6,
+    }
+
+    with pytest.raises(ValueError, match="pairing_source_overrides_by_type.clinic"):
         MatchGenerationConfig.from_payload(payload)
 
 

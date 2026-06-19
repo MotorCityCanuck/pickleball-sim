@@ -276,9 +276,29 @@
     }
     #config-tab-panel .config-section-summary-row {
         display: flex;
-        justify-content: space-between;
         gap: 12px;
         align-items: flex-start;
+    }
+    #config-tab-panel .config-section-summary-title {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    #config-tab-panel .config-section-caret {
+        width: 0;
+        height: 0;
+        margin-top: 5px;
+        border-top: 6px solid transparent;
+        border-bottom: 6px solid transparent;
+        border-left: 8px solid #1d2433;
+        flex: 0 0 auto;
+        transition: transform 0.16s ease;
+        transform-origin: 35% 50%;
+    }
+    #config-tab-panel .config-section-card[open] .config-section-caret {
+        transform: rotate(90deg);
     }
     #config-tab-panel .config-section-summary-meta {
         display: flex;
@@ -534,11 +554,13 @@
                         >
                             <summary class="config-section-summary">
                                 <div class="config-section-summary-row">
-                                    <div>
-                                        <div style="font-size:17px; font-weight:600; color:{% if issue_count > 0 %}#8f1d18{% else %}#1d2433{% endif %};">{{ section.definition.title }}</div>
-                                        <div style="margin-top:4px; color:#5a6477;">{{ section.definition.description }}</div>
+                                    <div class="config-section-summary-title">
+                                        <span class="config-section-caret" aria-hidden="true"></span>
+                                        <div>
+                                            <div style="font-size:17px; font-weight:600; color:{% if issue_count > 0 %}#8f1d18{% else %}#1d2433{% endif %};">{{ section.definition.title }}</div>
+                                            <div style="margin-top:4px; color:#5a6477;">{{ section.definition.description }}</div>
+                                        </div>
                                     </div>
-                                    <div style="font-size:12px; color:#5a6477; white-space:nowrap;">Click to expand</div>
                                 </div>
                                 <div class="config-section-summary-meta">
                                     <span class="config-section-chip">{{ field_count }} fields</span>

@@ -229,7 +229,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "chk_game_winning_team",
     },
     "match_team_players": {"chk_player_position"},
-    "match_teams": {"chk_team_number"},
+    "match_teams": {"chk_match_team_pairing_source", "chk_team_number"},
     "matches": {"chk_match_predicted_winning_team", "chk_match_type"},
     "monthly_batches": {"chk_batch_type", "chk_processing_status"},
     "player_assessment_history": {"chk_assessment_confidence"},
@@ -389,7 +389,7 @@ EXPECTED_FOREIGN_KEYS = {
         "match_team_id->match_teams.id",
         "player_id->players.id",
     },
-    "match_teams": {"match_id->matches.id"},
+    "match_teams": {"match_id->matches.id", "source_team_id->teams.id"},
     "matches": {
         "batch_id->monthly_batches.id",
         "region_id->regions.id",

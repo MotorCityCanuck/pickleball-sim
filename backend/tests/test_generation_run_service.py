@@ -388,6 +388,8 @@ def session():
                 match_id bigint not null,
                 team_number integer,
                 team_score integer,
+                pairing_source varchar(30),
+                source_team_id bigint,
                 foreign key(match_id) references matches(id)
             )
             """

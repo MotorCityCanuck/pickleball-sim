@@ -574,7 +574,11 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         name="player_roster_summary",
         scope="generation_run",
         category="players",
-        description="Top-line player, status, and club-affiliation counts for one generation run.",
+        description=(
+            "Top-line player, status, and club-affiliation counts for one "
+            "generation run. Club unaffiliated status is descriptive and does "
+            "not imply match ineligibility."
+        ),
         sql="""
             WITH membership_counts AS (
                 SELECT
@@ -900,7 +904,11 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         name="club_membership_summary",
         scope="generation_run",
         category="clubs",
-        description="Observed club-membership summary versus configured unaffiliated and multi-club targets.",
+        description=(
+            "Observed club-membership summary versus configured unaffiliated "
+            "and multi-club targets. Unaffiliated players can still be eligible "
+            "for ad hoc matches."
+        ),
         sql="""
             WITH player_membership_counts AS (
                 SELECT
@@ -973,7 +981,11 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         name="club_primary_membership_integrity",
         scope="generation_run",
         category="clubs",
-        description="Primary-club membership integrity summary for one generation run.",
+        description=(
+            "Primary-club membership summary for one generation run. Zero "
+            "primary memberships represent unaffiliated players; multiple "
+            "primary memberships are integrity issues."
+        ),
         sql="""
             WITH primary_membership_counts AS (
                 SELECT
@@ -1265,6 +1277,90 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("matches", "distribution"),
         related_config_keys=("match_types.weights",),
         post_process=_post_process_match_type_distribution,
+    ),
+    RealismAuditQuery(
+        name="match_team_pairing_source_distribution",
+        scope="batch",
+        category="matches",
+        description="Observed match-team source mix for one monthly batch.",
+        sql={
+            "postgresql": """
+                WITH source_rows AS (
+                    SELECT
+                        COALESCE(to_jsonb(mt) ->> 'pairing_source', 'unknown') AS pairing_source,
+                        NULLIF(to_jsonb(mt) ->> 'source_team_id', '') AS source_team_id
+                    FROM match_teams mt
+                    JOIN matches m
+                        ON m.id = mt.match_id
+                    WHERE m.batch_id = :batch_id
+                ),
+                source_counts AS (
+                    SELECT
+                        pairing_source,
+                        COUNT(*) AS match_team_count,
+                        SUM(CASE WHEN source_team_id IS NOT NULL THEN 1 ELSE 0 END) AS source_team_count
+                    FROM source_rows
+                    GROUP BY pairing_source
+                )
+                SELECT
+                    pairing_source,
+                    match_team_count,
+                    ROUND(
+                        100.0 * match_team_count / NULLIF(SUM(match_team_count) OVER (), 0),
+                        2
+                    ) AS match_team_pct,
+                    source_team_count,
+                    ROUND(
+                        100.0 * source_team_count / NULLIF(match_team_count, 0),
+                        2
+                    ) AS source_team_pct
+                FROM source_counts
+                ORDER BY
+                    CASE pairing_source
+                        WHEN 'competitive_team' THEN 0
+                        WHEN 'ad_hoc' THEN 1
+                        ELSE 2
+                    END
+            """,
+            "default": """
+                WITH source_counts AS (
+                    SELECT
+                        COALESCE(mt.pairing_source, 'unknown') AS pairing_source,
+                        COUNT(*) AS match_team_count,
+                        SUM(CASE WHEN mt.source_team_id IS NOT NULL THEN 1 ELSE 0 END) AS source_team_count
+                    FROM match_teams mt
+                    JOIN matches m
+                        ON m.id = mt.match_id
+                    WHERE m.batch_id = :batch_id
+                    GROUP BY COALESCE(mt.pairing_source, 'unknown')
+                )
+                SELECT
+                    pairing_source,
+                    match_team_count,
+                    ROUND(
+                        100.0 * match_team_count / NULLIF(SUM(match_team_count) OVER (), 0),
+                        2
+                    ) AS match_team_pct,
+                    source_team_count,
+                    ROUND(
+                        100.0 * source_team_count / NULLIF(match_team_count, 0),
+                        2
+                    ) AS source_team_pct
+                FROM source_counts
+                ORDER BY
+                    CASE pairing_source
+                        WHEN 'competitive_team' THEN 0
+                        WHEN 'ad_hoc' THEN 1
+                        ELSE 2
+                    END
+            """,
+        },
+        required_params=("batch_id",),
+        tags=("matches", "teams", "pairing_source"),
+        related_config_keys=(
+            "matchmaking.pairing_source_weights_by_class",
+            "matchmaking.pairing_source_overrides_by_type",
+        ),
     ),
     RealismAuditQuery(
         name="match_day_of_week_distribution",
@@ -1685,103 +1781,258 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         name="repeat_partner_match_distribution",
         scope="batch",
         category="matches",
-        description="Distribution of prior same-partner match counts for match-team rosters in the audited batch.",
-        sql="""
-            WITH ordered_batches AS (
-                SELECT
-                    b.id AS batch_id,
-                    b.generation_run_id,
-                    b.batch_month,
-                    ROW_NUMBER() OVER (
-                        ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
-                    ) AS batch_ordinal
-                FROM monthly_batches b
-                WHERE b.generation_run_id = (
-                    SELECT generation_run_id
-                    FROM monthly_batches
-                    WHERE id = :batch_id
+        description=(
+            "Distribution of prior same-partner match counts for audited "
+            "match-team rosters, grouped by pairing source and match class."
+        ),
+        sql={
+            "postgresql": """
+                WITH ordered_batches AS (
+                    SELECT
+                        b.id AS batch_id,
+                        b.generation_run_id,
+                        b.batch_month,
+                        ROW_NUMBER() OVER (
+                            ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                        ) AS batch_ordinal
+                    FROM monthly_batches b
+                    WHERE b.generation_run_id = (
+                        SELECT generation_run_id
+                        FROM monthly_batches
+                        WHERE id = :batch_id
+                    )
+                ),
+                batch_context AS (
+                    SELECT
+                        batch_id,
+                        generation_run_id,
+                        batch_month,
+                        batch_ordinal
+                    FROM ordered_batches
+                    WHERE batch_id = :batch_id
+                ),
+                current_match_team_rosters AS (
+                    SELECT
+                        mt.id AS match_team_id,
+                        COALESCE(to_jsonb(mt) ->> 'pairing_source', 'unknown') AS pairing_source,
+                        CASE
+                            WHEN m.match_type IN ('recreational', 'clinic') THEN 'casual'
+                            WHEN m.match_type IN ('challenge', 'ladder') THEN 'semi_competitive'
+                            WHEN m.match_type IN ('league', 'tournament') THEN 'competitive'
+                            ELSE 'unknown'
+                        END AS match_class,
+                        CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                    FROM matches m
+                    JOIN match_teams mt
+                        ON mt.match_id = m.id
+                    JOIN match_team_players mtp
+                        ON mtp.match_team_id = mt.id
+                    WHERE m.batch_id = :batch_id
+                    GROUP BY mt.id, COALESCE(to_jsonb(mt) ->> 'pairing_source', 'unknown'), m.match_type
+                ),
+                prior_match_team_rosters AS (
+                    SELECT
+                        CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                    FROM batch_context bc
+                    JOIN ordered_batches ob
+                        ON ob.generation_run_id = bc.generation_run_id
+                        AND ob.batch_ordinal < bc.batch_ordinal
+                    JOIN matches m
+                        ON m.batch_id = ob.batch_id
+                    JOIN match_teams mt
+                        ON mt.match_id = m.id
+                    JOIN match_team_players mtp
+                        ON mtp.match_team_id = mt.id
+                    GROUP BY mt.id
+                ),
+                prior_roster_counts AS (
+                    SELECT
+                        roster_key,
+                        COUNT(*) AS prior_match_count
+                    FROM prior_match_team_rosters
+                    GROUP BY roster_key
+                ),
+                prior_pair_counts AS (
+                    SELECT
+                        cmtr.match_team_id,
+                        cmtr.pairing_source,
+                        cmtr.match_class,
+                        COALESCE(prc.prior_match_count, 0) AS prior_match_count
+                    FROM current_match_team_rosters cmtr
+                    LEFT JOIN prior_roster_counts prc
+                        ON prc.roster_key = cmtr.roster_key
+                ),
+                bucketed AS (
+                    SELECT
+                        CASE
+                            WHEN prior_match_count = 0 THEN '0'
+                            WHEN prior_match_count <= 2 THEN '1_2'
+                            WHEN prior_match_count <= 5 THEN '3_5'
+                            ELSE '6_plus'
+                        END AS prior_match_count_bucket,
+                        pairing_source,
+                        match_class,
+                        prior_match_count
+                    FROM prior_pair_counts
                 )
-            ),
-            batch_context AS (
                 SELECT
-                    batch_id,
-                    generation_run_id,
-                    batch_month,
-                    batch_ordinal
-                FROM ordered_batches
-                WHERE batch_id = :batch_id
-            ),
-            current_match_team_rosters AS (
+                    pairing_source,
+                    match_class,
+                    prior_match_count_bucket,
+                    COUNT(*) AS match_team_count,
+                    ROUND(
+                        100.0 * COUNT(*) / NULLIF(
+                            SUM(COUNT(*)) OVER (PARTITION BY pairing_source, match_class),
+                            0
+                        ),
+                        2
+                    ) AS match_team_pct_within_source_class,
+                    ROUND(AVG(prior_match_count), 2) AS avg_prior_match_count
+                FROM bucketed
+                GROUP BY pairing_source, match_class, prior_match_count_bucket
+                ORDER BY
+                    CASE pairing_source
+                        WHEN 'competitive_team' THEN 0
+                        WHEN 'ad_hoc' THEN 1
+                        ELSE 2
+                    END,
+                    CASE match_class
+                        WHEN 'casual' THEN 0
+                        WHEN 'semi_competitive' THEN 1
+                        WHEN 'competitive' THEN 2
+                        ELSE 3
+                    END,
+                    CASE prior_match_count_bucket
+                        WHEN '0' THEN 0
+                        WHEN '1_2' THEN 1
+                        WHEN '3_5' THEN 2
+                        ELSE 3
+                    END
+            """,
+            "default": """
+                WITH ordered_batches AS (
+                    SELECT
+                        b.id AS batch_id,
+                        b.generation_run_id,
+                        b.batch_month,
+                        ROW_NUMBER() OVER (
+                            ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+                        ) AS batch_ordinal
+                    FROM monthly_batches b
+                    WHERE b.generation_run_id = (
+                        SELECT generation_run_id
+                        FROM monthly_batches
+                        WHERE id = :batch_id
+                    )
+                ),
+                batch_context AS (
+                    SELECT
+                        batch_id,
+                        generation_run_id,
+                        batch_month,
+                        batch_ordinal
+                    FROM ordered_batches
+                    WHERE batch_id = :batch_id
+                ),
+                current_match_team_rosters AS (
+                    SELECT
+                        mt.id AS match_team_id,
+                        COALESCE(mt.pairing_source, 'unknown') AS pairing_source,
+                        CASE
+                            WHEN m.match_type IN ('recreational', 'clinic') THEN 'casual'
+                            WHEN m.match_type IN ('challenge', 'ladder') THEN 'semi_competitive'
+                            WHEN m.match_type IN ('league', 'tournament') THEN 'competitive'
+                            ELSE 'unknown'
+                        END AS match_class,
+                        CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                    FROM matches m
+                    JOIN match_teams mt
+                        ON mt.match_id = m.id
+                    JOIN match_team_players mtp
+                        ON mtp.match_team_id = mt.id
+                    WHERE m.batch_id = :batch_id
+                    GROUP BY mt.id, mt.pairing_source, m.match_type
+                ),
+                prior_match_team_rosters AS (
+                    SELECT
+                        CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                    FROM batch_context bc
+                    JOIN ordered_batches ob
+                        ON ob.generation_run_id = bc.generation_run_id
+                        AND ob.batch_ordinal < bc.batch_ordinal
+                    JOIN matches m
+                        ON m.batch_id = ob.batch_id
+                    JOIN match_teams mt
+                        ON mt.match_id = m.id
+                    JOIN match_team_players mtp
+                        ON mtp.match_team_id = mt.id
+                    GROUP BY mt.id
+                ),
+                prior_roster_counts AS (
+                    SELECT
+                        roster_key,
+                        COUNT(*) AS prior_match_count
+                    FROM prior_match_team_rosters
+                    GROUP BY roster_key
+                ),
+                prior_pair_counts AS (
+                    SELECT
+                        cmtr.match_team_id,
+                        cmtr.pairing_source,
+                        cmtr.match_class,
+                        COALESCE(prc.prior_match_count, 0) AS prior_match_count
+                    FROM current_match_team_rosters cmtr
+                    LEFT JOIN prior_roster_counts prc
+                        ON prc.roster_key = cmtr.roster_key
+                ),
+                bucketed AS (
+                    SELECT
+                        CASE
+                            WHEN prior_match_count = 0 THEN '0'
+                            WHEN prior_match_count <= 2 THEN '1_2'
+                            WHEN prior_match_count <= 5 THEN '3_5'
+                            ELSE '6_plus'
+                        END AS prior_match_count_bucket,
+                        pairing_source,
+                        match_class,
+                        prior_match_count
+                    FROM prior_pair_counts
+                )
                 SELECT
-                    mt.id AS match_team_id,
-                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
-                FROM matches m
-                JOIN match_teams mt
-                    ON mt.match_id = m.id
-                JOIN match_team_players mtp
-                    ON mtp.match_team_id = mt.id
-                WHERE m.batch_id = :batch_id
-                GROUP BY mt.id
-            ),
-            prior_match_team_rosters AS (
-                SELECT
-                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
-                FROM batch_context bc
-                JOIN ordered_batches ob
-                    ON ob.generation_run_id = bc.generation_run_id
-                    AND ob.batch_ordinal < bc.batch_ordinal
-                JOIN matches m
-                    ON m.batch_id = ob.batch_id
-                JOIN match_teams mt
-                    ON mt.match_id = m.id
-                JOIN match_team_players mtp
-                    ON mtp.match_team_id = mt.id
-                GROUP BY mt.id
-            ),
-            prior_roster_counts AS (
-                SELECT
-                    roster_key,
-                    COUNT(*) AS prior_match_count
-                FROM prior_match_team_rosters
-                GROUP BY roster_key
-            ),
-            prior_pair_counts AS (
-                SELECT
-                    cmtr.match_team_id,
-                    COALESCE(prc.prior_match_count, 0) AS prior_match_count
-                FROM current_match_team_rosters cmtr
-                LEFT JOIN prior_roster_counts prc
-                    ON prc.roster_key = cmtr.roster_key
-            ),
-            bucketed AS (
-                SELECT
-                    CASE
-                        WHEN prior_match_count = 0 THEN '0'
-                        WHEN prior_match_count <= 2 THEN '1_2'
-                        WHEN prior_match_count <= 5 THEN '3_5'
-                        ELSE '6_plus'
-                    END AS prior_match_count_bucket,
-                    prior_match_count
-                FROM prior_pair_counts
-            )
-            SELECT
-                prior_match_count_bucket,
-                COUNT(*) AS team_count,
-                ROUND(
-                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
-                    2
-                ) AS team_pct,
-                ROUND(AVG(prior_match_count), 2) AS avg_prior_match_count
-            FROM bucketed
-            GROUP BY prior_match_count_bucket
-            ORDER BY
-                CASE prior_match_count_bucket
-                    WHEN '0' THEN 0
-                    WHEN '1_2' THEN 1
-                    WHEN '3_5' THEN 2
-                    ELSE 3
-                END
-        """,
+                    pairing_source,
+                    match_class,
+                    prior_match_count_bucket,
+                    COUNT(*) AS match_team_count,
+                    ROUND(
+                        100.0 * COUNT(*) / NULLIF(
+                            SUM(COUNT(*)) OVER (PARTITION BY pairing_source, match_class),
+                            0
+                        ),
+                        2
+                    ) AS match_team_pct_within_source_class,
+                    ROUND(AVG(prior_match_count), 2) AS avg_prior_match_count
+                FROM bucketed
+                GROUP BY pairing_source, match_class, prior_match_count_bucket
+                ORDER BY
+                    CASE pairing_source
+                        WHEN 'competitive_team' THEN 0
+                        WHEN 'ad_hoc' THEN 1
+                        ELSE 2
+                    END,
+                    CASE match_class
+                        WHEN 'casual' THEN 0
+                        WHEN 'semi_competitive' THEN 1
+                        WHEN 'competitive' THEN 2
+                        ELSE 3
+                    END,
+                    CASE prior_match_count_bucket
+                        WHEN '0' THEN 0
+                        WHEN '1_2' THEN 1
+                        WHEN '3_5' THEN 2
+                        ELSE 3
+                    END
+            """,
+        },
         required_params=("batch_id",),
         tags=("matches", "teams", "persistence"),
     ),
@@ -1869,9 +2120,9 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         scope="batch",
         category="matches",
         description=(
-            "Zero-match active players split by active team-roster status in the "
-            "batch month. In doubles-only simulation, unteamed players are not "
-            "match-eligible, so this is primarily a roster-readiness audit."
+            "Zero-match active players split by active competitive-team roster "
+            "status in the batch month. Untyped or unteamed players may still "
+            "be match-eligible through ad hoc pairing when that source is enabled."
         ),
         sql="""
             WITH batch_context AS (
@@ -1947,12 +2198,95 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("matches", "cadence", "players", "teams"),
     ),
     RealismAuditQuery(
+        name="zero_match_players_by_competitive_team_status",
+        scope="batch",
+        category="matches",
+        description=(
+            "Zero-match active players grouped by whether they are currently on "
+            "a formal competitive team. This does not treat unteamed players as "
+            "match-ineligible because ad hoc pairing may serve them."
+        ),
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            competitive_team_players AS (
+                SELECT DISTINCT
+                    tm.player_id
+                FROM batch_context bc
+                JOIN teams t
+                    ON t.generation_run_id = bc.generation_run_id
+                    AND t.team_status = 'active'
+                    AND t.formation_date <= bc.batch_month
+                    AND (t.dissolution_date IS NULL OR t.dissolution_date > bc.batch_month)
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.joined_date <= bc.batch_month
+                    AND (tm.left_date IS NULL OR tm.left_date > bc.batch_month)
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id,
+                    CASE
+                        WHEN ctp.player_id IS NULL THEN 'not_on_competitive_team'
+                        ELSE 'on_competitive_team'
+                    END AS competitive_team_status
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                LEFT JOIN competitive_team_players ctp
+                    ON ctp.player_id = p.id
+                WHERE p.player_status = 'ACTIVE'
+                    AND p.registration_date <= bc.batch_month
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    ap.competitive_team_status,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id, ap.competitive_team_status
+            )
+            SELECT
+                competitive_team_status,
+                COUNT(*) AS active_player_count,
+                SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END) AS zero_match_player_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS zero_match_player_pct
+            FROM player_match_counts
+            GROUP BY competitive_team_status
+            ORDER BY
+                CASE competitive_team_status
+                    WHEN 'on_competitive_team' THEN 0
+                    ELSE 1
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "cadence", "players", "teams", "pairing_source"),
+    ),
+    RealismAuditQuery(
         name="team_assignment_delay_summary",
         scope="batch",
         category="teams",
         description=(
-            "Average time from player registration to first team assignment, plus "
-            "the current unteamed inventory as of the audited batch."
+            "Average time from player registration to first formal competitive "
+            "team assignment, plus the current non-formal-team inventory as of "
+            "the audited batch."
         ),
         sql={
             "sqlite": """
@@ -2105,6 +2439,87 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         },
         required_params=("batch_id",),
         tags=("teams", "players", "registrations"),
+    ),
+    RealismAuditQuery(
+        name="zero_match_players_by_ad_hoc_eligibility",
+        scope="batch",
+        category="matches",
+        description=(
+            "Zero-match active players split by whether they have the minimum "
+            "data needed for ad hoc pairing: active status, registration by "
+            "batch month, and a latest rating as of the batch."
+        ),
+        sql="""
+            WITH batch_context AS (
+                SELECT
+                    b.id AS batch_id,
+                    b.generation_run_id,
+                    b.batch_month
+                FROM monthly_batches b
+                WHERE b.id = :batch_id
+            ),
+            latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN batch_context bc
+                    ON prh.rating_date <= bc.batch_month
+            ),
+            active_players AS (
+                SELECT
+                    p.id AS player_id,
+                    CASE
+                        WHEN lr.player_id IS NULL THEN 'missing_current_rating'
+                        ELSE 'ad_hoc_eligible'
+                    END AS ad_hoc_eligibility_status
+                FROM players p
+                JOIN batch_context bc
+                    ON bc.generation_run_id = p.generation_run_id
+                LEFT JOIN latest_ratings lr
+                    ON lr.player_id = p.id
+                    AND lr.rating_rank = 1
+                WHERE p.player_status = 'ACTIVE'
+                    AND p.registration_date <= bc.batch_month
+            ),
+            player_match_counts AS (
+                SELECT
+                    ap.player_id,
+                    ap.ad_hoc_eligibility_status,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM active_players ap
+                LEFT JOIN match_team_players mtp
+                    ON mtp.player_id = ap.player_id
+                LEFT JOIN match_teams mt
+                    ON mt.id = mtp.match_team_id
+                LEFT JOIN matches m
+                    ON m.id = mt.match_id
+                    AND m.batch_id = :batch_id
+                GROUP BY ap.player_id, ap.ad_hoc_eligibility_status
+            )
+            SELECT
+                ad_hoc_eligibility_status,
+                COUNT(*) AS active_player_count,
+                SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END) AS zero_match_player_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN match_count = 0 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS zero_match_player_pct
+            FROM player_match_counts
+            GROUP BY ad_hoc_eligibility_status
+            ORDER BY
+                CASE ad_hoc_eligibility_status
+                    WHEN 'ad_hoc_eligible' THEN 0
+                    ELSE 1
+                END
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "cadence", "players", "pairing_source", "ad_hoc"),
     ),
     RealismAuditQuery(
         name="zero_match_players_by_club_affiliation",

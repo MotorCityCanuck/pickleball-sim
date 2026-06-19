@@ -287,14 +287,14 @@ def _assess_team_readiness(
         if unresolved > 0 or max_days >= warning:
             return (
                 "warning",
-                "Some players remain unteamed or waited longer than the assessment tolerance.",
-                f"{int(unresolved)} players are still unteamed; max unteamed duration is {max_days:.0f} days.",
-                "Review team assignment capacity and roster eligibility rules for the audited batch.",
+                "Some players remain outside formal competitive teams or waited longer than the assessment tolerance.",
+                f"{int(unresolved)} players are not on a formal team; max time outside a formal team is {max_days:.0f} days.",
+                "Review competitive-team assignment capacity separately from ad hoc match eligibility.",
             )
         return (
             "info",
-            "Team assignment delay is within the assessment tolerance.",
-            f"Max unteamed duration is {max_days:.0f} days.",
+            "Formal team assignment delay is within the assessment tolerance.",
+            f"Max time outside a formal team is {max_days:.0f} days.",
             "No action required.",
         )
     return None
@@ -355,14 +355,13 @@ def _assess_integrity_counts(
     if query_name == "club_primary_membership_integrity":
         issue_count = 0
         for row in rows:
-            for key in ("zero_primary_player_count", "multi_primary_player_count"):
-                issue_count += int(_to_float(row.get(key)) or 0)
+            issue_count += int(_to_float(row.get("multi_primary_player_count")) or 0)
         if issue_count:
             return (
                 "error",
                 "Primary club membership integrity issues were found.",
-                f"{issue_count} player integrity issue{'s' if issue_count != 1 else ''} reported.",
-                "Fix primary-club assignment logic or review the generated memberships before export.",
+                f"{issue_count} player{'s' if issue_count != 1 else ''} have multiple primary club memberships.",
+                "Fix multi-primary club assignment logic or review the generated memberships before export.",
             )
     if query_name == "daily_team_match_cap_violations" and rows:
         return (

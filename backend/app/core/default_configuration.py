@@ -230,6 +230,14 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
             "challenge": 0.04,
             "clinic": 0.01,
         },
+        "class_by_type": {
+            "recreational": "casual",
+            "clinic": "casual",
+            "challenge": "semi_competitive",
+            "ladder": "semi_competitive",
+            "league": "competitive",
+            "tournament": "competitive",
+        },
     },
     "matchmaking": {
         "rating_band_width": {
@@ -251,6 +259,30 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
             "slight_mismatch": 0.25,
             "significant_mismatch": 0.08,
             "chaos": 0.02,
+        },
+        "pairing_source_weights_by_class": {
+            "casual": {
+                "competitive_team": 1.0,
+                "ad_hoc": 0.0,
+            },
+            "semi_competitive": {
+                "competitive_team": 1.0,
+                "ad_hoc": 0.0,
+            },
+            "competitive": {
+                "competitive_team": 1.0,
+                "ad_hoc": 0.0,
+            },
+        },
+        "pairing_source_overrides_by_type": {
+            "clinic": {
+                "competitive_team": 1.0,
+                "ad_hoc": 0.0,
+            },
+            "tournament": {
+                "competitive_team": 1.0,
+                "ad_hoc": 0.0,
+            },
         },
     },
     "games_and_scores": {

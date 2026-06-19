@@ -747,12 +747,16 @@ CREATE TABLE match_teams (
 	team_score INTEGER NOT NULL, 
 	expected_win_probability NUMERIC(8, 4), 
 	average_team_rating NUMERIC(8, 3), 
+	pairing_source VARCHAR(30), 
+	source_team_id BIGINT, 
 	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	PRIMARY KEY (id), 
 	CONSTRAINT chk_team_number CHECK (team_number IN (1, 2)), 
+	CONSTRAINT chk_match_team_pairing_source CHECK (pairing_source IS NULL OR pairing_source IN ('competitive_team', 'ad_hoc')), 
 	CONSTRAINT uq_match_team_number UNIQUE (match_id, team_number), 
-	FOREIGN KEY(match_id) REFERENCES matches (id)
+	FOREIGN KEY(match_id) REFERENCES matches (id), 
+	FOREIGN KEY(source_team_id) REFERENCES teams (id)
 );
 
 CREATE TABLE tournament_simulation_runs (

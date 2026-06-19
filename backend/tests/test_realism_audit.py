@@ -206,7 +206,9 @@ def session():
                 id integer primary key,
                 match_id bigint not null,
                 team_number integer not null,
-                team_score integer not null
+                team_score integer not null,
+                pairing_source varchar(30),
+                source_team_id bigint
             )
             """
         )
@@ -526,12 +528,12 @@ def seed_audit_dataset(session) -> None:
         text(
             """
             INSERT INTO match_teams (
-                id, match_id, team_number, team_score
+                id, match_id, team_number, team_score, pairing_source, source_team_id
             ) VALUES
-                (3000, 2000, 1, 1),
-                (3001, 2000, 2, 0),
-                (3002, 2001, 1, 0),
-                (3003, 2001, 2, 1)
+                (3000, 2000, 1, 1, 'competitive_team', 500),
+                (3001, 2000, 2, 0, 'competitive_team', 501),
+                (3002, 2001, 1, 0, 'competitive_team', 500),
+                (3003, 2001, 2, 1, 'competitive_team', 501)
             """
         )
     )
@@ -598,6 +600,7 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
             "club_fill_ratio_summary",
             "club_membership_geography",
             "match_type_distribution",
+            "match_team_pairing_source_distribution",
             "matches_per_team_distribution",
             "matches_per_player_distribution",
             "daily_team_match_cap_violations",
@@ -739,6 +742,15 @@ def test_realism_audit_runner_executes_expanded_queries_on_sqlite(session):
             "match_pct": 50.0,
             "configured_pct": 50.0,
             "pct_point_drift": 0.0,
+        },
+    )
+    assert result_map["match_team_pairing_source_distribution"] == (
+        {
+            "pairing_source": "competitive_team",
+            "match_team_count": 4,
+            "match_team_pct": 100.0,
+            "source_team_count": 4,
+            "source_team_pct": 100.0,
         },
     )
     assert result_map["matches_per_team_distribution"] == (
@@ -961,12 +973,12 @@ def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
         text(
             """
             INSERT INTO match_teams (
-                id, match_id, team_number, team_score
+                id, match_id, team_number, team_score, pairing_source, source_team_id
             ) VALUES
-                (3004, 2002, 1, 1),
-                (3005, 2002, 2, 0),
-                (3006, 2003, 1, 0),
-                (3007, 2003, 2, 1)
+                (3004, 2002, 1, 1, 'competitive_team', 500),
+                (3005, 2002, 2, 0, 'competitive_team', 501),
+                (3006, 2003, 1, 0, 'competitive_team', 500),
+                (3007, 2003, 2, 1, 'competitive_team', 501)
             """
         )
     )
@@ -1120,10 +1132,12 @@ def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
         },
     )
     assert result_map["repeat_partner_match_distribution"] == (
-        {
-            "prior_match_count_bucket": "3_5",
-            "team_count": 2,
-            "team_pct": 100.0,
+            {
+                "pairing_source": "competitive_team",
+                "match_class": "competitive",
+                "prior_match_count_bucket": "3_5",
+                "match_team_count": 2,
+            "match_team_pct_within_source_class": 100.0,
             "avg_prior_match_count": 3.0,
         },
     )
@@ -1268,7 +1282,8 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
             INSERT INTO players (
                 id, first_name, last_name, gender, birth_date, registration_date, player_status, home_region_id, generation_run_id
             ) VALUES
-                (9, 'Indy', 'Wilson', 'F', '1995-06-01', '2026-02-01', 'ACTIVE', 3, 1)
+                (9, 'Indy', 'Wilson', 'F', '1995-06-01', '2026-02-01', 'ACTIVE', 3, 1),
+                (10, 'No', 'Rating', 'M', '1990-06-01', '2026-02-01', 'ACTIVE', 3, 1)
             """
         )
     )
@@ -1278,7 +1293,8 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
             INSERT INTO player_registrations (
                 id, player_id, batch_id, registration_month
             ) VALUES
-                (108, 9, 11, '2026-02-01')
+                (108, 9, 11, '2026-02-01'),
+                (109, 10, 11, '2026-02-01')
             """
         )
     )
@@ -1334,6 +1350,8 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
         query_names=[
             "zero_match_players_by_registration_cohort",
             "zero_match_players_by_team_membership",
+            "zero_match_players_by_competitive_team_status",
+            "zero_match_players_by_ad_hoc_eligibility",
             "zero_match_players_by_club_affiliation",
         ]
     )
@@ -1349,8 +1367,8 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
         },
         {
             "registration_cohort": "later_batch",
-            "active_player_count": 1,
-            "zero_match_player_count": 1,
+            "active_player_count": 2,
+            "zero_match_player_count": 2,
             "zero_match_player_pct": 100.0,
         },
     )
@@ -1363,6 +1381,34 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
         },
         {
             "team_membership_status": "unteamed",
+            "active_player_count": 2,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 100.0,
+        },
+    )
+    assert result_map["zero_match_players_by_competitive_team_status"] == (
+        {
+            "competitive_team_status": "on_competitive_team",
+            "active_player_count": 6,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 33.33,
+        },
+        {
+            "competitive_team_status": "not_on_competitive_team",
+            "active_player_count": 2,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 100.0,
+        },
+    )
+    assert result_map["zero_match_players_by_ad_hoc_eligibility"] == (
+        {
+            "ad_hoc_eligibility_status": "ad_hoc_eligible",
+            "active_player_count": 7,
+            "zero_match_player_count": 3,
+            "zero_match_player_pct": 42.86,
+        },
+        {
+            "ad_hoc_eligibility_status": "missing_current_rating",
             "active_player_count": 1,
             "zero_match_player_count": 1,
             "zero_match_player_pct": 100.0,
@@ -1377,9 +1423,9 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
         },
         {
             "club_affiliation_status": "unaffiliated",
-            "active_player_count": 2,
-            "zero_match_player_count": 1,
-            "zero_match_player_pct": 50.0,
+            "active_player_count": 3,
+            "zero_match_player_count": 2,
+            "zero_match_player_pct": 66.67,
         },
     )
 
@@ -1676,6 +1722,49 @@ def test_realism_audit_assessment_flags_threshold_findings():
         "player_gender_distribution",
         "daily_team_match_cap_violations",
     ]
+
+
+def test_realism_audit_assessment_allows_unaffiliated_zero_primary_players():
+    zero_primary_payload = {
+        "results": [
+            {
+                "query": "club_primary_membership_integrity",
+                "category": "clubs",
+                "rows": [
+                    {
+                        "zero_primary_player_count": 25,
+                        "multi_primary_player_count": 0,
+                    }
+                ],
+            }
+        ]
+    }
+
+    zero_primary_assessment = assess_realism_audit_payload(zero_primary_payload)
+
+    assert zero_primary_assessment["overall_status"] == "no_material_issues"
+    assert zero_primary_assessment["finding_count"] == 0
+
+    multi_primary_payload = {
+        "results": [
+            {
+                "query": "club_primary_membership_integrity",
+                "category": "clubs",
+                "rows": [
+                    {
+                        "zero_primary_player_count": 25,
+                        "multi_primary_player_count": 2,
+                    }
+                ],
+            }
+        ]
+    }
+
+    multi_primary_assessment = assess_realism_audit_payload(multi_primary_payload)
+
+    assert multi_primary_assessment["overall_status"] == "significant_realism_concerns"
+    assert multi_primary_assessment["finding_count"] == 1
+    assert multi_primary_assessment["findings"][0]["severity"] == "error"
 
 
 def test_last_name_alignment_query_avoids_full_reference_materialization():

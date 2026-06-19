@@ -695,6 +695,7 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ),
         ("max_daily_matches_per_team", "match_scheduling.max_daily_matches_per_team"),
         ("match_types.weights", "match_types.weights"),
+        ("match_types.class_by_type", "match_types.class_by_type"),
         ("rating_band_width.", "matchmaking.rating_band_width"),
         ("matchmaking_noise_factor", "matchmaking.matchmaking_noise_factor"),
         (
@@ -702,6 +703,14 @@ MODULE_ERROR_PATH_MAP: dict[str, tuple[tuple[str, str], ...]] = {
             "matchmaking.rematch_penalty_window_days",
         ),
         ("locality_weight", "matchmaking.locality_weight"),
+        (
+            "pairing_source_weights_by_class",
+            "matchmaking.pairing_source_weights_by_class",
+        ),
+        (
+            "pairing_source_overrides_by_type",
+            "matchmaking.pairing_source_overrides_by_type",
+        ),
         ("games_per_match.", "games_and_scores.games_per_match"),
         ("game_target_score", "games_and_scores.game_target_score"),
         ("win_by_two_extension_rate", "games_and_scores.win_by_two_extension_rate"),
