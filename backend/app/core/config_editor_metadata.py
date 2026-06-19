@@ -799,6 +799,30 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         step=0.01,
     ),
     ConfigEditorFieldDefinition(
+        path="matchmaking.pairing_source_weights_by_class",
+        label="Pairing source weights by class",
+        control_type="json",
+        scope="synthetic",
+        description=(
+            "Default pairing-source weights for casual, semi-competitive, and "
+            "competitive match classes."
+        ),
+        default_value=_path_default("matchmaking.pairing_source_weights_by_class"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="matchmaking.pairing_source_overrides_by_type",
+        label="Pairing source overrides by type",
+        control_type="json",
+        scope="synthetic",
+        description=(
+            "Optional per-match-type pairing-source overrides that take precedence "
+            "over class defaults."
+        ),
+        default_value=_path_default("matchmaking.pairing_source_overrides_by_type"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
         path="games_and_scores.game_target_score",
         label="Game target score",
         control_type="integer",
@@ -1642,6 +1666,8 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
             "matchmaking.matchmaking_noise_factor",
             "matchmaking.rematch_penalty_window_days",
             "matchmaking.locality_weight",
+            "matchmaking.pairing_source_weights_by_class",
+            "matchmaking.pairing_source_overrides_by_type",
         ),
     ),
     ConfigEditorSectionDefinition(

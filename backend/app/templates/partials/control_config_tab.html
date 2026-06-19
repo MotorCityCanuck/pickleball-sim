@@ -692,7 +692,7 @@
                 .filter(Boolean);
         }
 
-        function serializeControl(control) {
+        function serializeControl(control, { showAlertOnError = false } = {}) {
             const controlType = control.dataset.configType;
             const path = control.dataset.configPath;
 
@@ -713,7 +713,9 @@
                 try {
                     return [path, JSON.parse(input?.value || "{}")];
                 } catch (error) {
-                    window.alert(`Invalid JSON for ${path}.`);
+                    if (showAlertOnError) {
+                        window.alert(`Invalid JSON for ${path}.`);
+                    }
                     throw error;
                 }
             }
@@ -857,7 +859,7 @@
 
             try {
                 form.querySelectorAll("[data-config-control]").forEach((control) => {
-                    const entries = serializeControl(control);
+                    const entries = serializeControl(control, { showAlertOnError });
                     const normalizedEntries = Array.isArray(entries[0]) ? entries : [entries];
                     normalizedEntries.forEach(([path, value]) => {
                         setPath(payload, path, value);
