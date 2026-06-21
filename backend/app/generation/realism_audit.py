@@ -6,11 +6,11 @@ from decimal import Decimal
 import json
 from typing import Any, Callable, Literal, Mapping, Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
-from app.models import GenerationRun, MonthlyBatch
+from app.models import AuditBatchTeamRoster, GenerationRun, MonthlyBatch
 
 
 AuditScope = Literal["generation_run", "batch"]
@@ -371,6 +371,139 @@ MATCH_DAY_OF_WEEK_SQL = {
         ORDER BY day_number
     """,
 }
+
+
+TEAM_PARTNER_CONTINUITY_BY_BATCH_LEGACY_SQL = """
+    WITH ordered_batches AS (
+        SELECT
+            b.id AS batch_id,
+            b.batch_month,
+            ROW_NUMBER() OVER (
+                ORDER BY b.batch_month ASC, b.batch_sequence ASC, b.id ASC
+            ) AS batch_ordinal
+        FROM monthly_batches b
+        WHERE b.generation_run_id = :generation_run_id
+    ),
+    batch_pairs AS (
+        SELECT
+            current_batch.batch_id,
+            current_batch.batch_month,
+            current_batch.batch_ordinal,
+            prior_batch.batch_id AS prior_batch_id
+        FROM ordered_batches current_batch
+        LEFT JOIN ordered_batches prior_batch
+            ON prior_batch.batch_ordinal = current_batch.batch_ordinal - 1
+    ),
+    has_lifecycle_events AS (
+        SELECT
+            CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM team_lifecycle_events tle
+                    WHERE tle.generation_run_id = :generation_run_id
+                )
+                THEN 1
+                ELSE 0
+            END AS has_events
+    ),
+    event_ranked AS (
+        SELECT
+            bp.batch_id,
+            tle.team_id,
+            tle.event_type,
+            ROW_NUMBER() OVER (
+                PARTITION BY bp.batch_id, tle.team_id
+                ORDER BY tle.event_date DESC, tle.id DESC
+            ) AS event_rank
+        FROM batch_pairs bp
+        JOIN team_lifecycle_events tle
+            ON tle.generation_run_id = :generation_run_id
+            AND tle.event_date <= bp.batch_month
+    ),
+    active_teams AS (
+        SELECT
+            er.batch_id,
+            er.team_id
+        FROM event_ranked er
+        JOIN has_lifecycle_events h
+            ON h.has_events = 1
+        WHERE er.event_rank = 1
+            AND er.event_type IN ('formed', 'reactivated')
+
+        UNION ALL
+
+        SELECT
+            bp.batch_id,
+            t.id AS team_id
+        FROM batch_pairs bp
+        JOIN has_lifecycle_events h
+            ON h.has_events = 0
+        JOIN teams t
+            ON t.generation_run_id = :generation_run_id
+            AND t.team_status = 'active'
+            AND t.formation_date <= bp.batch_month
+            AND (t.dissolution_date IS NULL OR t.dissolution_date > bp.batch_month)
+    ),
+    active_rosters AS (
+        SELECT
+            at.batch_id,
+            CAST(MIN(tm.player_id) AS TEXT) || ':' || CAST(MAX(tm.player_id) AS TEXT) AS roster_key
+        FROM active_teams at
+        JOIN batch_pairs bp
+            ON bp.batch_id = at.batch_id
+        JOIN team_memberships tm
+            ON tm.team_id = at.team_id
+            AND tm.joined_date <= bp.batch_month
+            AND (tm.left_date IS NULL OR tm.left_date > bp.batch_month)
+        GROUP BY at.batch_id, at.team_id
+        HAVING COUNT(*) = 2
+    ),
+    distinct_rosters AS (
+        SELECT DISTINCT
+            batch_id,
+            roster_key
+        FROM active_rosters
+    ),
+    classified AS (
+        SELECT
+            bp.batch_id,
+            bp.batch_month,
+            bp.prior_batch_id,
+            current_rosters.roster_key,
+            CASE
+                WHEN prior_rosters.roster_key IS NOT NULL THEN 1
+                ELSE 0
+            END AS persisted_from_prior_batch
+        FROM batch_pairs bp
+        LEFT JOIN distinct_rosters current_rosters
+            ON current_rosters.batch_id = bp.batch_id
+        LEFT JOIN distinct_rosters prior_rosters
+            ON prior_rosters.batch_id = bp.prior_batch_id
+            AND prior_rosters.roster_key = current_rosters.roster_key
+    )
+    SELECT
+        batch_id,
+        batch_month,
+        COUNT(roster_key) AS active_roster_count,
+        SUM(persisted_from_prior_batch) AS persisted_roster_count,
+        SUM(
+            CASE
+                WHEN roster_key IS NOT NULL AND persisted_from_prior_batch = 0
+                THEN 1
+                ELSE 0
+            END
+        ) AS new_roster_count,
+        CASE
+            WHEN prior_batch_id IS NULL THEN NULL
+            ELSE ROUND(
+                100.0 * SUM(persisted_from_prior_batch) / NULLIF(COUNT(roster_key), 0),
+                2
+            )
+        END AS persisted_roster_pct
+    FROM classified
+    GROUP BY batch_id, batch_month, prior_batch_id
+    ORDER BY batch_month ASC, batch_id ASC
+"""
 
 
 FIRST_NAME_ALIGNMENT_SQL = {
@@ -1585,75 +1718,12 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                 LEFT JOIN ordered_batches prior_batch
                     ON prior_batch.batch_ordinal = current_batch.batch_ordinal - 1
             ),
-            has_lifecycle_events AS (
-                SELECT
-                    CASE
-                        WHEN EXISTS (
-                            SELECT 1
-                            FROM team_lifecycle_events tle
-                            WHERE tle.generation_run_id = :generation_run_id
-                        )
-                        THEN 1
-                        ELSE 0
-                    END AS has_events
-            ),
-            event_ranked AS (
-                SELECT
-                    bp.batch_id,
-                    tle.team_id,
-                    tle.event_type,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY bp.batch_id, tle.team_id
-                        ORDER BY tle.event_date DESC, tle.id DESC
-                    ) AS event_rank
-                FROM batch_pairs bp
-                JOIN team_lifecycle_events tle
-                    ON tle.generation_run_id = :generation_run_id
-                    AND tle.event_date <= bp.batch_month
-            ),
-            active_teams AS (
-                SELECT
-                    er.batch_id,
-                    er.team_id
-                FROM event_ranked er
-                JOIN has_lifecycle_events h
-                    ON h.has_events = 1
-                WHERE er.event_rank = 1
-                    AND er.event_type IN ('formed', 'reactivated')
-
-                UNION ALL
-
-                SELECT
-                    bp.batch_id,
-                    t.id AS team_id
-                FROM batch_pairs bp
-                JOIN has_lifecycle_events h
-                    ON h.has_events = 0
-                JOIN teams t
-                    ON t.generation_run_id = :generation_run_id
-                    AND t.team_status = 'active'
-                    AND t.formation_date <= bp.batch_month
-                    AND (t.dissolution_date IS NULL OR t.dissolution_date > bp.batch_month)
-            ),
-            active_rosters AS (
-                SELECT
-                    at.batch_id,
-                    CAST(MIN(tm.player_id) AS TEXT) || ':' || CAST(MAX(tm.player_id) AS TEXT) AS roster_key
-                FROM active_teams at
-                JOIN batch_pairs bp
-                    ON bp.batch_id = at.batch_id
-                JOIN team_memberships tm
-                    ON tm.team_id = at.team_id
-                    AND tm.joined_date <= bp.batch_month
-                    AND (tm.left_date IS NULL OR tm.left_date > bp.batch_month)
-                GROUP BY at.batch_id, at.team_id
-                HAVING COUNT(*) = 2
-            ),
             distinct_rosters AS (
                 SELECT DISTINCT
                     batch_id,
                     roster_key
-                FROM active_rosters
+                FROM audit_batch_team_rosters
+                WHERE generation_run_id = :generation_run_id
             ),
             classified AS (
                 SELECT
@@ -3218,10 +3288,15 @@ class RealismAuditRunner:
                 for name in query.required_params
                 if name in params
             }
+            sql_text = self._sql_for_query(
+                query,
+                dialect_name=dialect_name,
+                sql_params=sql_params,
+            )
             rows = tuple(
                 dict(row)
                 for row in self.session.execute(
-                    text(query.sql_for_dialect(dialect_name)),
+                    text(sql_text),
                     sql_params,
                 ).mappings()
             )
@@ -3233,6 +3308,35 @@ class RealismAuditRunner:
     def available_queries(self) -> tuple[RealismAuditQuery, ...]:
         """Return all registered realism audit queries."""
         return REALISM_AUDIT_QUERIES
+
+    def _sql_for_query(
+        self,
+        query: RealismAuditQuery,
+        *,
+        dialect_name: str,
+        sql_params: Mapping[str, Any],
+    ) -> str:
+        if query.name != "team_partner_continuity_by_batch":
+            return query.sql_for_dialect(dialect_name)
+        generation_run_id = sql_params.get("generation_run_id")
+        if generation_run_id is None or self._has_team_roster_helper_rows(
+            int(generation_run_id)
+        ):
+            return query.sql_for_dialect(dialect_name)
+        return TEAM_PARTNER_CONTINUITY_BY_BATCH_LEGACY_SQL
+
+    def _has_team_roster_helper_rows(self, generation_run_id: int) -> bool:
+        bind = self.session.get_bind()
+        if bind is None:
+            return False
+        if not inspect(bind).has_table(AuditBatchTeamRoster.__tablename__):
+            return False
+        count = self.session.scalar(
+            select(AuditBatchTeamRoster.batch_id)
+            .where(AuditBatchTeamRoster.generation_run_id == generation_run_id)
+            .limit(1)
+        )
+        return count is not None
 
     def _select_queries(
         self,

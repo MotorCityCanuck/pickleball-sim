@@ -188,6 +188,22 @@ def session():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE audit_batch_team_rosters (
+                generation_run_id bigint not null,
+                batch_id bigint not null,
+                batch_month date not null,
+                team_id bigint not null,
+                player_one_id bigint not null,
+                player_two_id bigint not null,
+                roster_key varchar(64) not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                primary key (batch_id, team_id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE matches (
                 id integer primary key,
                 match_date date not null,
@@ -509,6 +525,23 @@ def seed_audit_dataset(session) -> None:
                 (4002, 1, 10, 502, '2026-01-01', 'formed'),
                 (4003, 1, 11, 502, '2026-02-01', 'dormant'),
                 (4004, 1, 12, 502, '2026-03-01', 'reactivated')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO audit_batch_team_rosters (
+                generation_run_id, batch_id, batch_month, team_id, player_one_id, player_two_id, roster_key
+            ) VALUES
+                (1, 10, '2026-01-01', 500, 1, 2, '1:2'),
+                (1, 10, '2026-01-01', 501, 3, 4, '3:4'),
+                (1, 10, '2026-01-01', 502, 5, 6, '5:6'),
+                (1, 11, '2026-02-01', 500, 1, 2, '1:2'),
+                (1, 11, '2026-02-01', 501, 3, 4, '3:4'),
+                (1, 12, '2026-03-01', 500, 1, 2, '1:2'),
+                (1, 12, '2026-03-01', 501, 3, 4, '3:4'),
+                (1, 12, '2026-03-01', 502, 5, 6, '5:6')
             """
         )
     )

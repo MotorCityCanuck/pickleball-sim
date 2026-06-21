@@ -1196,6 +1196,8 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert 'hx-post="/control/seed/refresh"' in orchestration.body.decode()
     assert 'hx-get="/control/partials/orchestration"' in orchestration.body.decode()
     assert 'hx-trigger="every 10s"' in orchestration.body.decode()
+    assert 'id="control-panel-warnings"' in orchestration.body.decode()
+    assert 'hx-swap-oob="outerHTML"' in orchestration.body.decode()
     assert 'data-orchestration-section="raw-ingest"' in orchestration.body.decode()
     assert (
         'data-orchestration-section="player-match-generation"'
@@ -1913,6 +1915,8 @@ def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
     assert "Audit completed successfully." in body
     assert "Clear stalled job" not in body
     assert "Audit job appears stalled." not in body
+    assert "Progress will appear here while the audit is running." not in body
+    assert "No realism audit currently running." in body
 
 
 def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):

@@ -1,0 +1,12 @@
+<div
+    id="control-panel-warnings"
+    {% if oob_swap %}hx-swap-oob="outerHTML"{% endif %}
+>
+    {% if snapshot.warnings %}
+        <ul class="warnings">
+            {% for warning in snapshot.warnings %}
+                <li class="warning">{{ warning }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+</div>

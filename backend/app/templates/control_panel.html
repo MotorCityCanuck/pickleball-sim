@@ -131,13 +131,8 @@
             </div>
         </div>
 
-        {% if snapshot.warnings %}
-            <ul class="warnings">
-                {% for warning in snapshot.warnings %}
-                    <li class="warning">{{ warning }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
+        {% set oob_swap = false %}
+        {% include "partials/control_warnings.html" %}
 
         <div class="tabs">
             <button

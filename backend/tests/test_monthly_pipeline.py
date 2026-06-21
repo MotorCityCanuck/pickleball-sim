@@ -23,6 +23,7 @@ from app.generators import (  # noqa: E402
     TeamGenerationResult,
 )
 from app.models import (  # noqa: E402
+    AuditBatchTeamRoster,
     ClubMembership,
     GenerationRuntimeMetric,
     GenerationRun,
@@ -32,6 +33,7 @@ from app.models import (  # noqa: E402
     PlayerRegistration,
     RatingsUpdateLog,
     Team,
+    TeamMembership,
 )
 
 
@@ -157,6 +159,20 @@ def session_factory():
                 team_id bigint not null,
                 event_date date not null,
                 event_type varchar(30) not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE team_memberships (
+                id integer primary key,
+                team_id bigint not null,
+                player_id bigint not null,
+                player_position varchar(20),
+                joined_date date not null,
+                left_date date,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -411,14 +427,28 @@ class FakeClubMembershipGenerator:
 
 class FakeTeamGenerator:
     def generate_for_batch(self, *, generation_run_id, batch_id, session):
-        session.add(
-            Team(
+        team = Team(
                 team_type="open_doubles",
                 team_status="active",
                 country_code="US",
                 formation_date=date(2024, 1, 1),
                 generation_run_id=generation_run_id,
             )
+        session.add(team)
+        session.flush()
+        session.add_all(
+            [
+                TeamMembership(
+                    team_id=team.id,
+                    player_id=1,
+                    joined_date=date(2024, 1, 1),
+                ),
+                TeamMembership(
+                    team_id=team.id,
+                    player_id=2,
+                    joined_date=date(2024, 1, 1),
+                ),
+            ]
         )
         session.flush()
         return TeamGenerationResult(
@@ -626,6 +656,40 @@ def test_pipeline_records_coarse_stage_runtime_metrics(session):
     assert all(metric.batch_id == 1 for metric in metrics)
     assert all(metric.elapsed_ms >= 0 for metric in metrics)
     assert all(metric.metadata_json["result_status"] == "generated" for metric in metrics)
+
+
+def test_pipeline_persists_audit_team_roster_helpers(session):
+    seed_run(session)
+
+    fake_pipeline(runtime_metrics_enabled=True).run_months(
+        generation_run_id=1,
+        months=1,
+        session=session,
+    )
+
+    roster_rows = (
+        session.query(AuditBatchTeamRoster)
+        .filter(AuditBatchTeamRoster.batch_id == 1)
+        .order_by(AuditBatchTeamRoster.team_id)
+        .all()
+    )
+    assert len(roster_rows) == 1
+    assert roster_rows[0].generation_run_id == 1
+    assert roster_rows[0].player_one_id == 1
+    assert roster_rows[0].player_two_id == 2
+    assert roster_rows[0].roster_key == "1:2"
+
+    helper_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "teams",
+            GenerationRuntimeMetric.subphase_name == "persist_audit_batch_team_rosters",
+        )
+        .one()
+    )
+    assert helper_metric.input_count == 1
+    assert helper_metric.output_count == 1
+    assert helper_metric.elapsed_ms >= 0
 
 
 def test_pipeline_records_disabled_instrumentation_markers(session):

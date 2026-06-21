@@ -18,6 +18,7 @@ from app.generators import (
     TeamGenerator,
 )
 from app.models import (
+    AuditBatchTeamRoster,
     ClubMembership,
     GenerationRun,
     Match,
@@ -30,6 +31,7 @@ from app.models import (
 )
 
 from .control_plane import GenerationControlPlane
+from .audit_helpers import persist_audit_batch_team_rosters
 from .runtime_metrics import RuntimeMetricRecorder
 
 
@@ -512,12 +514,35 @@ class MonthlyGenerationPipeline:
                 TeamLifecycleEvent.batch_id == batch.id,
             ),
         )
+        runtime_recorder = self._detail_runtime_recorder(
+            session=session,
+            generation_run_id=generation_run_id,
+            batch_id=batch.id,
+            stage_name="teams",
+        )
         if batch_team_events:
             if skip_existing:
+                helper_rows = _count(
+                    session,
+                    select(func.count()).select_from(AuditBatchTeamRoster).where(
+                        AuditBatchTeamRoster.batch_id == batch.id
+                    ),
+                )
+                if helper_rows == 0:
+                    helper_rows = persist_audit_batch_team_rosters(
+                        session,
+                        generation_run_id=generation_run_id,
+                        batch_id=batch.id,
+                        batch_month=batch.batch_month,
+                        runtime_recorder=runtime_recorder,
+                    )
                 return PipelineStepResult(
                     "teams",
                     "skipped",
-                    {"batch_team_events": batch_team_events},
+                    {
+                        "batch_team_events": batch_team_events,
+                        "audit_team_roster_rows_loaded": helper_rows,
+                    },
                 )
             raise ValueError("Team generation already ran for this batch")
 
@@ -526,12 +551,20 @@ class MonthlyGenerationPipeline:
             batch_id=batch.id,
             session=session,
         )
+        helper_rows = persist_audit_batch_team_rosters(
+            session,
+            generation_run_id=generation_run_id,
+            batch_id=batch.id,
+            batch_month=batch.batch_month,
+            runtime_recorder=runtime_recorder,
+        )
         return PipelineStepResult(
             "teams",
             "generated",
             {
                 "rows_loaded": result.rows_loaded,
                 "membership_rows_loaded": result.membership_rows_loaded,
+                "audit_team_roster_rows_loaded": helper_rows,
             },
         )
 

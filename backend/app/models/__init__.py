@@ -38,6 +38,13 @@ from .validation_results import ValidationResult
 from .job_status import JobStatus
 from .job_stage_progress import JobStageProgress
 from .generation_runtime_metrics import GenerationRuntimeMetric
+from .audit_batch_team_rosters import AuditBatchTeamRoster
+from .ops_background_jobs import (
+    BackgroundJobEvent,
+    BackgroundJobLease,
+    BackgroundWorker,
+    RealismAuditQueryRun,
+)
 from .configuration_profiles import ConfigurationProfile, ConfigurationProfileVersion
 from .student_dataset_releases import (
     StudentDatasetComparison,
@@ -92,6 +99,11 @@ __all__ = [
     'JobStatus',
     'JobStageProgress',
     'GenerationRuntimeMetric',
+    'AuditBatchTeamRoster',
+    'BackgroundJobEvent',
+    'BackgroundJobLease',
+    'BackgroundWorker',
+    'RealismAuditQueryRun',
     'ConfigurationProfile',
     'ConfigurationProfileVersion',
     'StudentDatasetComparison',

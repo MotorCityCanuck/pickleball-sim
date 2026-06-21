@@ -23,7 +23,8 @@ if str(BACKEND_DIR) not in sys.path:
 
 from schema_expectations import (  # noqa: E402
     EXPECTED_INDEXES,
-    EXPECTED_TABLES,
+    EXPECTED_OPS_TABLES,
+    EXPECTED_PUBLIC_TABLES,
     STALE_SPLIT_NAME_TABLES,
 )
 
@@ -58,8 +59,15 @@ def test_database_tables_match_expected_schema(engine):
     inspector = inspect(engine)
     tables = set(inspector.get_table_names(schema="public"))
 
-    assert len(tables) == len(EXPECTED_TABLES)
-    assert tables == EXPECTED_TABLES
+    assert len(tables) == len(EXPECTED_PUBLIC_TABLES)
+    assert tables == EXPECTED_PUBLIC_TABLES
+
+
+def test_ops_database_tables_match_expected_schema(engine):
+    inspector = inspect(engine)
+    tables = {f"ops.{table}" for table in inspector.get_table_names(schema="ops")}
+
+    assert tables == EXPECTED_OPS_TABLES
 
 
 def test_split_country_name_tables_are_absent(engine):
@@ -73,13 +81,13 @@ def test_split_country_name_tables_are_absent(engine):
 def test_expected_explicit_indexes_exist(engine):
     with engine.connect() as conn:
         actual_indexes = {
-            row[0]
+            row[1]
             for row in conn.execute(
                 text(
                     """
-                    SELECT indexname
+                    SELECT schemaname, indexname
                     FROM pg_indexes
-                    WHERE schemaname = 'public'
+                    WHERE schemaname IN ('public', 'ops')
                     """
                 )
             )

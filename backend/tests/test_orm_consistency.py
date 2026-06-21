@@ -281,6 +281,17 @@ def test_expected_table_registry_matches_live_schema_scope():
     assert orm_tables == EXPECTED_TABLES
 
 
+def test_ops_tables_are_schema_qualified():
+    """Durable-worker tables should live in the ops schema."""
+    for table_name in (
+        "ops.background_workers",
+        "ops.background_job_leases",
+        "ops.background_job_events",
+        "ops.realism_audit_query_runs",
+    ):
+        assert Base.metadata.tables[table_name].schema == "ops"
+
+
 def test_stale_country_split_name_tables_are_absent():
     """Reference names should use consolidated tables with country_code."""
     orm_tables = set(Base.metadata.tables)

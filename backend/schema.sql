@@ -2,14 +2,16 @@
 -- Pickleball Simulation Platform - Database Schema
 -- Generated from SQLAlchemy ORM metadata
 -- Do not edit by hand; run backend/scripts/export_schema_from_orm.py
--- Total Tables: 49
--- Explicit Indexes: 132
+-- Total Tables: 54
+-- Explicit Indexes: 148
 -- PostgreSQL 16+
 -- ============================================
 
 -- ============================================
 -- TABLES
 -- ============================================
+
+CREATE SCHEMA IF NOT EXISTS ops;
 
 CREATE TABLE configuration_profiles (
 	id BIGSERIAL NOT NULL, 
@@ -188,6 +190,72 @@ CREATE TABLE monthly_batches (
 	CONSTRAINT chk_batch_type CHECK (batch_type IN ('historical_initial', 'future_increment')), 
 	CONSTRAINT chk_processing_status CHECK (processing_status IN ('pending', 'running', 'succeeded', 'failed')), 
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id)
+);
+
+CREATE TABLE ops.background_workers (
+	worker_id VARCHAR(64) NOT NULL,
+	worker_type VARCHAR(50) NOT NULL,
+	host_name VARCHAR(255),
+	process_id INTEGER,
+	started_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	status VARCHAR(30) DEFAULT 'running' NOT NULL,
+	metadata_json JSONB,
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (worker_id),
+	CONSTRAINT chk_background_workers_status CHECK (status IN ('running', 'stopped', 'failed'))
+);
+
+CREATE TABLE ops.background_job_leases (
+	job_status_id BIGINT NOT NULL,
+	worker_id VARCHAR(64) NOT NULL,
+	lease_token VARCHAR(64) NOT NULL,
+	claimed_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	lease_expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	attempt_count INTEGER DEFAULT 1 NOT NULL,
+	metadata_json JSONB,
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (job_status_id),
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE,
+	FOREIGN KEY(worker_id) REFERENCES ops.background_workers (worker_id)
+);
+
+CREATE TABLE ops.background_job_events (
+	id BIGSERIAL NOT NULL,
+	job_status_id BIGINT NOT NULL,
+	worker_id VARCHAR(64),
+	event_type VARCHAR(50) NOT NULL,
+	event_message TEXT,
+	event_metadata_json JSONB,
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE
+);
+
+CREATE TABLE ops.realism_audit_query_runs (
+	id BIGSERIAL NOT NULL,
+	job_status_id BIGINT NOT NULL,
+	generation_run_id BIGINT,
+	batch_id BIGINT,
+	query_index INTEGER NOT NULL,
+	query_name VARCHAR(255) NOT NULL,
+	status VARCHAR(30) DEFAULT 'pending' NOT NULL,
+	started_at TIMESTAMP WITHOUT TIME ZONE,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	elapsed_ms BIGINT,
+	row_count BIGINT,
+	result_json JSONB,
+	error_message TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT chk_realism_audit_query_runs_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'skipped')),
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE,
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id),
+	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
 );
 
 CREATE TABLE players (
@@ -679,6 +747,24 @@ CREATE TABLE team_memberships (
 	FOREIGN KEY(player_id) REFERENCES players (id)
 );
 
+CREATE TABLE audit_batch_team_rosters (
+	generation_run_id BIGINT NOT NULL,
+	batch_id BIGINT NOT NULL,
+	batch_month DATE NOT NULL,
+	team_id BIGINT NOT NULL,
+	player_one_id BIGINT NOT NULL,
+	player_two_id BIGINT NOT NULL,
+	roster_key VARCHAR(64) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (batch_id, team_id),
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id),
+	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id),
+	FOREIGN KEY(team_id) REFERENCES teams (id),
+	FOREIGN KEY(player_one_id) REFERENCES players (id),
+	FOREIGN KEY(player_two_id) REFERENCES players (id)
+);
+
 CREATE TABLE tournament_events (
 	id BIGSERIAL NOT NULL, 
 	event_name VARCHAR(255) NOT NULL, 
@@ -1004,12 +1090,22 @@ CREATE TABLE tournament_official_games (
 
 CREATE INDEX idx_assessment_batch ON player_assessment_history (batch_id);
 CREATE INDEX idx_assessment_player_date ON player_assessment_history (player_id, assessment_date DESC);
+CREATE INDEX idx_background_job_events_job ON ops.background_job_events (job_status_id, id);
+CREATE INDEX idx_background_job_events_type ON ops.background_job_events (event_type);
+CREATE INDEX idx_background_job_leases_expiry ON ops.background_job_leases (lease_expires_at);
+CREATE UNIQUE INDEX idx_background_job_leases_token ON ops.background_job_leases (lease_token);
+CREATE INDEX idx_background_job_leases_worker ON ops.background_job_leases (worker_id);
+CREATE INDEX idx_background_workers_heartbeat ON ops.background_workers (last_heartbeat_at);
+CREATE INDEX idx_background_workers_status ON ops.background_workers (status);
 CREATE INDEX idx_batch_runs_batch ON batch_runs (batch_id);
 CREATE INDEX idx_batch_runs_status ON batch_runs (run_status);
 CREATE INDEX idx_club_memberships_club ON club_memberships (club_id);
 CREATE INDEX idx_club_memberships_dates ON club_memberships (start_date, end_date);
 CREATE INDEX idx_club_memberships_player ON club_memberships (player_id);
 CREATE INDEX idx_club_memberships_primary ON club_memberships (player_id, is_primary) WHERE is_primary = true;
+CREATE INDEX idx_audit_batch_team_rosters_run_batch ON audit_batch_team_rosters (generation_run_id, batch_id);
+CREATE INDEX idx_audit_batch_team_rosters_run_roster_batch ON audit_batch_team_rosters (generation_run_id, roster_key, batch_id);
+CREATE INDEX idx_audit_batch_team_rosters_run_batch_month ON audit_batch_team_rosters (generation_run_id, batch_month);
 CREATE INDEX idx_clubs_generation_run ON clubs (generation_run_id);
 CREATE INDEX idx_clubs_region ON clubs (region_id);
 CREATE INDEX idx_clubs_type ON clubs (club_type);
@@ -1065,6 +1161,10 @@ CREATE INDEX idx_players_status ON players (player_status);
 CREATE INDEX idx_rating_batch ON player_rating_history (batch_id);
 CREATE INDEX idx_rating_player_date ON player_rating_history (player_id, rating_date DESC);
 CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log (batch_id);
+CREATE INDEX idx_realism_audit_query_runs_generation_run ON ops.realism_audit_query_runs (generation_run_id);
+CREATE INDEX idx_realism_audit_query_runs_job_index ON ops.realism_audit_query_runs (job_status_id, query_index);
+CREATE INDEX idx_realism_audit_query_runs_status ON ops.realism_audit_query_runs (status);
+CREATE UNIQUE INDEX uq_realism_audit_query_runs_job_query ON ops.realism_audit_query_runs (job_status_id, query_name);
 CREATE INDEX idx_raw_club_distributions_country_state ON raw_pickleball_club_distributions (country_code, state_province_code);
 CREATE INDEX idx_raw_club_distributions_load_run ON raw_pickleball_club_distributions (load_run_id);
 CREATE INDEX idx_raw_club_names_country_state ON raw_pickleball_club_names (country_code, state_province_code);

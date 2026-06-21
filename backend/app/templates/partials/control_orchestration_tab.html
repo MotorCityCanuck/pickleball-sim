@@ -7,6 +7,9 @@
     and snapshot.generation_run_summary.failed_batch_count == 0
 ) %}
 
+{% set oob_swap = true %}
+{% include "partials/control_warnings.html" %}
+
 <section
     style="display:grid; gap:16px;"
     {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
@@ -733,8 +736,14 @@
                             {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}
                         {% elif snapshot.realism_audit_summary.clearable_job and snapshot.realism_audit_summary.clearable_job.current_message %}
                             {{ snapshot.realism_audit_summary.clearable_job.current_message }}
+                        {% elif snapshot.realism_audit_summary.clearable_job %}
+                            Audit job appears stalled.
+                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'succeeded' %}
+                            No realism audit currently running.
+                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed' %}
+                            No realism audit currently running. The latest audit failed.
                         {% else %}
-                            Progress will appear here while the audit is running.
+                            No realism audit currently running.
                         {% endif %}
                     </div>
                 {% endif %}

@@ -1,6 +1,7 @@
 """Shared schema expectations for ORM and database tests."""
 
-EXPECTED_TABLES = {
+EXPECTED_PUBLIC_TABLES = {
+    "audit_batch_team_rosters",
     "batch_runs",
     "club_memberships",
     "clubs",
@@ -52,6 +53,15 @@ EXPECTED_TABLES = {
     "tournament_team_results",
 }
 
+EXPECTED_OPS_TABLES = {
+    "ops.background_job_events",
+    "ops.background_job_leases",
+    "ops.background_workers",
+    "ops.realism_audit_query_runs",
+}
+
+EXPECTED_TABLES = EXPECTED_PUBLIC_TABLES | EXPECTED_OPS_TABLES
+
 STALE_SPLIT_NAME_TABLES = {
     "usa_first_names",
     "usa_last_names",
@@ -59,9 +69,12 @@ STALE_SPLIT_NAME_TABLES = {
     "canada_last_names",
 }
 
-EXPECTED_INDEXES = {
+EXPECTED_PUBLIC_INDEXES = {
     "idx_assessment_batch",
     "idx_assessment_player_date",
+    "idx_audit_batch_team_rosters_run_batch",
+    "idx_audit_batch_team_rosters_run_batch_month",
+    "idx_audit_batch_team_rosters_run_roster_batch",
     "idx_batch_runs_batch",
     "idx_batch_runs_status",
     "idx_club_memberships_club",
@@ -196,7 +209,25 @@ EXPECTED_INDEXES = {
     "uq_configuration_versions_single_valid",
 }
 
+EXPECTED_OPS_INDEXES = {
+    "idx_background_job_events_job",
+    "idx_background_job_events_type",
+    "idx_background_job_leases_expiry",
+    "idx_background_job_leases_token",
+    "idx_background_job_leases_worker",
+    "idx_background_workers_heartbeat",
+    "idx_background_workers_status",
+    "idx_realism_audit_query_runs_generation_run",
+    "idx_realism_audit_query_runs_job_index",
+    "idx_realism_audit_query_runs_status",
+    "uq_realism_audit_query_runs_job_query",
+}
+
+EXPECTED_INDEXES = EXPECTED_PUBLIC_INDEXES | EXPECTED_OPS_INDEXES
+
 EXPECTED_CHECK_CONSTRAINTS = {
+    "ops.background_workers": {"chk_background_workers_status"},
+    "ops.realism_audit_query_runs": {"chk_realism_audit_query_runs_status"},
     "batch_runs": {"chk_run_status"},
     "club_memberships": {"chk_membership_dates"},
     "clubs": {"chk_club_type", "chk_court_counts"},
@@ -364,6 +395,23 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
 }
 
 EXPECTED_FOREIGN_KEYS = {
+    "audit_batch_team_rosters": {
+        "batch_id->monthly_batches.id",
+        "generation_run_id->generation_runs.id",
+        "player_one_id->players.id",
+        "player_two_id->players.id",
+        "team_id->teams.id",
+    },
+    "ops.background_job_events": {"job_status_id->job_status.id"},
+    "ops.background_job_leases": {
+        "job_status_id->job_status.id",
+        "worker_id->background_workers.worker_id",
+    },
+    "ops.realism_audit_query_runs": {
+        "batch_id->monthly_batches.id",
+        "generation_run_id->generation_runs.id",
+        "job_status_id->job_status.id",
+    },
     "batch_runs": {"batch_id->monthly_batches.id"},
     "club_memberships": {
         "club_id->clubs.id",
@@ -482,6 +530,17 @@ EXPECTED_FOREIGN_KEYS = {
 }
 
 EXPECTED_SERVER_DEFAULTS = {
+    "ops.background_job_leases": {
+        "attempt_count": "1",
+        "claimed_at": "CURRENT_TIMESTAMP",
+        "last_heartbeat_at": "CURRENT_TIMESTAMP",
+    },
+    "ops.background_workers": {
+        "last_heartbeat_at": "CURRENT_TIMESTAMP",
+        "started_at": "CURRENT_TIMESTAMP",
+        "status": "'running'",
+    },
+    "ops.realism_audit_query_runs": {"status": "'pending'"},
     "generation_runs": {"status": "'not_started'"},
     "configuration_profile_versions": {"lifecycle_status": "'valid'"},
     "job_stage_progress": {
