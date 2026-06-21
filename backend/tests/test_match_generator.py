@@ -20,6 +20,7 @@ from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
 from app.generators.games import expected_scores, game_score  # noqa: E402
+from app.generators import matches as match_generator_module  # noqa: E402
 from app.generators.matches import (  # noqa: E402
     ActivePlayerCandidate,
     ActivePlayerPool,
@@ -770,6 +771,46 @@ def test_ad_hoc_sampler_uses_rating_band_when_possible():
         assert abs(ratings[0] - ratings[1]) <= Decimal("60")
 
 
+def test_ad_hoc_sampler_uses_bounded_sampling_for_large_pool(monkeypatch):
+    payload = test_payload()
+    payload["matchmaking"]["rating_band_width"]["recreational"] = 80
+    config = MatchGenerationConfig.from_payload(payload)
+    pool = ActivePlayerPool(
+        [
+            active_player_candidate(
+                index,
+                rating=1500 + (index % 60),
+                region_id=1 + (index % 3),
+            )
+            for index in range(1, 301)
+        ]
+    )
+
+    def fail_exhaustive_pairing(*_args, **_kwargs):
+        raise AssertionError("large ad hoc pools must not enumerate every player pair")
+
+    monkeypatch.setattr(
+        match_generator_module,
+        "_ad_hoc_player_pairs",
+        fail_exhaustive_pairing,
+    )
+
+    sampled = _sample_ad_hoc_pair_candidates(
+        random.Random(11),
+        player_pool=pool,
+        match_date=date(2024, 2, 1),
+        match_type="recreational",
+        match_class="casual",
+        player_day_counts={},
+        prior_pair_counts={},
+        config=config,
+    )
+
+    assert sampled is not None
+    selected_player_ids = set(sampled[0].player_ids) | set(sampled[1].player_ids)
+    assert len(selected_player_ids) == 4
+
+
 def test_ad_hoc_pair_weight_prefers_local_pairs():
     same_region_pair = (
         active_player_candidate(1, rating=1500, region_id=1),
@@ -1077,6 +1118,7 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         "load_latest_team_player_ratings",
         "load_active_team_club_memberships",
         "load_active_team_regions",
+        "load_historical_team_activity_maps",
         "load_active_team_history",
         "build_active_team_candidates",
         "load_active_teams",
@@ -1084,6 +1126,7 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
         "load_recent_pair_dates",
         "load_active_player_pool",
         "load_prior_player_pair_counts",
+        "baseline_guardrails",
         "planning",
         "planning_under_target_maintenance",
         "planning_first_team_selection",
@@ -1114,15 +1157,70 @@ def test_generate_for_batch_records_runtime_metrics(session, caplog):
             "load_latest_team_player_ratings",
             "load_active_team_club_memberships",
             "load_active_team_regions",
+            "load_historical_team_activity_maps",
             "load_active_team_history",
             "build_active_team_candidates",
         }
     ]
-    assert len(load_active_team_detail_metrics) == 6
+    assert len(load_active_team_detail_metrics) == 7
     assert all(
         metric.metadata_json["parent_subphase"] == "load_active_teams"
         for metric in load_active_team_detail_metrics
+        if metric.subphase_name != "load_historical_team_activity_maps"
     )
+    historical_team_activity_metric = next(
+        metric
+        for metric in metrics
+        if metric.subphase_name == "load_historical_team_activity_maps"
+    )
+    assert (
+        historical_team_activity_metric.metadata_json["parent_subphase"]
+        == "load_active_team_history"
+    )
+
+    active_player_pool_metric = next(
+        metric for metric in metrics if metric.subphase_name == "load_active_player_pool"
+    )
+    assert active_player_pool_metric.output_count == 0
+    assert active_player_pool_metric.metadata_json["skipped"] is True
+    assert active_player_pool_metric.metadata_json["ad_hoc_enabled"] is False
+
+    prior_pair_counts_metric = next(
+        metric
+        for metric in metrics
+        if metric.subphase_name == "load_prior_player_pair_counts"
+    )
+    assert prior_pair_counts_metric.input_count == 0
+    assert prior_pair_counts_metric.output_count == 0
+    assert prior_pair_counts_metric.metadata_json["skipped"] is True
+
+    baseline_metric = next(
+        metric for metric in metrics if metric.subphase_name == "baseline_guardrails"
+    )
+    assert baseline_metric.metadata_json["candidate_team_count"] == 8
+    assert baseline_metric.metadata_json["under_target_team_count"] == 8
+    assert baseline_metric.metadata_json["candidate_player_count"] == 0
+    assert baseline_metric.metadata_json["active_player_pool_loaded"] is False
+    assert baseline_metric.metadata_json["planned_match_count"] == result.match_count
+    assert baseline_metric.metadata_json["pairing_source_weights_by_class"] == {
+        "casual": {
+            "competitive_team": "1.0",
+            "ad_hoc": "0.0",
+        },
+        "semi_competitive": {
+            "competitive_team": "1.0",
+            "ad_hoc": "0.0",
+        },
+        "competitive": {
+            "competitive_team": "1.0",
+            "ad_hoc": "0.0",
+        },
+    }
+    assert baseline_metric.metadata_json["ad_hoc_enabled_by_match_class"] == {
+        "casual": False,
+        "semi_competitive": False,
+        "competitive": False,
+    }
 
     planning_metric = next(
         metric for metric in metrics if metric.subphase_name == "planning"

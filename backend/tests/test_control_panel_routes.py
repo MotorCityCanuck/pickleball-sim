@@ -1848,6 +1848,142 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     assert "player_count" in report_text
 
 
+def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, created_at, updated_at
+                ) VALUES (
+                    107, 'realism_audit', 'realism-audit-stale-old', 'running',
+                    'run_realism_audit', 53.33, 'Older audit stalled.',
+                    '2026-06-20 21:24:51', '2026-06-20 21:24:49', '2026-06-20 21:24:49'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence,
+                    status, progress_current, progress_total, progress_unit, progress_percent,
+                    last_heartbeat_at, progress_message, started_at, created_at, updated_at
+                ) VALUES (
+                    107, 107, 2, 22, 'run_realism_audit', 1, 'running',
+                    24, 45, 'query', 53.33, '2026-06-20 21:25:21',
+                    'Older audit stalled.', '2026-06-20 21:24:51',
+                    '2026-06-20 21:24:49', '2026-06-20 21:24:49'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    108, 'realism_audit', 'realism-audit-success-new', 'succeeded',
+                    'completed', 100.00, 'Realism audit completed successfully.',
+                    '2026-06-21 00:26:59', '2026-06-21 01:59:53',
+                    '2026-06-21 00:26:58', '2026-06-21 00:26:58'
+                )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Audit completed successfully." in body
+    assert "Clear stalled job" not in body
+    assert "Audit job appears stalled." not in body
+
+
+def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    108, 'realism_audit', 'realism-audit-success-old', 'succeeded',
+                    'completed', 100.00, 'Realism audit completed successfully.',
+                    '2026-06-21 00:26:59', '2026-06-21 01:59:53',
+                    '2026-06-21 00:26:58', '2026-06-21 00:26:58'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, created_at, updated_at
+                ) VALUES (
+                    109, 'realism_audit', 'realism-audit-stale-new', 'running',
+                    'run_realism_audit', 53.33, 'Newest audit stalled.',
+                    '2026-06-21 02:30:00', '2026-06-21 02:29:59', '2026-06-21 02:29:59'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    id, job_status_id, generation_run_id, batch_id, stage_name, stage_sequence,
+                    status, progress_current, progress_total, progress_unit, progress_percent,
+                    last_heartbeat_at, progress_message, started_at, created_at, updated_at
+                ) VALUES (
+                    109, 109, 2, 22, 'run_realism_audit', 1, 'running',
+                    24, 45, 'query', 53.33, '2026-06-21 02:30:01',
+                    'Newest audit stalled.', '2026-06-21 02:30:00',
+                    '2026-06-21 02:29:59', '2026-06-21 02:29:59'
+                )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(
+                now_fn=lambda: datetime(2026, 6, 21, 3, 30, 0),
+            ),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Clear stalled job" in body
+    assert "Audit job appears stalled." in body
+    assert "Audit completed successfully." not in body
+
+
 def test_student_dataset_export_start_route_queues_background_job(session_factory):
     _seed_completed_generation_state(session_factory)
     app = create_app()

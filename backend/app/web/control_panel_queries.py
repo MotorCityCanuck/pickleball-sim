@@ -269,9 +269,11 @@ class RealismAuditSummary:
     """UI-ready realism-audit state."""
 
     latest_snapshot: RealismAuditSnapshotSummary | None
-    latest_job: JobSummary | None
-    latest_job_is_active: bool
-    latest_stage_progress: tuple[StageProgressSummary, ...]
+    latest_completed_job: JobSummary | None
+    latest_incomplete_job: JobSummary | None
+    latest_incomplete_job_is_active: bool
+    latest_incomplete_stage_progress: tuple[StageProgressSummary, ...]
+    clearable_job: JobSummary | None
 
 
 @dataclass(frozen=True)
@@ -766,7 +768,10 @@ class ControlPanelQueries:
             ),
         )
 
-    def get_realism_audit_job(self, session: Session) -> JobSummary | None:
+    def get_latest_incomplete_realism_audit_job(
+        self,
+        session: Session,
+    ) -> JobSummary | None:
         job_sort_timestamp = func.coalesce(
             JobStatus.started_at,
             JobStatus.completed_at,
@@ -776,9 +781,30 @@ class ControlPanelQueries:
             session.scalar(
                 select(JobStatus)
                 .where(JobStatus.job_type == "realism_audit")
+                .where(JobStatus.status.in_(("pending", "running")))
                 .order_by(
-                    case((JobStatus.status == "running", 0), else_=1),
-                    case((JobStatus.status == "pending", 1), else_=2),
+                    job_sort_timestamp.desc(),
+                    JobStatus.id.desc(),
+                )
+                .limit(1)
+            )
+        )
+
+    def get_latest_completed_realism_audit_job(
+        self,
+        session: Session,
+    ) -> JobSummary | None:
+        job_sort_timestamp = func.coalesce(
+            JobStatus.completed_at,
+            JobStatus.started_at,
+            JobStatus.created_at,
+        )
+        return _job_summary(
+            session.scalar(
+                select(JobStatus)
+                .where(JobStatus.job_type == "realism_audit")
+                .where(JobStatus.status.in_(("succeeded", "failed")))
+                .order_by(
                     job_sort_timestamp.desc(),
                     JobStatus.id.desc(),
                 )
@@ -805,19 +831,30 @@ class ControlPanelQueries:
         generation_run_id: int | None,
         batch_id: int | None,
     ) -> RealismAuditSummary:
-        latest_job = self.get_realism_audit_job(session)
+        latest_completed_job = self.get_latest_completed_realism_audit_job(session)
+        latest_incomplete_job = self.get_latest_incomplete_realism_audit_job(session)
         stage_progress = (
             self.get_realism_audit_progress(
                 session,
-                job_status_id=latest_job.job_status_id,
+                job_status_id=latest_incomplete_job.job_status_id,
             )
-            if latest_job is not None
+            if latest_incomplete_job is not None
             else ()
         )
-        latest_job_is_active = self._job_is_actively_processing(
-            latest_job,
+        latest_incomplete_job_is_active = self._job_is_actively_processing(
+            latest_incomplete_job,
             stage_progress=stage_progress,
         )
+        clearable_job = None
+        if (
+            latest_incomplete_job is not None
+            and not latest_incomplete_job_is_active
+            and _job_reference_time(latest_incomplete_job)
+            >= _job_reference_time(latest_completed_job)
+        ):
+            clearable_job = latest_incomplete_job
+        if not latest_incomplete_job_is_active and clearable_job is None:
+            stage_progress = ()
         payload = latest_realism_audit_snapshot_payload(
             generation_run_id=generation_run_id,
             batch_id=batch_id,
@@ -862,9 +899,11 @@ class ControlPanelQueries:
             )
         return RealismAuditSummary(
             latest_snapshot=snapshot_summary,
-            latest_job=latest_job,
-            latest_job_is_active=latest_job_is_active,
-            latest_stage_progress=stage_progress,
+            latest_completed_job=latest_completed_job,
+            latest_incomplete_job=latest_incomplete_job,
+            latest_incomplete_job_is_active=latest_incomplete_job_is_active,
+            latest_incomplete_stage_progress=stage_progress,
+            clearable_job=clearable_job,
         )
 
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
@@ -1216,7 +1255,7 @@ class ControlPanelQueries:
             realism_blockers.append("No seed preparation job can be active during realism audit.")
         if export_summary.latest_export_job_is_active:
             realism_blockers.append("Student dataset export must finish before realism audit.")
-        if realism_audit_summary.latest_job_is_active:
+        if realism_audit_summary.latest_incomplete_job_is_active:
             realism_blockers.append("A realism audit is already running.")
 
         can_edit_config = (
@@ -1446,6 +1485,21 @@ def _job_summary(job: JobStatus | None) -> JobSummary | None:
         error_message=job.error_message,
         created_at=job.created_at,
     )
+
+
+def _job_reference_time(job: JobSummary | None) -> datetime:
+    if job is None:
+        return datetime.min.replace(tzinfo=UTC)
+    reference_time = (
+        job.completed_at
+        or job.started_at
+        or job.created_at
+    )
+    if reference_time is None:
+        return datetime.min.replace(tzinfo=UTC)
+    if reference_time.tzinfo is None:
+        return reference_time.replace(tzinfo=UTC)
+    return reference_time.astimezone(UTC)
 
 
 def _batch_stage_progress(

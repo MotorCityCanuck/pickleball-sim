@@ -1,6 +1,7 @@
 """Generate monthly matches, match teams, players, and games."""
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from calendar import monthrange
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -448,6 +449,8 @@ class ActivePlayerPool:
     def __init__(self, players: list[ActivePlayerCandidate]) -> None:
         self.by_id = {player.id: player for player in players}
         self.all_ids = [player.id for player in players]
+        self.rating_index = sorted((player.rating, player.id) for player in players)
+        self.rating_values = [rating for rating, _ in self.rating_index]
         self.ids_by_region: dict[int, list[int]] = {}
         self.ids_by_gender: dict[str, list[int]] = {}
         self.ids_by_team_status: dict[str, list[int]] = {
@@ -480,6 +483,46 @@ class ActivePlayerPool:
             if player_day_counts.get((player.id, match_date), 0)
             < config.max_daily_matches_per_team
         ]
+
+    def available_player(
+        self,
+        player_id: int,
+        *,
+        match_date: date,
+        player_day_counts: dict[tuple[int, date], int],
+        config: MatchGenerationConfig,
+        excluded_player_ids: set[int] | frozenset[int] = frozenset(),
+    ) -> ActivePlayerCandidate | None:
+        if player_id in excluded_player_ids:
+            return None
+        player = self.by_id.get(player_id)
+        if player is None:
+            return None
+        if (
+            player_day_counts.get((player.id, match_date), 0)
+            >= config.max_daily_matches_per_team
+        ):
+            return None
+        return player
+
+    def ids_within_rating(
+        self,
+        rating: Decimal,
+        band: Decimal,
+    ) -> list[int]:
+        start, end = self.rating_window_bounds(rating, band)
+        return [player_id for _, player_id in self.rating_index[start:end]]
+
+    def rating_window_bounds(
+        self,
+        rating: Decimal,
+        band: Decimal,
+    ) -> tuple[int, int]:
+        lower = rating - band
+        upper = rating + band
+        start = bisect_left(self.rating_values, lower)
+        end = bisect_right(self.rating_values, upper)
+        return start, end
 
 
 class PairCandidatePool:
@@ -523,6 +566,7 @@ class PairCandidatePool:
         match_type: str,
         recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
+        player_day_counts: dict[tuple[int, date], int] | None = None,
         config: MatchGenerationConfig,
     ) -> PairCandidate | None:
         band = _rating_band(match_type, config)
@@ -539,6 +583,7 @@ class PairCandidatePool:
             require_rematch_penalty=True,
             recent_pair_dates=recent_pair_dates,
             team_day_counts=team_day_counts,
+            player_day_counts=player_day_counts,
             config=config,
         )
         if not sampled:
@@ -552,6 +597,7 @@ class PairCandidatePool:
                 require_rematch_penalty=True,
                 recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
+                player_day_counts=player_day_counts,
                 config=config,
             )
         if not sampled:
@@ -565,6 +611,7 @@ class PairCandidatePool:
                 require_rematch_penalty=True,
                 recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
+                player_day_counts=player_day_counts,
                 config=config,
             )
         if not sampled:
@@ -578,6 +625,7 @@ class PairCandidatePool:
                 require_rematch_penalty=False,
                 recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
+                player_day_counts=player_day_counts,
                 config=config,
             )
         if not sampled:
@@ -633,6 +681,7 @@ class PairCandidatePool:
         require_rematch_penalty: bool,
         recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
+        player_day_counts: dict[tuple[int, date], int] | None,
         config: MatchGenerationConfig,
     ) -> list[PairCandidate]:
         sample_size = min(16, max(8, len(source_ids)))
@@ -656,6 +705,7 @@ class PairCandidatePool:
                 require_rematch_penalty=require_rematch_penalty,
                 recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
+                player_day_counts=player_day_counts,
                 config=config,
             ):
                 sampled[team_id] = candidate
@@ -675,6 +725,7 @@ class PairCandidatePool:
                 require_rematch_penalty=require_rematch_penalty,
                 recent_pair_dates=recent_pair_dates,
                 team_day_counts=team_day_counts,
+                player_day_counts=player_day_counts,
                 config=config,
             ):
                 sampled[team_id] = candidate
@@ -720,12 +771,22 @@ class PairCandidatePool:
         require_rematch_penalty: bool,
         recent_pair_dates: dict[frozenset[int], list[date]],
         team_day_counts: dict[tuple[int, date], int],
+        player_day_counts: dict[tuple[int, date], int] | None,
         config: MatchGenerationConfig,
     ) -> bool:
         return (
             candidate.id != first_team.id
             and team_day_counts.get((candidate.id, match_date), 0)
             < config.max_daily_matches_per_team
+            and (
+                player_day_counts is None
+                or _candidate_players_available(
+                    candidate,
+                    match_date=match_date,
+                    player_day_counts=player_day_counts,
+                    config=config,
+                )
+            )
             and (
                 not require_rematch_penalty
                 or not _pairing_within_rematch_window(
@@ -745,6 +806,10 @@ class PairCandidatePool:
 
 MatchTeamPool = PairCandidatePool
 
+_AD_HOC_SIDE_SAMPLE_SIZE = 48
+_AD_HOC_SIDE_SAMPLE_ATTEMPTS = 384
+_AD_HOC_EXHAUSTIVE_SMALL_POOL_LIMIT = 96
+
 
 def _sample_ad_hoc_pair_candidates(
     rng: random.Random,
@@ -758,74 +823,327 @@ def _sample_ad_hoc_pair_candidates(
     config: MatchGenerationConfig,
 ) -> tuple[PairCandidate, PairCandidate] | None:
     """Sample two ad hoc sides without mutating generation state."""
-    available_players = player_pool.available_players(
-        match_date=match_date,
-        player_day_counts=player_day_counts,
-        config=config,
-    )
-    if len(available_players) < 4:
+    if len(player_pool.all_ids) < 4:
         return None
 
     band = _rating_band(match_type, config)
-    same_side_pairs = _ad_hoc_player_pairs(
-        available_players,
+    first_players = _choose_bounded_ad_hoc_player_pair(
+        rng,
+        player_pool=player_pool,
+        match_date=match_date,
+        player_day_counts=player_day_counts,
+        excluded_player_ids=frozenset(),
         band=band,
         require_rating_band=True,
-    )
-    if not same_side_pairs:
-        same_side_pairs = _ad_hoc_player_pairs(
-            available_players,
-            band=band,
-            require_rating_band=False,
-        )
-    if not same_side_pairs:
-        return None
-
-    first_players = _choose_weighted_ad_hoc_player_pair(
-        rng,
-        pairs=same_side_pairs,
         target_rating=None,
         target_region_id=None,
         prior_pair_counts=prior_pair_counts,
         match_class=match_class,
-        band=band,
+        config=config,
     )
+    if first_players is None:
+        first_players = _choose_bounded_ad_hoc_player_pair(
+            rng,
+            player_pool=player_pool,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            excluded_player_ids=frozenset(),
+            band=band,
+            require_rating_band=False,
+            target_rating=None,
+            target_region_id=None,
+            prior_pair_counts=prior_pair_counts,
+            match_class=match_class,
+            config=config,
+        )
+    if first_players is None:
+        return None
+
     first_candidate = _ad_hoc_pair_candidate(
         first_players,
         match_date=match_date,
         prior_pair_counts=prior_pair_counts,
     )
-    used_player_ids = set(first_candidate.player_ids)
-    opponent_pairs = [
-        pair
-        for pair in same_side_pairs
-        if pair[0].id not in used_player_ids and pair[1].id not in used_player_ids
-    ]
-    opponent_pairs_in_band = [
-        pair
-        for pair in opponent_pairs
-        if abs(_average_player_rating(pair) - first_candidate.average_rating) <= band
-    ]
-    if opponent_pairs_in_band:
-        opponent_pairs = opponent_pairs_in_band
-    if not opponent_pairs:
-        return None
-
-    second_players = _choose_weighted_ad_hoc_player_pair(
+    used_player_ids = frozenset(first_candidate.player_ids)
+    second_players = _choose_bounded_ad_hoc_player_pair(
         rng,
-        pairs=opponent_pairs,
+        player_pool=player_pool,
+        match_date=match_date,
+        player_day_counts=player_day_counts,
+        excluded_player_ids=used_player_ids,
+        band=band,
+        require_rating_band=True,
         target_rating=first_candidate.average_rating,
         target_region_id=first_candidate.region_id,
         prior_pair_counts=prior_pair_counts,
         match_class=match_class,
-        band=band,
+        config=config,
     )
+    if second_players is None:
+        second_players = _choose_bounded_ad_hoc_player_pair(
+            rng,
+            player_pool=player_pool,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            excluded_player_ids=used_player_ids,
+            band=band,
+            require_rating_band=False,
+            target_rating=first_candidate.average_rating,
+            target_region_id=first_candidate.region_id,
+            prior_pair_counts=prior_pair_counts,
+            match_class=match_class,
+            config=config,
+        )
+    if second_players is None:
+        return None
+
     second_candidate = _ad_hoc_pair_candidate(
         second_players,
         match_date=match_date,
         prior_pair_counts=prior_pair_counts,
     )
     return first_candidate, second_candidate
+
+
+def _choose_bounded_ad_hoc_player_pair(
+    rng: random.Random,
+    *,
+    player_pool: ActivePlayerPool,
+    match_date: date,
+    player_day_counts: dict[tuple[int, date], int],
+    excluded_player_ids: set[int] | frozenset[int],
+    band: Decimal,
+    require_rating_band: bool,
+    target_rating: Decimal | None,
+    target_region_id: int | None,
+    prior_pair_counts: dict[tuple[int, int], int],
+    match_class: str,
+    config: MatchGenerationConfig,
+) -> tuple[ActivePlayerCandidate, ActivePlayerCandidate] | None:
+    candidate_pairs = _bounded_ad_hoc_player_pairs(
+        rng,
+        player_pool=player_pool,
+        match_date=match_date,
+        player_day_counts=player_day_counts,
+        excluded_player_ids=excluded_player_ids,
+        band=band,
+        require_rating_band=require_rating_band,
+        target_rating=target_rating,
+        target_region_id=target_region_id,
+        config=config,
+    )
+    if not candidate_pairs:
+        return None
+    return _choose_weighted_ad_hoc_player_pair(
+        rng,
+        pairs=candidate_pairs,
+        target_rating=target_rating,
+        target_region_id=target_region_id,
+        prior_pair_counts=prior_pair_counts,
+        match_class=match_class,
+        band=band,
+    )
+
+
+def _bounded_ad_hoc_player_pairs(
+    rng: random.Random,
+    *,
+    player_pool: ActivePlayerPool,
+    match_date: date,
+    player_day_counts: dict[tuple[int, date], int],
+    excluded_player_ids: set[int] | frozenset[int],
+    band: Decimal,
+    require_rating_band: bool,
+    target_rating: Decimal | None,
+    target_region_id: int | None,
+    config: MatchGenerationConfig,
+) -> list[tuple[ActivePlayerCandidate, ActivePlayerCandidate]]:
+    if len(player_pool.all_ids) <= _AD_HOC_EXHAUSTIVE_SMALL_POOL_LIMIT:
+        available_players = player_pool.available_players(
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            config=config,
+        )
+        available_players = [
+            player
+            for player in available_players
+            if player.id not in excluded_player_ids
+        ]
+        return _ad_hoc_player_pairs(
+            available_players,
+            band=band,
+            require_rating_band=require_rating_band,
+        )
+
+    candidate_pairs: dict[tuple[int, int], tuple[ActivePlayerCandidate, ActivePlayerCandidate]] = {}
+    anchor_sources = _ad_hoc_anchor_sources(
+        player_pool,
+        target_region_id=target_region_id,
+    )
+    attempts = min(
+        _AD_HOC_SIDE_SAMPLE_ATTEMPTS,
+        max(len(player_pool.all_ids) * 2, _AD_HOC_SIDE_SAMPLE_ATTEMPTS),
+    )
+    for _ in range(attempts):
+        if len(candidate_pairs) >= _AD_HOC_SIDE_SAMPLE_SIZE:
+            break
+        anchor = _random_available_ad_hoc_player(
+            rng,
+            player_pool=player_pool,
+            source_ids=anchor_sources[rng.randrange(len(anchor_sources))],
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            excluded_player_ids=excluded_player_ids,
+            config=config,
+        )
+        if anchor is None:
+            continue
+
+        partner = _random_available_ad_hoc_partner(
+            rng,
+            player_pool=player_pool,
+            anchor=anchor,
+            band=band,
+            require_rating_band=require_rating_band,
+            target_region_id=target_region_id,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            excluded_player_ids=set(excluded_player_ids) | {anchor.id},
+            config=config,
+        )
+        if partner is None:
+            continue
+        if require_rating_band and abs(anchor.rating - partner.rating) > band:
+            continue
+        pair_key = _player_pair_key(anchor.id, partner.id)
+        candidate_pairs[pair_key] = (anchor, partner)
+
+    return list(candidate_pairs.values())
+
+
+def _ad_hoc_anchor_sources(
+    player_pool: ActivePlayerPool,
+    *,
+    target_region_id: int | None,
+) -> tuple[list[int], ...]:
+    sources: list[list[int]] = []
+    if target_region_id is not None:
+        region_ids = player_pool.ids_by_region.get(target_region_id)
+        if region_ids:
+            sources.extend([region_ids, region_ids])
+    unteamed_ids = player_pool.ids_by_team_status.get("unteamed", [])
+    if unteamed_ids:
+        sources.append(unteamed_ids)
+    sources.append(player_pool.all_ids)
+    return tuple(sources)
+
+
+def _ad_hoc_partner_source_ids(
+    player_pool: ActivePlayerPool,
+    *,
+    anchor: ActivePlayerCandidate,
+    band: Decimal,
+    require_rating_band: bool,
+    target_region_id: int | None,
+) -> list[int]:
+    if require_rating_band:
+        return player_pool.ids_within_rating(anchor.rating, band)
+    if target_region_id is not None:
+        region_ids = player_pool.ids_by_region.get(target_region_id)
+        if region_ids:
+            return region_ids
+    if anchor.region_id is not None:
+        region_ids = player_pool.ids_by_region.get(anchor.region_id)
+        if region_ids:
+            return region_ids
+    return player_pool.all_ids
+
+
+def _random_available_ad_hoc_partner(
+    rng: random.Random,
+    *,
+    player_pool: ActivePlayerPool,
+    anchor: ActivePlayerCandidate,
+    band: Decimal,
+    require_rating_band: bool,
+    target_region_id: int | None,
+    match_date: date,
+    player_day_counts: dict[tuple[int, date], int],
+    excluded_player_ids: set[int] | frozenset[int],
+    config: MatchGenerationConfig,
+) -> ActivePlayerCandidate | None:
+    if require_rating_band:
+        start, end = player_pool.rating_window_bounds(anchor.rating, band)
+        if end <= start:
+            return None
+        attempts = min(max(end - start, 32), 128)
+        for _ in range(attempts):
+            _, player_id = player_pool.rating_index[rng.randrange(start, end)]
+            player = player_pool.available_player(
+                player_id,
+                match_date=match_date,
+                player_day_counts=player_day_counts,
+                config=config,
+                excluded_player_ids=excluded_player_ids,
+            )
+            if player is not None:
+                return player
+        return None
+
+    partner_source_ids = _ad_hoc_partner_source_ids(
+        player_pool,
+        anchor=anchor,
+        band=band,
+        require_rating_band=False,
+        target_region_id=target_region_id,
+    )
+    return _random_available_ad_hoc_player(
+        rng,
+        player_pool=player_pool,
+        source_ids=partner_source_ids,
+        match_date=match_date,
+        player_day_counts=player_day_counts,
+        excluded_player_ids=excluded_player_ids,
+        config=config,
+    )
+
+
+def _random_available_ad_hoc_player(
+    rng: random.Random,
+    *,
+    player_pool: ActivePlayerPool,
+    source_ids: list[int],
+    match_date: date,
+    player_day_counts: dict[tuple[int, date], int],
+    excluded_player_ids: set[int] | frozenset[int],
+    config: MatchGenerationConfig,
+) -> ActivePlayerCandidate | None:
+    if not source_ids:
+        return None
+    attempts = min(max(len(source_ids), 32), 128)
+    for _ in range(attempts):
+        player_id = source_ids[rng.randrange(len(source_ids))]
+        player = player_pool.available_player(
+            player_id,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            config=config,
+            excluded_player_ids=excluded_player_ids,
+        )
+        if player is not None:
+            return player
+
+    for player_id in source_ids[:_AD_HOC_EXHAUSTIVE_SMALL_POOL_LIMIT]:
+        player = player_pool.available_player(
+            player_id,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            config=config,
+            excluded_player_ids=excluded_player_ids,
+        )
+        if player is not None:
+            return player
+    return None
 
 
 def _ad_hoc_player_pairs(
@@ -1013,6 +1331,89 @@ def _pairing_source_for_match(
     return str(WeightedSampler(weights).choose(rng))
 
 
+def _pairing_source_for_match_from_samplers(
+    rng: random.Random,
+    *,
+    match_type: str,
+    match_class: str,
+    samplers_by_class: dict[str, WeightedSampler[str]],
+    samplers_by_type: dict[str, WeightedSampler[str]],
+) -> str:
+    sampler = samplers_by_type.get(match_type) or samplers_by_class[match_class]
+    return str(sampler.choose(rng))
+
+
+def _pairing_source_samplers_by_class(
+    config: MatchGenerationConfig,
+) -> dict[str, WeightedSampler[str]]:
+    return {
+        match_class: WeightedSampler(weights)
+        for match_class, weights in config.pairing_source_weights_by_class.items()
+    }
+
+
+def _pairing_source_samplers_by_type(
+    config: MatchGenerationConfig,
+) -> dict[str, WeightedSampler[str]]:
+    return {
+        match_type: WeightedSampler(weights)
+        for match_type, weights in config.pairing_source_overrides_by_type.items()
+    }
+
+
+def _config_can_select_ad_hoc(config: MatchGenerationConfig) -> bool:
+    for match_type, match_type_weight in config.match_type_weights:
+        if match_type_weight <= 0:
+            continue
+        match_class = _match_class_for_match_type(match_type, config)
+        weights = config.pairing_source_overrides_by_type.get(
+            match_type,
+            config.pairing_source_weights_by_class[match_class],
+        )
+        if any(
+            pairing_source == "ad_hoc" and weight > 0
+            for pairing_source, weight in weights
+        ):
+            return True
+    return False
+
+
+def _pairing_source_weights_metadata(
+    config: MatchGenerationConfig,
+) -> dict[str, dict[str, str]]:
+    return {
+        match_class: {
+            pairing_source: str(weight)
+            for pairing_source, weight in weights
+        }
+        for match_class, weights in config.pairing_source_weights_by_class.items()
+    }
+
+
+def _pairing_source_override_metadata(
+    config: MatchGenerationConfig,
+) -> dict[str, dict[str, str]]:
+    return {
+        match_type: {
+            pairing_source: str(weight)
+            for pairing_source, weight in weights
+        }
+        for match_type, weights in config.pairing_source_overrides_by_type.items()
+    }
+
+
+def _pairing_source_ad_hoc_enabled_by_class(
+    config: MatchGenerationConfig,
+) -> dict[str, bool]:
+    return {
+        match_class: any(
+            pairing_source == "ad_hoc" and weight > 0
+            for pairing_source, weight in weights
+        )
+        for match_class, weights in config.pairing_source_weights_by_class.items()
+    }
+
+
 def _source_attempt_order(source: str) -> tuple[str, ...]:
     if source == "ad_hoc":
         return ("ad_hoc", "competitive_team")
@@ -1055,6 +1456,53 @@ def _increment_prior_pair_counts(
         return
     pair_key = _player_pair_key(candidate.player_ids[0], candidate.player_ids[1])
     prior_pair_counts[pair_key] = prior_pair_counts.get(pair_key, 0) + 1
+
+
+def _choose_competitive_first_team(
+    rng: random.Random,
+    *,
+    pair_candidate_pool: PairCandidatePool,
+    under_target_ids: list[int],
+    match_date: date,
+    team_day_counts: dict[tuple[int, date], int],
+    player_day_counts: dict[tuple[int, date], int],
+    config: MatchGenerationConfig,
+) -> PairCandidate | None:
+    if len(under_target_ids) < 2:
+        return None
+
+    attempts = min(max(len(under_target_ids), 100), 1_000)
+    for _ in range(attempts):
+        team_id = under_target_ids[rng.randrange(len(under_target_ids))]
+        candidate = pair_candidate_pool.by_id[team_id]
+        if (
+            team_day_counts.get((team_id, match_date), 0)
+            >= config.max_daily_matches_per_team
+        ):
+            continue
+        if _candidate_players_available(
+            candidate,
+            match_date=match_date,
+            player_day_counts=player_day_counts,
+            config=config,
+        ):
+            return candidate
+
+    # Saturated days are uncommon but need a deterministic fallback.
+    for team_id in under_target_ids:
+        candidate = pair_candidate_pool.by_id[team_id]
+        if (
+            team_day_counts.get((team_id, match_date), 0)
+            < config.max_daily_matches_per_team
+            and _candidate_players_available(
+                candidate,
+                match_date=match_date,
+                player_day_counts=player_day_counts,
+                config=config,
+            )
+        ):
+            return candidate
+    return None
 
 
 class MatchGenerator:
@@ -1162,6 +1610,9 @@ class MatchGenerator:
             metric["metadata"]["team_target_sum"] = sum(team_target_matches.values())
         date_sampler = _date_sampler(batch.batch_month, config)
         match_type_sampler = WeightedSampler(config.match_type_weights)
+        pairing_source_samplers_by_class = _pairing_source_samplers_by_class(config)
+        pairing_source_samplers_by_type = _pairing_source_samplers_by_type(config)
+        ad_hoc_enabled = _config_can_select_ad_hoc(config)
         with _measure_runtime(
             runtime_recorder,
             "load_recent_pair_dates",
@@ -1177,35 +1628,69 @@ class MatchGenerator:
             metric["metadata"]["prior_pair_date_count"] = sum(
                 len(pair_dates) for pair_dates in recent_pair_dates.values()
             )
-        with _measure_runtime(
-            runtime_recorder,
-            "load_active_player_pool",
-            metadata={"batch_month": batch.batch_month},
-        ) as metric:
-            active_player_pool = _active_player_pool(
-                session,
-                batch.generation_run_id,
-                batch.batch_month,
-                config=config,
+        active_player_pool: ActivePlayerPool | None = None
+        prior_player_pair_counts: dict[tuple[int, int], int] = {}
+        if ad_hoc_enabled:
+            with _measure_runtime(
+                runtime_recorder,
+                "load_active_player_pool",
+                metadata={
+                    "batch_month": batch.batch_month,
+                    "ad_hoc_enabled": True,
+                },
+            ) as metric:
+                active_player_pool = _active_player_pool(
+                    session,
+                    batch.generation_run_id,
+                    batch.batch_month,
+                    config=config,
+                    runtime_recorder=runtime_recorder,
+                )
+                metric["output_count"] = len(active_player_pool.all_ids)
+                metric["metadata"]["active_player_count"] = len(active_player_pool.all_ids)
+                metric["metadata"]["unteamed_player_count"] = len(
+                    active_player_pool.ids_by_team_status["unteamed"]
+                )
+            with _measure_runtime(
+                runtime_recorder,
+                "load_prior_player_pair_counts",
+                input_count=len(active_player_pool.all_ids),
+                metadata={
+                    "batch_month": batch.batch_month,
+                    "ad_hoc_enabled": True,
+                },
+            ) as metric:
+                prior_player_pair_counts = _prior_player_pair_counts(
+                    session,
+                    generation_run_id=batch.generation_run_id,
+                    batch_month=batch.batch_month,
+                    player_ids=set(active_player_pool.all_ids),
+                )
+                metric["output_count"] = len(prior_player_pair_counts)
+        else:
+            _record_completed_runtime(
+                runtime_recorder,
+                "load_active_player_pool",
+                elapsed_ms=0,
+                output_count=0,
+                metadata={
+                    "batch_month": batch.batch_month,
+                    "ad_hoc_enabled": False,
+                    "skipped": True,
+                },
             )
-            metric["output_count"] = len(active_player_pool.all_ids)
-            metric["metadata"]["active_player_count"] = len(active_player_pool.all_ids)
-            metric["metadata"]["unteamed_player_count"] = len(
-                active_player_pool.ids_by_team_status["unteamed"]
+            _record_completed_runtime(
+                runtime_recorder,
+                "load_prior_player_pair_counts",
+                elapsed_ms=0,
+                input_count=0,
+                output_count=0,
+                metadata={
+                    "batch_month": batch.batch_month,
+                    "ad_hoc_enabled": False,
+                    "skipped": True,
+                },
             )
-        with _measure_runtime(
-            runtime_recorder,
-            "load_prior_player_pair_counts",
-            input_count=len(active_player_pool.all_ids),
-            metadata={"batch_month": batch.batch_month},
-        ) as metric:
-            prior_player_pair_counts = _prior_player_pair_counts(
-                session,
-                generation_run_id=batch.generation_run_id,
-                batch_month=batch.batch_month,
-                player_ids=set(active_player_pool.all_ids),
-            )
-            metric["output_count"] = len(prior_player_pair_counts)
         team_day_counts: dict[tuple[int, date], int] = {}
         team_month_counts: dict[int, int] = {}
         player_day_counts: dict[tuple[int, date], int] = {}
@@ -1221,6 +1706,34 @@ class MatchGenerator:
             team_id: index for index, team_id in enumerate(under_target_ids)
         }
         pair_candidate_pool = PairCandidatePool(teams)
+        _record_completed_runtime(
+            runtime_recorder,
+            "baseline_guardrails",
+            elapsed_ms=0,
+            input_count=len(teams),
+            output_count=target_match_count,
+            metadata={
+                "batch_month": batch.batch_month,
+                "candidate_team_count": len(pair_candidate_pool.by_id),
+                "under_target_team_count": len(under_target_ids),
+                "candidate_player_count": (
+                    len(active_player_pool.all_ids)
+                    if active_player_pool is not None
+                    else 0
+                ),
+                "active_player_pool_loaded": active_player_pool is not None,
+                "planned_match_count": target_match_count,
+                "pairing_source_weights_by_class": _pairing_source_weights_metadata(
+                    config
+                ),
+                "pairing_source_overrides_by_type": _pairing_source_override_metadata(
+                    config
+                ),
+                "ad_hoc_enabled_by_match_class": _pairing_source_ad_hoc_enabled_by_class(
+                    config
+                ),
+            },
+        )
         matches: list[Match] = []
         pairings: list[tuple[Match, PairCandidate, PairCandidate, Decimal]] = []
         attempts = 0
@@ -1269,16 +1782,22 @@ class MatchGenerator:
                     perf_counter() - detail_start
                 )
                 planning_detail_counts["planning_under_target_maintenance"] += 1
-                if under_target_count < 2 and len(active_player_pool.all_ids) < 4:
+                active_player_count = (
+                    len(active_player_pool.all_ids)
+                    if active_player_pool is not None
+                    else 0
+                )
+                if under_target_count < 2 and active_player_count < 4:
                     break
                 match_date = date_sampler.choose(rng)
                 match_type = str(match_type_sampler.choose(rng))
                 match_class = _match_class_for_match_type(match_type, config)
-                preferred_pairing_source = _pairing_source_for_match(
+                preferred_pairing_source = _pairing_source_for_match_from_samplers(
                     rng,
                     match_type=match_type,
                     match_class=match_class,
-                    config=config,
+                    samplers_by_class=pairing_source_samplers_by_class,
+                    samplers_by_type=pairing_source_samplers_by_type,
                 )
                 first_team: PairCandidate | None = None
                 second_team: PairCandidate | None = None
@@ -1287,26 +1806,18 @@ class MatchGenerator:
                     if pairing_source == "competitive_team":
                         if under_target_count < 2:
                             continue
-                        available_under_target_ids = [
-                            team_id
-                            for team_id in under_target_ids
-                            if _candidate_players_available(
-                                pair_candidate_pool.by_id[team_id],
-                                match_date=match_date,
-                                player_day_counts=player_day_counts,
-                                config=config,
-                            )
-                        ]
-                        if len(available_under_target_ids) < 2:
-                            continue
-                        first_team = pair_candidate_pool.choose_team(
+                        first_team = _choose_competitive_first_team(
                             rng,
-                            source_ids=available_under_target_ids,
+                            pair_candidate_pool=pair_candidate_pool,
+                            under_target_ids=under_target_ids,
                             team_day_counts=team_day_counts,
+                            player_day_counts=player_day_counts,
                             match_date=match_date,
                             config=config,
                         )
                     elif pairing_source == "ad_hoc":
+                        if active_player_pool is None:
+                            continue
                         sampled = _sample_ad_hoc_pair_candidates(
                             rng,
                             player_pool=active_player_pool,
@@ -1332,24 +1843,15 @@ class MatchGenerator:
                     continue
                 detail_start = perf_counter()
                 if first_team.pairing_source == "competitive_team":
-                    available_opponent_ids = {
-                        team_id
-                        for team_id in under_target_set
-                        if _candidate_players_available(
-                            pair_candidate_pool.by_id[team_id],
-                            match_date=match_date,
-                            player_day_counts=player_day_counts,
-                            config=config,
-                        )
-                    }
                     second_team = pair_candidate_pool.choose_opponent(
                         rng,
-                        allowed_team_ids=available_opponent_ids,
+                        allowed_team_ids=under_target_set,
                         first_team=first_team,
                         match_date=match_date,
                         match_type=match_type,
                         recent_pair_dates=recent_pair_dates,
                         team_day_counts=team_day_counts,
+                        player_day_counts=player_day_counts,
                         config=config,
                     )
                 planning_detail_seconds["planning_opponent_selection"] += (
@@ -2006,16 +2508,34 @@ def _active_teams(
             "batch_month": batch_month,
         },
     ) as metric:
-        prior_match_counts, recent_match_counts, recent_game_counts = (
-            _historical_team_activity_maps(
-                session,
-                generation_run_id=generation_run_id,
-                batch_month=batch_month,
-                player_ids_by_team=player_ids_by_team,
-                fatigue_window_days=fatigue_window_days,
-                recent_pair_window_days=recent_pair_window_days,
+        with _measure_runtime(
+            runtime_recorder,
+            "load_historical_team_activity_maps",
+            input_count=len(player_ids_by_team),
+            metadata={
+                "parent_subphase": "load_active_team_history",
+                "batch_month": batch_month,
+                "fatigue_window_days": fatigue_window_days,
+                "recent_pair_window_days": recent_pair_window_days,
+            },
+        ) as detail_metric:
+            prior_match_counts, recent_match_counts, recent_game_counts = (
+                _historical_team_activity_maps(
+                    session,
+                    generation_run_id=generation_run_id,
+                    batch_month=batch_month,
+                    player_ids_by_team=player_ids_by_team,
+                    fatigue_window_days=fatigue_window_days,
+                    recent_pair_window_days=recent_pair_window_days,
+                )
             )
-        )
+            detail_metric["output_count"] = len(prior_match_counts)
+            detail_metric["metadata"]["recent_match_count_entries"] = len(
+                recent_match_counts
+            )
+            detail_metric["metadata"]["recent_game_count_entries"] = len(
+                recent_game_counts
+            )
         metric["output_count"] = len(prior_match_counts)
 
     candidates: list[PairCandidate] = []
@@ -2110,26 +2630,37 @@ def _latest_active_team_player_ratings(
         .subquery()
     )
 
-    latest_ratings_by_player: dict[int, Decimal] = {}
-    for player_id, rating_value in session.execute(
+    ranked_ratings = (
         select(
-            PlayerRatingHistory.player_id,
-            PlayerRatingHistory.rating_value,
+            PlayerRatingHistory.player_id.label("player_id"),
+            PlayerRatingHistory.rating_value.label("rating_value"),
+            func.row_number()
+            .over(
+                partition_by=PlayerRatingHistory.player_id,
+                order_by=(
+                    PlayerRatingHistory.rating_date.desc(),
+                    PlayerRatingHistory.id.desc(),
+                ),
+            )
+            .label("rating_rank"),
         )
         .join(
             active_player_ids,
             active_player_ids.c.player_id == PlayerRatingHistory.player_id,
         )
         .where(PlayerRatingHistory.rating_date <= batch_month)
-        .order_by(
-            PlayerRatingHistory.player_id,
-            PlayerRatingHistory.rating_date.desc(),
-            PlayerRatingHistory.id.desc(),
+        .subquery()
+    )
+
+    return {
+        player_id: _decimal(rating_value)
+        for player_id, rating_value in session.execute(
+            select(
+                ranked_ratings.c.player_id,
+                ranked_ratings.c.rating_value,
+            ).where(ranked_ratings.c.rating_rank == 1)
         )
-    ):
-        if player_id not in latest_ratings_by_player:
-            latest_ratings_by_player[player_id] = _decimal(rating_value)
-    return latest_ratings_by_player
+    }
 
 
 def _active_player_pool(
@@ -2137,6 +2668,7 @@ def _active_player_pool(
     generation_run_id: int,
     batch_month: date,
     config: MatchGenerationConfig | None = None,
+    runtime_recorder: Any | None = None,
 ) -> ActivePlayerPool:
     player_rows = session.execute(
         select(
@@ -2177,13 +2709,25 @@ def _active_player_pool(
             ]
         )
     )
-    recent_match_counts, recent_game_counts = _recent_player_workload_maps(
-        session,
-        generation_run_id=generation_run_id,
-        batch_month=batch_month,
-        player_ids=player_ids,
-        window_days=fatigue_window_days,
-    )
+    with _measure_runtime(
+        runtime_recorder,
+        "load_recent_player_workload_maps",
+        input_count=len(player_ids),
+        metadata={
+            "parent_subphase": "load_active_player_pool",
+            "batch_month": batch_month,
+            "window_days": fatigue_window_days,
+        },
+    ) as metric:
+        recent_match_counts, recent_game_counts = _recent_player_workload_maps(
+            session,
+            generation_run_id=generation_run_id,
+            batch_month=batch_month,
+            player_ids=player_ids,
+            window_days=fatigue_window_days,
+        )
+        metric["output_count"] = len(recent_match_counts)
+        metric["metadata"]["recent_game_count_entries"] = len(recent_game_counts)
 
     candidates: list[ActivePlayerCandidate] = []
     for player_id, gender, region_id in player_rows:
@@ -2220,25 +2764,36 @@ def _latest_player_ratings(
     if not player_ids:
         return {}
 
-    latest_ratings_by_player: dict[int, Decimal] = {}
-    for player_id, rating_value in session.execute(
+    ranked_ratings = (
         select(
-            PlayerRatingHistory.player_id,
-            PlayerRatingHistory.rating_value,
+            PlayerRatingHistory.player_id.label("player_id"),
+            PlayerRatingHistory.rating_value.label("rating_value"),
+            func.row_number()
+            .over(
+                partition_by=PlayerRatingHistory.player_id,
+                order_by=(
+                    PlayerRatingHistory.rating_date.desc(),
+                    PlayerRatingHistory.id.desc(),
+                ),
+            )
+            .label("rating_rank"),
         )
         .where(
             PlayerRatingHistory.player_id.in_(player_ids),
             PlayerRatingHistory.rating_date <= batch_month,
         )
-        .order_by(
-            PlayerRatingHistory.player_id,
-            PlayerRatingHistory.rating_date.desc(),
-            PlayerRatingHistory.id.desc(),
+        .subquery()
+    )
+
+    return {
+        player_id: _decimal(rating_value)
+        for player_id, rating_value in session.execute(
+            select(
+                ranked_ratings.c.player_id,
+                ranked_ratings.c.rating_value,
+            ).where(ranked_ratings.c.rating_rank == 1)
         )
-    ):
-        if player_id not in latest_ratings_by_player:
-            latest_ratings_by_player[player_id] = _decimal(rating_value)
-    return latest_ratings_by_player
+    }
 
 
 def _active_team_ids_by_player(
@@ -2298,7 +2853,6 @@ def _recent_player_workload_maps(
         return {}, {}
 
     recent_cutoff = batch_month - timedelta(days=window_days)
-    game_counts_by_match = _game_counts_by_match(session)
     match_ids_by_player: dict[int, set[int]] = {}
     for player_id, match_id in session.execute(
         select(MatchTeamPlayer.player_id, Match.id)
@@ -2318,6 +2872,12 @@ def _recent_player_workload_maps(
         player_id: len(match_ids)
         for player_id, match_ids in match_ids_by_player.items()
     }
+    scoped_match_ids = {
+        match_id
+        for match_ids in match_ids_by_player.values()
+        for match_id in match_ids
+    }
+    game_counts_by_match = _game_counts_by_match(session, match_ids=scoped_match_ids)
     recent_game_counts = {
         player_id: sum(game_counts_by_match.get(match_id, 0) for match_id in match_ids)
         for player_id, match_ids in match_ids_by_player.items()
@@ -2477,7 +3037,6 @@ def _historical_team_activity_maps(
         for player_ids in player_ids_by_team.values()
         for player_id in player_ids
     }
-    game_counts_by_match = _game_counts_by_match(session)
     recent_pair_cutoff = batch_month - timedelta(days=recent_pair_window_days)
     fatigue_cutoff = batch_month - timedelta(days=fatigue_window_days)
     match_team_rows: dict[int, dict[str, Any]] = {}
@@ -2508,6 +3067,12 @@ def _historical_team_activity_maps(
         )
         row["player_ids"].append(player_id)
 
+    scoped_match_ids = {
+        row["match_id"]
+        for row in match_team_rows.values()
+        if row["match_date"] >= fatigue_cutoff
+    }
+    game_counts_by_match = _game_counts_by_match(session, match_ids=scoped_match_ids)
     prior_match_counts: dict[int, int] = {}
     recent_match_counts: dict[int, int] = {}
     recent_game_counts: dict[int, int] = {}
@@ -2530,17 +3095,25 @@ def _historical_team_activity_maps(
     return prior_match_counts, recent_match_counts, recent_game_counts
 
 
-def _game_counts_by_match(session: Session) -> dict[int, int]:
+def _game_counts_by_match(
+    session: Session,
+    *,
+    match_ids: set[int] | None = None,
+) -> dict[int, int]:
     if not _table_exists(session, "match_games"):
         return {}
+    if match_ids is not None and not match_ids:
+        return {}
+
+    statement = select(MatchGame.match_id, func.count(MatchGame.id)).group_by(
+        MatchGame.match_id
+    )
+    if match_ids is not None:
+        statement = statement.where(MatchGame.match_id.in_(match_ids))
 
     return {
         match_id: game_count
-        for match_id, game_count in session.execute(
-            select(MatchGame.match_id, func.count(MatchGame.id)).group_by(
-                MatchGame.match_id
-            )
-        )
+        for match_id, game_count in session.execute(statement)
     }
 
 

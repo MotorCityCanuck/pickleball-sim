@@ -9,7 +9,7 @@
 
 <section
     style="display:grid; gap:16px;"
-    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
         hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
         hx-swap="outerHTML"
@@ -450,14 +450,14 @@
                 {% endif %}
             </div>
 
-            {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'succeeded' and not snapshot.realism_audit_summary.latest_job_is_active %}
+            {% if snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'succeeded' and not snapshot.realism_audit_summary.latest_incomplete_job_is_active and not snapshot.realism_audit_summary.clearable_job %}
                 <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
-                    {{ snapshot.realism_audit_summary.latest_job.current_message or "Realism audit completed successfully." }}
+                    {{ snapshot.realism_audit_summary.latest_completed_job.current_message or "Realism audit completed successfully." }}
                 </div>
             {% endif %}
-            {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed' and not snapshot.realism_audit_summary.latest_job_is_active %}
+            {% if snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed' and not snapshot.realism_audit_summary.latest_incomplete_job_is_active and not snapshot.realism_audit_summary.clearable_job %}
                 <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
-                    {{ snapshot.realism_audit_summary.latest_job.current_message or snapshot.realism_audit_summary.latest_job.error_message or "Realism audit failed." }}
+                    {{ snapshot.realism_audit_summary.latest_completed_job.current_message or snapshot.realism_audit_summary.latest_completed_job.error_message or "Realism audit failed." }}
                 </div>
             {% endif %}
             {% if realism_audit_message %}
@@ -660,12 +660,26 @@
                     >
                         {% if snapshot.allowed_actions.can_run_realism_audit %}Run Realism Audit - Available{% else %}Run Realism Audit - Not Available{% endif %}
                     </button>
+                    {% if snapshot.realism_audit_summary.clearable_job %}
+                        <button
+                            type="button"
+                            hx-post="/control/jobs/clear-stalled"
+                            hx-vals='{"job_status_id": "{{ snapshot.realism_audit_summary.clearable_job.job_status_id }}"}'
+                            hx-target="#control-tab-content"
+                            hx-swap="innerHTML"
+                            style="border:1px solid #b42318; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 14px; cursor:pointer;"
+                        >
+                            Clear stalled job
+                        </button>
+                    {% endif %}
                     <div style="font-size:13px; color:#5a6477;">
-                        {% if snapshot.realism_audit_summary.latest_job_is_active %}
-                            Audit in progress{% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.current_message %}: {{ snapshot.realism_audit_summary.latest_job.current_message }}{% endif %}
-                        {% elif snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'succeeded' %}
+                        {% if snapshot.realism_audit_summary.latest_incomplete_job_is_active %}
+                            Audit in progress{% if snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}: {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}{% endif %}
+                        {% elif snapshot.realism_audit_summary.clearable_job %}
+                            Audit job appears stalled.
+                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'succeeded' %}
                             Audit completed successfully.
-                        {% elif snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed' %}
+                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed' %}
                             Audit failed.
                         {% else %}
                             No realism audit currently running.
@@ -679,9 +693,9 @@
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Audit Progress</div>
                     <div style="margin-top:6px; color:#5a6477;">Live progress for the current realism audit job.</div>
                 </div>
-                {% if snapshot.realism_audit_summary.latest_stage_progress %}
+                {% if snapshot.realism_audit_summary.latest_incomplete_stage_progress %}
                     <div style="display:grid; gap:10px;">
-                        {% for stage in snapshot.realism_audit_summary.latest_stage_progress %}
+                        {% for stage in snapshot.realism_audit_summary.latest_incomplete_stage_progress %}
                             <div>
                                 <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
                                     <span>{{ stage.stage_name }}</span>
@@ -715,8 +729,10 @@
                     </div>
                 {% else %}
                     <div style="color:#5a6477; font-size:12px;">
-                        {% if snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.current_message %}
-                            {{ snapshot.realism_audit_summary.latest_job.current_message }}
+                        {% if snapshot.realism_audit_summary.latest_incomplete_job_is_active and snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}
+                            {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}
+                        {% elif snapshot.realism_audit_summary.clearable_job and snapshot.realism_audit_summary.clearable_job.current_message %}
+                            {{ snapshot.realism_audit_summary.clearable_job.current_message }}
                         {% else %}
                             Progress will appear here while the audit is running.
                         {% endif %}
@@ -737,9 +753,9 @@
                 >
                 <button
                     type="submit"
-                    {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed') %}disabled{% endif %}
+                    {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed') %}disabled{% endif %}
                     onclick="const input = document.getElementById('realism-audit-report-output-dir'); const hidden = this.form.querySelector('[data-realism-audit-download-dir]'); if (input && hidden) hidden.value = input.value;"
-                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_job_is_active or (snapshot.realism_audit_summary.latest_job and snapshot.realism_audit_summary.latest_job.status == 'failed') %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+                    style="border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.realism_audit_summary.latest_snapshot or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed') %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
                 >
                     Create &amp; Download Markdown Report
                 </button>

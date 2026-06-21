@@ -1099,13 +1099,19 @@ CREATE INDEX idx_team_lifecycle_events_batch ON team_lifecycle_events (batch_id)
 CREATE INDEX idx_team_lifecycle_events_date ON team_lifecycle_events (event_date);
 CREATE INDEX idx_team_lifecycle_events_run ON team_lifecycle_events (generation_run_id);
 CREATE INDEX idx_team_lifecycle_events_team ON team_lifecycle_events (team_id);
+CREATE INDEX idx_team_lifecycle_events_run_date_team_id
+    ON team_lifecycle_events (generation_run_id, event_date, team_id, id);
 CREATE INDEX idx_team_memberships_dates ON team_memberships (joined_date, left_date);
 CREATE INDEX idx_team_memberships_player ON team_memberships (player_id);
 CREATE INDEX idx_team_memberships_team ON team_memberships (team_id);
+CREATE INDEX idx_team_memberships_team_dates_player
+    ON team_memberships (team_id, joined_date, left_date, player_id);
 CREATE INDEX idx_teams_country ON teams (country_code);
 CREATE INDEX idx_teams_formation_date ON teams (formation_date);
 CREATE INDEX idx_teams_status ON teams (team_status);
 CREATE INDEX idx_teams_type ON teams (team_type);
+CREATE INDEX idx_teams_run_status_formation_dissolution
+    ON teams (generation_run_id, team_status, formation_date, dissolution_date);
 CREATE INDEX idx_tournament_division_results_division ON tournament_division_results (slot_country_code, slot_division);
 CREATE INDEX idx_tournament_division_results_run ON tournament_division_results (simulation_run_id);
 CREATE INDEX idx_tournament_events_date ON tournament_events (tournament_date);

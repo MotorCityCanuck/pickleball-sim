@@ -1649,26 +1649,28 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                 GROUP BY at.batch_id, at.team_id
                 HAVING COUNT(*) = 2
             ),
+            distinct_rosters AS (
+                SELECT DISTINCT
+                    batch_id,
+                    roster_key
+                FROM active_rosters
+            ),
             classified AS (
                 SELECT
                     bp.batch_id,
                     bp.batch_month,
                     bp.prior_batch_id,
-                    ar.roster_key,
+                    current_rosters.roster_key,
                     CASE
-                        WHEN bp.prior_batch_id IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1
-                                FROM active_rosters prior_ar
-                                WHERE prior_ar.batch_id = bp.prior_batch_id
-                                    AND prior_ar.roster_key = ar.roster_key
-                            )
-                        THEN 1
+                        WHEN prior_rosters.roster_key IS NOT NULL THEN 1
                         ELSE 0
                     END AS persisted_from_prior_batch
                 FROM batch_pairs bp
-                LEFT JOIN active_rosters ar
-                    ON ar.batch_id = bp.batch_id
+                LEFT JOIN distinct_rosters current_rosters
+                    ON current_rosters.batch_id = bp.batch_id
+                LEFT JOIN distinct_rosters prior_rosters
+                    ON prior_rosters.batch_id = bp.prior_batch_id
+                    AND prior_rosters.roster_key = current_rosters.roster_key
             )
             SELECT
                 batch_id,
