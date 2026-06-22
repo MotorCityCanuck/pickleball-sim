@@ -22,6 +22,7 @@ def session():
     engine = create_engine("sqlite:///:memory:", future=True)
     with engine.begin() as conn:
         conn.exec_driver_sql("PRAGMA foreign_keys = ON")
+        conn.exec_driver_sql("ATTACH DATABASE ':memory:' AS ops")
         conn.exec_driver_sql(
             """
             CREATE TABLE raw_seed_load_runs (
@@ -290,6 +291,60 @@ def session():
                 updated_at datetime default current_timestamp not null,
                 foreign key(clean_generation_run_id) references generation_runs(id),
                 foreign key(tainted_generation_run_id) references generation_runs(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE ops.background_workers (
+                worker_id varchar(64) primary key,
+                worker_type varchar(50) not null,
+                host_name varchar(255),
+                process_id integer,
+                started_at datetime default current_timestamp not null,
+                last_heartbeat_at datetime default current_timestamp not null,
+                status varchar(30) default 'running' not null,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE ops.background_job_leases (
+                job_status_id bigint primary key,
+                worker_id varchar(64) not null,
+                lease_token varchar(64) not null,
+                claimed_at datetime default current_timestamp not null,
+                lease_expires_at datetime not null,
+                last_heartbeat_at datetime default current_timestamp not null,
+                attempt_count integer default 1 not null,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE ops.realism_audit_query_runs (
+                id integer primary key autoincrement,
+                job_status_id bigint not null,
+                generation_run_id bigint,
+                batch_id bigint,
+                query_index integer not null,
+                query_name varchar(255) not null,
+                status varchar(30) default 'pending' not null,
+                started_at datetime,
+                completed_at datetime,
+                elapsed_ms bigint,
+                row_count bigint,
+                result_json json,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique (job_status_id, query_name)
             )
             """
         )
@@ -754,6 +809,165 @@ def test_get_control_panel_snapshot_tolerates_missing_comparison_history_table(s
     ).get_control_panel_snapshot(session)
 
     assert snapshot.student_dataset_export_summary.comparison_history == ()
+
+
+def test_realism_audit_summary_reports_active_lease_and_last_completed_query(session):
+    now = datetime(2026, 6, 21, 12, 0, 0)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, created_at, updated_at
+            ) VALUES (
+                701, 'realism_audit', 'realism-audit-701', 'running',
+                'run_realism_audit', 33.33, 'Running audit query.',
+                '2026-06-21 11:55:00', '2026-06-21 11:55:00', '2026-06-21 11:55:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO ops.background_workers (
+                worker_id, worker_type, host_name, process_id, started_at,
+                last_heartbeat_at, status, created_at, updated_at
+            ) VALUES (
+                'realism-worker-1', 'realism_audit', 'worker-host', 4242,
+                '2026-06-21 11:54:00', '2026-06-21 11:59:00', 'running',
+                '2026-06-21 11:54:00', '2026-06-21 11:59:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO ops.background_job_leases (
+                job_status_id, worker_id, lease_token, claimed_at, lease_expires_at,
+                last_heartbeat_at, attempt_count, created_at, updated_at
+            ) VALUES (
+                701, 'realism-worker-1', 'token-701', '2026-06-21 11:55:00',
+                '2026-06-21 12:10:00', '2026-06-21 11:59:00', 1,
+                '2026-06-21 11:55:00', '2026-06-21 11:59:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO ops.realism_audit_query_runs (
+                id, job_status_id, generation_run_id, batch_id, query_index,
+                query_name, status, completed_at, created_at, updated_at
+            ) VALUES
+                (1, 701, 2, 22, 1, 'player_roster_summary', 'succeeded',
+                 '2026-06-21 11:56:00', '2026-06-21 11:55:00', '2026-06-21 11:56:00'),
+                (2, 701, 2, 22, 2, 'match_volume_summary', 'succeeded',
+                 '2026-06-21 11:58:00', '2026-06-21 11:56:00', '2026-06-21 11:58:00'),
+                (3, 701, 2, 22, 3, 'rating_distribution', 'running',
+                 NULL, '2026-06-21 11:58:00', '2026-06-21 11:58:00')
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(now_fn=lambda: now).get_realism_audit_summary(
+        session,
+        generation_run_id=2,
+        batch_id=22,
+    )
+
+    assert summary.latest_incomplete_job_is_active is True
+    assert summary.display_state == "running"
+    assert summary.display_label == "Audit running"
+    assert summary.clearable_job is None
+    assert summary.lease_state is not None
+    assert summary.lease_state.active_worker_id == "realism-worker-1"
+    assert summary.lease_state.active_worker_label == "realism-worker-1 on worker-host"
+    assert summary.lease_state.lease_is_active is True
+    assert summary.lease_state.recoverable_stale_job is False
+    assert summary.lease_state.last_completed_query == "match_volume_summary"
+
+
+def test_realism_audit_summary_reports_recoverable_expired_lease(session):
+    now = datetime(2026, 6, 21, 12, 30, 0)
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, created_at, updated_at
+            ) VALUES (
+                702, 'realism_audit', 'realism-audit-702', 'running',
+                'run_realism_audit', 53.33, 'Audit worker lease expired.',
+                '2026-06-21 11:55:00', '2026-06-21 11:55:00', '2026-06-21 11:55:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO ops.background_job_leases (
+                job_status_id, worker_id, lease_token, claimed_at, lease_expires_at,
+                last_heartbeat_at, attempt_count, created_at, updated_at
+            ) VALUES (
+                702, 'realism-worker-2', 'token-702', '2026-06-21 11:55:00',
+                '2026-06-21 12:00:00', '2026-06-21 11:59:00', 1,
+                '2026-06-21 11:55:00', '2026-06-21 11:59:00'
+            )
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(now_fn=lambda: now).get_realism_audit_summary(
+        session,
+        generation_run_id=2,
+        batch_id=22,
+    )
+
+    assert summary.latest_incomplete_job_is_active is False
+    assert summary.display_state == "recoverable"
+    assert summary.display_label == "Audit recoverable"
+    assert summary.clearable_job is not None
+    assert summary.lease_state is not None
+    assert summary.lease_state.lease_is_active is False
+    assert summary.lease_state.recoverable_stale_job is True
+
+
+def test_realism_audit_summary_reports_queued_pending_job(session):
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, created_at, updated_at
+            ) VALUES (
+                703, 'realism_audit', 'realism-audit-703', 'pending',
+                'queued', 0.00, 'Audit queued for durable worker.',
+                '2026-06-21 12:00:00', '2026-06-21 12:00:00'
+            )
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 6, 21, 12, 1, 0)
+    ).get_realism_audit_summary(
+        session,
+        generation_run_id=2,
+        batch_id=22,
+    )
+
+    assert summary.latest_incomplete_job_is_active is True
+    assert summary.display_state == "queued"
+    assert summary.display_label == "Audit queued"
+    assert summary.lease_state is not None
+    assert summary.lease_state.recoverable_stale_job is False
 
 
 def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(session):

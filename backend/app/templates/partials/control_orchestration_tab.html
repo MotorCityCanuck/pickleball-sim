@@ -675,17 +675,10 @@
                             Clear stalled job
                         </button>
                     {% endif %}
-                    <div style="font-size:13px; color:#5a6477;">
-                        {% if snapshot.realism_audit_summary.latest_incomplete_job_is_active %}
-                            Audit in progress{% if snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}: {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}{% endif %}
-                        {% elif snapshot.realism_audit_summary.clearable_job %}
-                            Audit job appears stalled.
-                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'succeeded' %}
-                            Audit completed successfully.
-                        {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed' %}
-                            Audit failed.
-                        {% else %}
-                            No realism audit currently running.
+                <div style="font-size:13px; color:#5a6477;">
+                        {{ snapshot.realism_audit_summary.display_label }}
+                        {% if snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}
+                            : {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}
                         {% endif %}
                     </div>
                 </div>
@@ -696,6 +689,44 @@
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Audit Progress</div>
                     <div style="margin-top:6px; color:#5a6477;">Live progress for the current realism audit job.</div>
                 </div>
+                {% if snapshot.realism_audit_summary.latest_incomplete_job %}
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:10px;">
+                        <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Audit State</div>
+                            <div style="margin-top:6px;">{{ snapshot.realism_audit_summary.display_label }}</div>
+                        </div>
+                        <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Active Worker</div>
+                            <div style="margin-top:6px;">
+                                {% if snapshot.realism_audit_summary.lease_state and snapshot.realism_audit_summary.lease_state.active_worker_label %}
+                                    {{ snapshot.realism_audit_summary.lease_state.active_worker_label }}
+                                {% else %}
+                                    none
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Lease Expiry</div>
+                            <div style="margin-top:6px;">
+                                {% if snapshot.realism_audit_summary.lease_state and snapshot.realism_audit_summary.lease_state.lease_expires_at %}
+                                    {{ snapshot.realism_audit_summary.lease_state.lease_expires_at.isoformat().replace("T", " ") }}
+                                {% else %}
+                                    no active lease
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Last Completed Query</div>
+                            <div style="margin-top:6px;">
+                                {% if snapshot.realism_audit_summary.lease_state and snapshot.realism_audit_summary.lease_state.last_completed_query %}
+                                    {{ snapshot.realism_audit_summary.lease_state.last_completed_query }}
+                                {% else %}
+                                    none yet
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
                 {% if snapshot.realism_audit_summary.latest_incomplete_stage_progress %}
                     <div style="display:grid; gap:10px;">
                         {% for stage in snapshot.realism_audit_summary.latest_incomplete_stage_progress %}
@@ -732,16 +763,16 @@
                     </div>
                 {% else %}
                     <div style="color:#5a6477; font-size:12px;">
-                        {% if snapshot.realism_audit_summary.latest_incomplete_job_is_active and snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}
+                        {% if snapshot.realism_audit_summary.latest_incomplete_job and snapshot.realism_audit_summary.latest_incomplete_job.current_message %}
                             {{ snapshot.realism_audit_summary.latest_incomplete_job.current_message }}
-                        {% elif snapshot.realism_audit_summary.clearable_job and snapshot.realism_audit_summary.clearable_job.current_message %}
-                            {{ snapshot.realism_audit_summary.clearable_job.current_message }}
-                        {% elif snapshot.realism_audit_summary.clearable_job %}
-                            Audit job appears stalled.
+                        {% elif snapshot.realism_audit_summary.display_state == 'queued' %}
+                            Audit queued.
+                        {% elif snapshot.realism_audit_summary.display_state == 'recoverable' %}
+                            Audit recoverable. A durable worker can reclaim it after the lease expires or is missing.
                         {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'succeeded' %}
-                            No realism audit currently running.
+                            Audit completed.
                         {% elif snapshot.realism_audit_summary.latest_completed_job and snapshot.realism_audit_summary.latest_completed_job.status == 'failed' %}
-                            No realism audit currently running. The latest audit failed.
+                            Audit failed.
                         {% else %}
                             No realism audit currently running.
                         {% endif %}

@@ -19,6 +19,8 @@ from app.generation.progress_liveness import (
     liveness_state_for_stage,
 )
 from app.models import (
+    BackgroundJobLease,
+    BackgroundWorker,
     Club,
     ConfigurationProfileVersion,
     FirstName,
@@ -28,6 +30,7 @@ from app.models import (
     LastName,
     MonthlyBatch,
     RawSeedLoadRun,
+    RealismAuditQueryRun,
     StudentDatasetComparison,
     Region,
     StudentDatasetRelease,
@@ -265,6 +268,18 @@ class RealismAuditSnapshotSummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditLeaseSummary:
+    """UI-ready durable lease and checkpoint state for a realism audit job."""
+
+    active_worker_id: str | None
+    active_worker_label: str | None
+    lease_expires_at: datetime | None
+    lease_is_active: bool
+    recoverable_stale_job: bool
+    last_completed_query: str | None
+
+
+@dataclass(frozen=True)
 class RealismAuditSummary:
     """UI-ready realism-audit state."""
 
@@ -274,6 +289,9 @@ class RealismAuditSummary:
     latest_incomplete_job_is_active: bool
     latest_incomplete_stage_progress: tuple[StageProgressSummary, ...]
     clearable_job: JobSummary | None
+    lease_state: RealismAuditLeaseSummary | None
+    display_state: str
+    display_label: str
 
 
 @dataclass(frozen=True)
@@ -824,6 +842,61 @@ class ControlPanelQueries:
             generation_run_id=None,
         )
 
+    def get_realism_audit_lease_state(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        job_status: str,
+    ) -> RealismAuditLeaseSummary:
+        now = self.now_fn()
+        lease = None
+        worker = None
+        if _table_exists(session, "background_job_leases", schema="ops"):
+            lease = session.get(BackgroundJobLease, job_status_id)
+        if (
+            lease is not None
+            and _table_exists(session, "background_workers", schema="ops")
+        ):
+            worker = session.get(BackgroundWorker, lease.worker_id)
+
+        last_completed_query = None
+        if _table_exists(session, "realism_audit_query_runs", schema="ops"):
+            query_run = session.scalar(
+                select(RealismAuditQueryRun)
+                .where(
+                    RealismAuditQueryRun.job_status_id == job_status_id,
+                    RealismAuditQueryRun.status == "succeeded",
+                )
+                .order_by(
+                    RealismAuditQueryRun.query_index.desc(),
+                    RealismAuditQueryRun.id.desc(),
+                )
+                .limit(1)
+            )
+            if query_run is not None:
+                last_completed_query = query_run.query_name
+
+        lease_is_active = (
+            lease is not None
+            and lease.lease_expires_at is not None
+            and lease.lease_expires_at > now
+        )
+        worker_label = None
+        if lease is not None:
+            worker_label = lease.worker_id
+            if worker is not None and worker.host_name:
+                worker_label = f"{lease.worker_id} on {worker.host_name}"
+
+        return RealismAuditLeaseSummary(
+            active_worker_id=lease.worker_id if lease is not None else None,
+            active_worker_label=worker_label,
+            lease_expires_at=lease.lease_expires_at if lease is not None else None,
+            lease_is_active=lease_is_active,
+            recoverable_stale_job=job_status == "running" and not lease_is_active,
+            last_completed_query=last_completed_query,
+        )
+
     def get_realism_audit_summary(
         self,
         session: Session,
@@ -841,10 +914,19 @@ class ControlPanelQueries:
             if latest_incomplete_job is not None
             else ()
         )
+        lease_state = (
+            self.get_realism_audit_lease_state(
+                session,
+                job_status_id=latest_incomplete_job.job_status_id,
+                job_status=latest_incomplete_job.status,
+            )
+            if latest_incomplete_job is not None
+            else None
+        )
         latest_incomplete_job_is_active = self._job_is_actively_processing(
             latest_incomplete_job,
             stage_progress=stage_progress,
-        )
+        ) or bool(lease_state and lease_state.lease_is_active)
         clearable_job = None
         if (
             latest_incomplete_job is not None
@@ -853,6 +935,29 @@ class ControlPanelQueries:
             >= _job_reference_time(latest_completed_job)
         ):
             clearable_job = latest_incomplete_job
+        display_state = "idle"
+        display_label = "No realism audit currently running."
+        if latest_incomplete_job is not None and (
+            latest_incomplete_job_is_active or clearable_job is not None
+        ):
+            if latest_incomplete_job.status == "pending":
+                display_state = "queued"
+                display_label = "Audit queued"
+            elif lease_state is not None and lease_state.recoverable_stale_job:
+                display_state = "recoverable"
+                display_label = "Audit recoverable"
+            elif latest_incomplete_job_is_active:
+                display_state = "running"
+                display_label = "Audit running"
+            else:
+                display_state = "recoverable"
+                display_label = "Audit recoverable"
+        elif latest_completed_job is not None and latest_completed_job.status == "failed":
+            display_state = "failed"
+            display_label = "Audit failed"
+        elif latest_completed_job is not None and latest_completed_job.status == "succeeded":
+            display_state = "completed"
+            display_label = "Audit completed"
         if not latest_incomplete_job_is_active and clearable_job is None:
             stage_progress = ()
         payload = latest_realism_audit_snapshot_payload(
@@ -904,6 +1009,9 @@ class ControlPanelQueries:
             latest_incomplete_job_is_active=latest_incomplete_job_is_active,
             latest_incomplete_stage_progress=stage_progress,
             clearable_job=clearable_job,
+            lease_state=lease_state,
+            display_state=display_state,
+            display_label=display_label,
         )
 
     def get_seed_data_summary(self, session: Session) -> SeedDataSummary:
@@ -2210,6 +2318,13 @@ def _decimal_or_default(value: object, default: Decimal) -> Decimal:
         except Exception:
             return default
     return default
+
+
+def _table_exists(session: Session, table_name: str, *, schema: str | None = None) -> bool:
+    try:
+        return inspect(session.get_bind()).has_table(table_name, schema=schema)
+    except Exception:
+        return False
 
 
 def _games_per_match_for_type(

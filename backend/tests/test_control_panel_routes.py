@@ -1875,7 +1875,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     assert response.status_code == 200
     assert checkpoint_count > 0
     assert "Realism audit started in background." in body
-    assert "Audit in progress" in body
+    assert "Audit queued" in body
     assert "Audit Progress" in body
     assert "Run Realism Audit - Not Available" in body
     assert "Assessment Thresholds" in body
@@ -1953,11 +1953,9 @@ def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Audit completed successfully." in body
+    assert "Audit completed" in body
     assert "Clear stalled job" not in body
-    assert "Audit job appears stalled." not in body
-    assert "Progress will appear here while the audit is running." not in body
-    assert "No realism audit currently running." in body
+    assert "Audit recoverable" not in body
 
 
 def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
@@ -2025,7 +2023,7 @@ def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
     body = response.body.decode()
     assert response.status_code == 200
     assert "Clear stalled job" in body
-    assert "Audit job appears stalled." in body
+    assert "Audit recoverable" in body
     assert "Audit completed successfully." not in body
 
 
