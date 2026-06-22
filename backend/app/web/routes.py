@@ -33,21 +33,18 @@ from app.core import (
     build_config_editor_sections,
     diff_config_payloads,
 )
-from app.db.session import SessionLocal, get_session
+from app.db.session import get_session
 from app.exports.data_quality import compare_export_locations, normalize_data_quality_level
 from app.exports.student_dataset import StudentDatasetExportService
 from app.generation import (
     DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
     GenerationRunService,
-    RealismAuditExecution,
     RealismAuditRunner,
     RealismAuditService,
     SeedRefreshService,
     default_realism_audit_assessment_thresholds,
     initialize_realism_audit_query_checkpoints,
     normalize_realism_audit_assessment_thresholds,
-    resolve_realism_audit_parameters,
-    save_realism_audit_snapshot,
     snapshot_payload_to_markdown,
 )
 from app.models import (
@@ -787,7 +784,6 @@ def build_control_panel_router() -> APIRouter:
         unteamed_duration_warning_days: str = Form("30.0"),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
-        background_runner: BackgroundJobRunner = Depends(get_background_job_runner),
     ) -> HTMLResponse:
         snapshot = queries.get_control_panel_snapshot(session)
         realism_audit_message = None
@@ -837,13 +833,9 @@ def build_control_panel_router() -> APIRouter:
                     assessment_thresholds=assessment_thresholds,
                 )
                 session.commit()
-                background_runner.submit(
-                    _execute_realism_audit_job_in_background,
-                    job_status_id=job_status.id,
-                )
                 snapshot = queries.get_control_panel_snapshot(session)
                 realism_audit_message = (
-                    "Realism audit started in background."
+                    "Realism audit queued for durable worker."
                 )
             except Exception as exc:
                 session.rollback()
@@ -1683,145 +1675,6 @@ def _register_realism_audit_job(
     )
     session.flush()
     return job_status
-
-
-def _execute_realism_audit_job_in_background(*, job_status_id: int) -> None:
-    session = SessionLocal()
-    try:
-        _execute_realism_audit_job(session=session, job_status_id=job_status_id)
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
-def _execute_realism_audit_job(*, session: Session, job_status_id: int) -> None:
-    job_status = session.get(JobStatus, job_status_id)
-    if job_status is None:
-        raise ValueError(f"Realism audit job {job_status_id} was not found.")
-
-    stage_row = session.scalar(
-        select(JobStageProgress)
-        .where(JobStageProgress.job_status_id == job_status_id)
-        .order_by(JobStageProgress.stage_sequence.asc(), JobStageProgress.id.asc())
-        .limit(1)
-    )
-    if stage_row is None:
-        raise ValueError(f"Realism audit stage row for job {job_status_id} was not found.")
-
-    started_at = _utc_now_naive()
-    query_runner = RealismAuditRunner(session)
-    params = resolve_realism_audit_parameters(session)
-    query_definitions = query_runner.available_queries()
-    total_queries = len(query_definitions)
-    stage_metadata = _coerce_dict(stage_row.metadata_json)
-    assessment_thresholds = normalize_realism_audit_assessment_thresholds(
-        stage_metadata.get("assessment_thresholds")
-    )
-
-    job_status.status = "running"
-    job_status.current_phase = "running"
-    job_status.started_at = job_status.started_at or started_at
-    job_status.percent_complete = Decimal("0.00")
-    job_status.current_message = f"Running realism audit query 0 of {total_queries}."
-    stage_row.status = "running"
-    stage_row.started_at = stage_row.started_at or started_at
-    stage_row.last_heartbeat_at = started_at
-    stage_row.progress_current = 0
-    stage_row.progress_total = total_queries
-    stage_row.progress_unit = "query"
-    stage_row.progress_percent = Decimal("0.00")
-    stage_row.progress_message = f"Running realism audit query 0 of {total_queries}."
-    session.flush()
-    session.commit()
-
-    results = []
-    try:
-        for index, query in enumerate(query_definitions, start=1):
-            query_result = query_runner.run(
-                query_names=[query.name],
-                params=params,
-            )[0]
-            results.append(query_result)
-
-            heartbeat_at = _utc_now_naive()
-            stage_row = session.get(JobStageProgress, stage_row.id)
-            job_status = session.get(JobStatus, job_status.id)
-            if stage_row is None or job_status is None:
-                raise ValueError("Realism audit job state disappeared during execution.")
-            stage_row.last_heartbeat_at = heartbeat_at
-            stage_row.progress_current = index
-            stage_row.progress_total = total_queries
-            stage_row.progress_percent = (
-                Decimal(index) * Decimal("100.00") / Decimal(total_queries)
-            ).quantize(Decimal("0.01"))
-            stage_row.progress_message = (
-                f"Completed realism audit query {index} of {total_queries}: {query.name}."
-            )
-            job_status.status = "running"
-            job_status.current_phase = query.name
-            job_status.percent_complete = stage_row.progress_percent
-            job_status.current_message = stage_row.progress_message
-            session.flush()
-            session.commit()
-
-        resolved_batch_id = params.get("batch_id")
-        batch_month = None
-        if resolved_batch_id is not None:
-            batch_month = session.scalar(
-                select(MonthlyBatch.batch_month).where(MonthlyBatch.id == resolved_batch_id)
-            )
-        execution = RealismAuditExecution(
-            generation_run_id=params.get("generation_run_id"),
-            batch_id=resolved_batch_id,
-            batch_month=batch_month,
-            executed_at=datetime.now().astimezone(),
-            results=tuple(results),
-        )
-        save_realism_audit_snapshot(
-            execution,
-            snapshot_dir=DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
-            assessment_thresholds=assessment_thresholds,
-        )
-
-        completed_at = _utc_now_naive()
-        stage_row = session.get(JobStageProgress, stage_row.id)
-        job_status = session.get(JobStatus, job_status.id)
-        if stage_row is None or job_status is None:
-            raise ValueError("Realism audit job state disappeared before completion.")
-        stage_row.status = "succeeded"
-        stage_row.completed_at = completed_at
-        stage_row.last_heartbeat_at = completed_at
-        stage_row.progress_current = total_queries
-        stage_row.progress_total = total_queries
-        stage_row.progress_percent = Decimal("100.00")
-        stage_row.progress_message = "Realism audit completed successfully."
-        job_status.status = "succeeded"
-        job_status.current_phase = "completed"
-        job_status.completed_at = completed_at
-        job_status.percent_complete = Decimal("100.00")
-        job_status.current_message = "Realism audit completed successfully."
-        session.flush()
-    except Exception as exc:
-        failed_at = _utc_now_naive()
-        stage_row = session.get(JobStageProgress, stage_row.id)
-        job_status = session.get(JobStatus, job_status.id)
-        if stage_row is not None:
-            stage_row.status = "failed"
-            stage_row.completed_at = failed_at
-            stage_row.last_heartbeat_at = failed_at
-            stage_row.error_message = str(exc)
-            stage_row.progress_message = f"Realism audit failed: {exc}"
-        if job_status is not None:
-            job_status.status = "failed"
-            job_status.current_phase = "failed"
-            job_status.completed_at = failed_at
-            job_status.error_message = str(exc)
-            job_status.current_message = f"Realism audit failed: {exc}"
-        session.flush()
-        raise
 
 
 def _record_student_dataset_comparison(

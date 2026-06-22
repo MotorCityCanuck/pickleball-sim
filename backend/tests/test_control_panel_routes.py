@@ -1773,14 +1773,12 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     app = create_app()
     routes = _route_map(app)
     session = session_factory()
-    background_runner = FakeBackgroundRunner()
     try:
         response = routes["/control/realism-audit/run"](
             request=_request("/control/realism-audit/run", method="POST"),
             report_output_dir=str(report_root),
             session=session,
             queries=ControlPanelQueries(),
-            background_runner=background_runner,
         )
         target_dir = snapshot_root / "generation_run_000002"
         target_dir.mkdir(parents=True)
@@ -1874,13 +1872,11 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     body = response.body.decode()
     assert response.status_code == 200
     assert checkpoint_count > 0
-    assert "Realism audit started in background." in body
+    assert "Realism audit queued for durable worker." in body
     assert "Audit queued" in body
     assert "Audit Progress" in body
     assert "Run Realism Audit - Not Available" in body
     assert "Assessment Thresholds" in body
-    assert len(background_runner.submissions) == 1
-    assert background_runner.submissions[0][2]["job_status_id"] is not None
 
     report_path = Path(download.path)
     assert download.status_code == 200
