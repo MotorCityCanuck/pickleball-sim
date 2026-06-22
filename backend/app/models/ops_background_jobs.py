@@ -17,6 +17,8 @@ from sqlalchemy.orm import relationship
 
 from .base import Base, TimestampMixin
 
+SqliteAutoincrementBigInteger = BigInteger().with_variant(Integer, "sqlite")
+
 
 class BackgroundWorker(Base, TimestampMixin):
     """Registered durable worker process."""
@@ -110,7 +112,7 @@ class BackgroundJobEvent(Base):
         {"schema": "ops"},
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(SqliteAutoincrementBigInteger, primary_key=True, autoincrement=True)
     job_status_id = Column(
         BigInteger,
         ForeignKey("job_status.id", ondelete="CASCADE"),
@@ -150,7 +152,7 @@ class RealismAuditQueryRun(Base, TimestampMixin):
         {"schema": "ops"},
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(SqliteAutoincrementBigInteger, primary_key=True, autoincrement=True)
     job_status_id = Column(
         BigInteger,
         ForeignKey("job_status.id", ondelete="CASCADE"),
