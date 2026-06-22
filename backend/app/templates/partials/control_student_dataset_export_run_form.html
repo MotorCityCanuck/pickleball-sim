@@ -1,172 +1,264 @@
 <form
     id="export-config-form"
     class="panel-section"
-    style="display:grid; gap:16px;"
+    style="display:grid; gap:18px; border:1px solid #d6d9df; border-radius:18px; padding:18px; background:linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);"
     hx-post="/control/export/student-dataset/start"
     hx-target="#control-tab-content"
     hx-swap="innerHTML"
 >
     <input type="hidden" name="return_target" value="orchestration">
 
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Generation run ID</span>
-            <input
-                type="number"
-                name="generation_run_id"
-                min="1"
-                required
-                value="{{ export_config.generation_run_id }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Initial history months</span>
-            <input
-                type="number"
-                name="initial_history_month_count"
-                min="1"
-                required
-                value="{{ export_config.initial_history_month_count }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Subsequent incremental months</span>
-            <input
-                type="number"
-                name="subsequent_month_count"
-                min="0"
-                required
-                value="{{ export_config.subsequent_month_count }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-    </div>
-
-    <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); gap:12px;">
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Output root</span>
-            <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
-                <input
-                    id="export-output-root"
-                    type="text"
-                    name="output_root"
-                    required
-                    value="{{ export_config.output_root }}"
-                    style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-                >
-                <button
-                    type="button"
-                    onclick="window.selectControlPanelFolder('export-output-root', 'data')"
-                    style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 14px; cursor:pointer; white-space:nowrap;"
-                >
-                    Choose Folder
-                </button>
+    <div style="display:grid; grid-template-columns:minmax(0, 1.35fr) minmax(280px, 0.95fr); gap:18px; align-items:start;">
+        <div style="display:grid; gap:16px;">
+            <div style="display:grid; gap:8px;">
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:#5a6477;">Student Dataset Release Builder</div>
+                    <div style="border:1px solid #d6d9df; background:#edf3ff; color:#1b4db1; border-radius:999px; padding:4px 10px; font-size:12px;">Initial snapshot + monthly incrementals</div>
+                </div>
+                <div style="font-size:28px; line-height:1.1; font-weight:700; color:#172033;">Plan the dataset students will actually ingest.</div>
+                <div style="max-width:860px; color:#526074; line-height:1.5;">
+                    Configure one full bootstrap release, then emit the month-by-month increments students will merge into their warehouse over time. This workflow now maps directly to the exported contract: <code>initial_snapshot</code> plus <code>monthly_incremental</code> packages.
+                </div>
             </div>
-        </label>
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Release name</span>
-            <input
-                type="text"
-                name="release_name"
-                required
-                value="{{ export_config.release_name }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-    </div>
 
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Clean output subfolder</span>
-            <input
-                type="text"
-                name="clean_subfolder"
-                required
-                value="{{ export_config.clean_subfolder or 'clean' }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Tainted output subfolder</span>
-            <input
-                type="text"
-                name="tainted_subfolder"
-                required
-                value="{{ export_config.tainted_subfolder or 'tainted' }}"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
-            >
-        </label>
-    </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                <div style="border:1px solid #d6d9df; border-radius:14px; background:#fff; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Baseline Shape</div>
+                    <div style="margin-top:8px; font-size:22px; color:#172033; font-weight:700;">Initial Snapshot</div>
+                    <div style="margin-top:6px; color:#5a6477; font-size:13px;">Months 1 through the baseline cutoff create the full warehouse bootstrap students load first.</div>
+                </div>
+                <div style="border:1px solid #d6d9df; border-radius:14px; background:#fff; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Monthly Shape</div>
+                    <div style="margin-top:8px; font-size:22px; color:#172033; font-weight:700;">Incremental Deltas</div>
+                    <div style="margin-top:6px; color:#5a6477; font-size:13px;">Later releases carry release-month facts plus the dimension and relationship rows needed to keep joins valid.</div>
+                </div>
+                <div style="border:1px solid #d6d9df; border-radius:14px; background:#fff; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Surface</div>
+                    <div style="margin-top:8px; font-size:22px; color:#172033; font-weight:700;">players.parquet</div>
+                    <div style="margin-top:6px; color:#5a6477; font-size:13px;">The export now aligns the player file with its table name instead of using the older <code>player_master</code> alias.</div>
+                </div>
+            </div>
 
-    <div style="display:grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap:12px; align-items:end;">
-        <label style="display:grid; gap:6px;">
-            <span style="font-size:13px; color:#5a6477;">Data Quality Issue Injection Level</span>
-            <select
-                name="data_quality_level"
-                style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; background:white;"
-            >
-                <option value="none" {% if export_config.data_quality_level == 'none' %}selected{% endif %}>none</option>
-                <option value="low" {% if export_config.data_quality_level == 'low' %}selected{% endif %}>low</option>
-                <option value="medium" {% if export_config.data_quality_level == 'medium' %}selected{% endif %}>medium</option>
-                <option value="high" {% if export_config.data_quality_level == 'high' %}selected{% endif %}>high</option>
-                <option value="very_high" {% if export_config.data_quality_level == 'very_high' %}selected{% endif %}>very_high</option>
-            </select>
-        </label>
-        <div style="display:grid; gap:6px; padding-bottom:10px;">
-            <label style="display:flex; gap:8px; align-items:center; color:#5a6477;">
-                <input
-                    type="checkbox"
-                    name="overwrite_existing"
-                    value="yes"
-                    {% if export_config.overwrite_existing %}checked{% endif %}
-                >
-                Confirm deletion of the expected release folder if it already exists
-            </label>
-            <div style="font-size:12px; color:#5a6477;">
-                If the folder exists and this is not checked, the export job fails before writing files.
+            <div style="display:grid; gap:14px; border:1px solid #d6d9df; border-radius:16px; background:#ffffff; padding:16px;">
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                    <div>
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Inputs</div>
+                        <div style="margin-top:6px; font-size:18px; color:#172033; font-weight:700;">Define the source run and release family</div>
+                    </div>
+                    {% if snapshot.allowed_actions.can_generate_student_dataset %}
+                        <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:999px; padding:6px 10px; font-size:12px;">Preflight ready</div>
+                    {% else %}
+                        <div style="border:1px solid #f0d39b; background:#fff8e8; color:#925f00; border-radius:999px; padding:6px 10px; font-size:12px;">Needs operator attention</div>
+                    {% endif %}
+                </div>
+
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:13px; color:#5a6477;">Generation run ID</span>
+                        <input
+                            type="number"
+                            name="generation_run_id"
+                            min="1"
+                            required
+                            value="{{ export_config.generation_run_id }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                        >
+                    </label>
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:13px; color:#5a6477;">Initial history months</span>
+                        <input
+                            type="number"
+                            name="initial_history_month_count"
+                            min="1"
+                            required
+                            value="{{ export_config.initial_history_month_count }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                        >
+                    </label>
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:13px; color:#5a6477;">Subsequent incremental months</span>
+                        <input
+                            type="number"
+                            name="subsequent_month_count"
+                            min="0"
+                            required
+                            value="{{ export_config.subsequent_month_count }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                        >
+                    </label>
+                </div>
+
+                <div style="display:grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); gap:12px;">
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:13px; color:#5a6477;">Output root</span>
+                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px;">
+                            <input
+                                id="export-output-root"
+                                type="text"
+                                name="output_root"
+                                required
+                                value="{{ export_config.output_root }}"
+                                style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                            >
+                            <button
+                                type="button"
+                                onclick="window.selectControlPanelFolder('export-output-root', 'data')"
+                                style="border:1px solid #c5d1e6; background:#eff4ff; color:#173f8a; border-radius:10px; padding:11px 14px; cursor:pointer; white-space:nowrap;"
+                            >
+                                Choose Folder
+                            </button>
+                        </div>
+                    </label>
+                    <label style="display:grid; gap:6px;">
+                        <span style="font-size:13px; color:#5a6477;">Release name</span>
+                        <input
+                            type="text"
+                            name="release_name"
+                            required
+                            value="{{ export_config.release_name }}"
+                            style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                        >
+                    </label>
+                </div>
             </div>
         </div>
+
+        <aside style="display:grid; gap:14px;">
+            <div style="border:1px solid #d6d9df; border-radius:16px; background:radial-gradient(circle at top right, #f2f7ff 0%, #ffffff 62%); padding:16px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Architecture</div>
+                <div style="margin-top:10px; display:grid; gap:10px;">
+                    <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
+                        <div style="width:10px; height:10px; border-radius:999px; background:#1857c2; margin-top:6px;"></div>
+                        <div>
+                            <div style="font-weight:700; color:#172033;">1. Initial snapshot</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">Creates the starting warehouse state students load once.</div>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
+                        <div style="width:10px; height:10px; border-radius:999px; background:#247a3d; margin-top:6px;"></div>
+                        <div>
+                            <div style="font-weight:700; color:#172033;">2. Monthly incremental packages</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">Each later release is keyed to one release month and is designed for append + merge workflows.</div>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
+                        <div style="width:10px; height:10px; border-radius:999px; background:#925f00; margin-top:6px;"></div>
+                        <div>
+                            <div style="font-weight:700; color:#172033;">3. Optional tainting layer</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">When enabled, clean and tainted copies are emitted in parallel for instructor comparison workflows.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="border:1px solid #d6d9df; border-radius:16px; background:#fff; padding:16px; display:grid; gap:10px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Output Topology</div>
+                <div style="font-size:13px; color:#1d2433; line-height:1.5;">
+                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
+                </div>
+                <div style="color:#5a6477; font-size:13px; line-height:1.5;">
+                    If issue injection is enabled, the release family is staged under timestamped clean and tainted folders:
+                </div>
+                <div style="display:grid; gap:6px; font-size:13px; color:#1d2433;">
+                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.clean_subfolder or 'clean' }}/</code>
+                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.tainted_subfolder or 'tainted' }}/</code>
+                </div>
+                <div style="color:#5a6477; font-size:13px; line-height:1.5;">
+                    Incremental folders use the release-month suffix pattern <code>_snapshot_YYYY_MM</code>.
+                </div>
+            </div>
+        </aside>
     </div>
 
-    <div class="info-card">
-        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Preview</div>
-        <div style="margin-top:8px; color:#1d2433;">
-            <code>{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
+    <div style="display:grid; grid-template-columns:minmax(0, 1fr) minmax(300px, 0.95fr); gap:18px; align-items:start;">
+        <div style="display:grid; gap:14px; border:1px solid #d6d9df; border-radius:16px; background:#fff; padding:16px;">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Package Controls</div>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Clean output subfolder</span>
+                    <input
+                        type="text"
+                        name="clean_subfolder"
+                        required
+                        value="{{ export_config.clean_subfolder or 'clean' }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                    >
+                </label>
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Tainted output subfolder</span>
+                    <input
+                        type="text"
+                        name="tainted_subfolder"
+                        required
+                        value="{{ export_config.tainted_subfolder or 'tainted' }}"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                    >
+                </label>
+            </div>
+
+            <div style="display:grid; grid-template-columns:minmax(200px, 260px) minmax(0, 1fr); gap:12px; align-items:end;">
+                <label style="display:grid; gap:6px;">
+                    <span style="font-size:13px; color:#5a6477;">Data Quality Issue Injection Level</span>
+                    <select
+                        name="data_quality_level"
+                        style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                    >
+                        <option value="none" {% if export_config.data_quality_level == 'none' %}selected{% endif %}>none</option>
+                        <option value="low" {% if export_config.data_quality_level == 'low' %}selected{% endif %}>low</option>
+                        <option value="medium" {% if export_config.data_quality_level == 'medium' %}selected{% endif %}>medium</option>
+                        <option value="high" {% if export_config.data_quality_level == 'high' %}selected{% endif %}>high</option>
+                        <option value="very_high" {% if export_config.data_quality_level == 'very_high' %}selected{% endif %}>very_high</option>
+                    </select>
+                </label>
+                <div style="display:grid; gap:8px; padding-bottom:8px;">
+                    <label style="display:flex; gap:8px; align-items:center; color:#5a6477;">
+                        <input
+                            type="checkbox"
+                            name="overwrite_existing"
+                            value="yes"
+                            {% if export_config.overwrite_existing %}checked{% endif %}
+                        >
+                        Confirm deletion of the expected release folder if it already exists
+                    </label>
+                    <div style="font-size:12px; color:#5a6477;">
+                        Leave this unchecked to fail fast whenever the target release root already exists.
+                    </div>
+                </div>
+            </div>
         </div>
-        <div style="margin-top:6px; color:#5a6477;">
-            When issue injection is enabled, clean and tainted outputs are written under
-            <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.clean_subfolder or 'clean' }}/</code>
-            and
-            <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.tainted_subfolder or 'tainted' }}/</code>.
-        </div>
-        <div style="margin-top:6px; color:#5a6477;">
-            Monthly incremental releases use <code>_snapshot_YYYY_MM</code> suffixes keyed to the release snapshot month.
-        </div>
+
+        {% if snapshot.allowed_actions.student_dataset_blockers %}
+            <div style="display:grid; gap:10px; border:1px solid #f0d39b; border-radius:16px; background:#fff8e8; padding:16px;">
+                <div style="font-size:12px; color:#925f00; text-transform:uppercase;">Preflight blockers</div>
+                <div style="font-size:18px; color:#5d4200; font-weight:700;">Export is currently blocked.</div>
+                <ul style="margin:0 0 0 18px; padding:0; color:#6a5220; line-height:1.5;">
+                    {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
+                        <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% else %}
+            <div style="display:grid; gap:10px; border:1px solid #b7dfc2; border-radius:16px; background:#edf8f0; padding:16px;">
+                <div style="font-size:12px; color:#1f5f30; text-transform:uppercase;">Preflight status</div>
+                <div style="font-size:18px; color:#123d20; font-weight:700;">Ready to export run {{ export_config.generation_run_id }}.</div>
+                <div style="color:#335b3d; line-height:1.5;">
+                    The orchestration checks passed. Starting this job will register the release family and begin the staged write, validation, and promotion sequence.
+                </div>
+            </div>
+        {% endif %}
     </div>
 
-    {% if snapshot.allowed_actions.student_dataset_blockers %}
-        <div class="info-card state-card-blocked">
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Preflight Blockers</div>
-            <ul style="margin:8px 0 0 18px; padding:0; color:#5a6477;">
-                {% for blocker in snapshot.allowed_actions.student_dataset_blockers %}
-                    <li>{{ blocker }}</li>
-                {% endfor %}
-            </ul>
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <button
+            type="submit"
+            {% if not snapshot.allowed_actions.can_generate_student_dataset %}disabled{% endif %}
+            style="border:1px solid #173f8a; background:linear-gradient(135deg, #1857c2 0%, #173f8a 100%); color:white; border-radius:12px; padding:12px 18px; font-weight:700; {% if not snapshot.allowed_actions.can_generate_student_dataset %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            title="Start Student Dataset Baseline + Incremental Export"
+        >
+            Launch Initial Snapshot + Incremental Exports
+        </button>
+        <div style="font-size:13px; color:#5a6477;">
+            Start Student Dataset Baseline + Incremental Export. Writes validated Parquet release packages and promotes them into the operator release root.
         </div>
-    {% else %}
-        <div class="info-card state-card-ready">
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Preflight Status</div>
-            <div style="margin-top:8px;">Ready to export run {{ export_config.generation_run_id }}.</div>
-        </div>
-    {% endif %}
-
-    <button
-        type="submit"
-        {% if not snapshot.allowed_actions.can_generate_student_dataset %}disabled{% endif %}
-        style="justify-self:start; border:1px solid #247a3d; background:#247a3d; color:white; border-radius:8px; padding:10px 14px; {% if not snapshot.allowed_actions.can_generate_student_dataset %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
-    >
-        Start Student Dataset Baseline + Incremental Export
-    </button>
+    </div>
 </form>

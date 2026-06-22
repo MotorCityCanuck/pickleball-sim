@@ -11,8 +11,6 @@
 -- TABLES
 -- ============================================
 
-CREATE SCHEMA IF NOT EXISTS ops;
-
 CREATE TABLE configuration_profiles (
 	id BIGSERIAL NOT NULL, 
 	profile_name VARCHAR(255) NOT NULL, 
@@ -91,6 +89,21 @@ CREATE TABLE last_names (
 	PRIMARY KEY (id), 
 	CONSTRAINT chk_last_names_freq CHECK (frequency_count > 0), 
 	CONSTRAINT chk_last_names_country CHECK (country_code IN ('US', 'CA'))
+);
+
+CREATE TABLE ops.background_workers (
+	worker_id VARCHAR(64) NOT NULL, 
+	worker_type VARCHAR(50) NOT NULL, 
+	host_name VARCHAR(255), 
+	process_id INTEGER, 
+	started_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	status VARCHAR(30) DEFAULT 'running' NOT NULL, 
+	metadata_json JSONB, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (worker_id), 
+	CONSTRAINT chk_background_workers_status CHECK (status IN ('running', 'stopped', 'failed'))
 );
 
 CREATE TABLE regions (
@@ -192,70 +205,32 @@ CREATE TABLE monthly_batches (
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id)
 );
 
-CREATE TABLE ops.background_workers (
-	worker_id VARCHAR(64) NOT NULL,
-	worker_type VARCHAR(50) NOT NULL,
-	host_name VARCHAR(255),
-	process_id INTEGER,
-	started_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	status VARCHAR(30) DEFAULT 'running' NOT NULL,
-	metadata_json JSONB,
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	PRIMARY KEY (worker_id),
-	CONSTRAINT chk_background_workers_status CHECK (status IN ('running', 'stopped', 'failed'))
-);
-
-CREATE TABLE ops.background_job_leases (
-	job_status_id BIGINT NOT NULL,
-	worker_id VARCHAR(64) NOT NULL,
-	lease_token VARCHAR(64) NOT NULL,
-	claimed_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	lease_expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	attempt_count INTEGER DEFAULT 1 NOT NULL,
-	metadata_json JSONB,
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	PRIMARY KEY (job_status_id),
-	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE,
-	FOREIGN KEY(worker_id) REFERENCES ops.background_workers (worker_id)
-);
-
 CREATE TABLE ops.background_job_events (
-	id BIGSERIAL NOT NULL,
-	job_status_id BIGINT NOT NULL,
-	worker_id VARCHAR(64),
-	event_type VARCHAR(50) NOT NULL,
-	event_message TEXT,
-	event_metadata_json JSONB,
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	PRIMARY KEY (id),
+	id BIGSERIAL NOT NULL, 
+	job_status_id BIGINT NOT NULL, 
+	worker_id VARCHAR(64), 
+	event_type VARCHAR(50) NOT NULL, 
+	event_message TEXT, 
+	event_metadata_json JSONB, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
 	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE
 );
 
-CREATE TABLE ops.realism_audit_query_runs (
-	id BIGSERIAL NOT NULL,
-	job_status_id BIGINT NOT NULL,
-	generation_run_id BIGINT,
-	batch_id BIGINT,
-	query_index INTEGER NOT NULL,
-	query_name VARCHAR(255) NOT NULL,
-	status VARCHAR(30) DEFAULT 'pending' NOT NULL,
-	started_at TIMESTAMP WITHOUT TIME ZONE,
-	completed_at TIMESTAMP WITHOUT TIME ZONE,
-	elapsed_ms BIGINT,
-	row_count BIGINT,
-	result_json JSONB,
-	error_message TEXT,
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	PRIMARY KEY (id),
-	CONSTRAINT chk_realism_audit_query_runs_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'skipped')),
-	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE,
-	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id),
-	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
+CREATE TABLE ops.background_job_leases (
+	job_status_id BIGINT NOT NULL, 
+	worker_id VARCHAR(64) NOT NULL, 
+	lease_token VARCHAR(64) NOT NULL, 
+	claimed_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	lease_expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	last_heartbeat_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	attempt_count INTEGER DEFAULT 1 NOT NULL, 
+	metadata_json JSONB, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (job_status_id), 
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE, 
+	FOREIGN KEY(worker_id) REFERENCES ops.background_workers (worker_id)
 );
 
 CREATE TABLE players (
@@ -303,6 +278,28 @@ CREATE TABLE raw_seed_load_runs (
 	FOREIGN KEY(job_status_id) REFERENCES job_status (id)
 );
 
+CREATE TABLE student_dataset_comparisons (
+	id BIGSERIAL NOT NULL, 
+	clean_export_path TEXT NOT NULL, 
+	tainted_export_path TEXT NOT NULL, 
+	clean_generation_run_id BIGINT, 
+	tainted_generation_run_id BIGINT, 
+	compared_release_count BIGINT DEFAULT 0 NOT NULL, 
+	total_issue_count BIGINT DEFAULT 0 NOT NULL, 
+	missing_clean_release_count BIGINT DEFAULT 0 NOT NULL, 
+	missing_tainted_release_count BIGINT DEFAULT 0 NOT NULL, 
+	status VARCHAR(30) DEFAULT 'succeeded' NOT NULL, 
+	summary_payload TEXT NOT NULL, 
+	error_message TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_student_dataset_comparison_counts CHECK (compared_release_count >= 0 AND total_issue_count >= 0 AND missing_clean_release_count >= 0 AND missing_tainted_release_count >= 0), 
+	CONSTRAINT chk_student_dataset_comparison_status CHECK (status IN ('succeeded', 'failed')), 
+	FOREIGN KEY(clean_generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(tainted_generation_run_id) REFERENCES generation_runs (id)
+);
+
 CREATE TABLE student_dataset_releases (
 	id BIGSERIAL NOT NULL, 
 	release_name VARCHAR(255) NOT NULL, 
@@ -317,7 +314,7 @@ CREATE TABLE student_dataset_releases (
 	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	PRIMARY KEY (id), 
-	CONSTRAINT chk_student_release_type CHECK (release_type IN ('historical_baseline', 'monthly_incremental')), 
+	CONSTRAINT chk_student_release_type CHECK (release_type IN ('initial_snapshot', 'monthly_incremental')), 
 	CONSTRAINT chk_student_release_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed')), 
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id)
 );
@@ -358,6 +355,24 @@ CREATE TABLE tournaments (
 	CONSTRAINT chk_tournament_dates CHECK (tournament_end_date >= tournament_start_date), 
 	FOREIGN KEY(region_id) REFERENCES regions (id), 
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id)
+);
+
+CREATE TABLE audit_batch_team_rosters (
+	generation_run_id BIGINT NOT NULL, 
+	batch_id BIGINT NOT NULL, 
+	batch_month DATE NOT NULL, 
+	team_id BIGINT NOT NULL, 
+	player_one_id BIGINT NOT NULL, 
+	player_two_id BIGINT NOT NULL, 
+	roster_key VARCHAR(64) NOT NULL, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (batch_id, team_id), 
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id), 
+	FOREIGN KEY(team_id) REFERENCES teams (id), 
+	FOREIGN KEY(player_one_id) REFERENCES players (id), 
+	FOREIGN KEY(player_two_id) REFERENCES players (id)
 );
 
 CREATE TABLE batch_runs (
@@ -483,6 +498,29 @@ CREATE TABLE matches (
 	CONSTRAINT chk_match_predicted_winning_team CHECK (predicted_winning_team_number IS NULL OR predicted_winning_team_number IN (1, 2)), 
 	FOREIGN KEY(tournament_id) REFERENCES tournaments (id), 
 	FOREIGN KEY(region_id) REFERENCES regions (id), 
+	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
+);
+
+CREATE TABLE ops.realism_audit_query_runs (
+	id BIGSERIAL NOT NULL, 
+	job_status_id BIGINT NOT NULL, 
+	generation_run_id BIGINT, 
+	batch_id BIGINT, 
+	query_index INTEGER NOT NULL, 
+	query_name VARCHAR(255) NOT NULL, 
+	status VARCHAR(30) DEFAULT 'pending' NOT NULL, 
+	started_at TIMESTAMP WITHOUT TIME ZONE, 
+	completed_at TIMESTAMP WITHOUT TIME ZONE, 
+	elapsed_ms BIGINT, 
+	row_count BIGINT, 
+	result_json JSONB, 
+	error_message TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT chk_realism_audit_query_runs_status CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'skipped')), 
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id) ON DELETE CASCADE, 
+	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id), 
 	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
 );
 
@@ -692,28 +730,6 @@ CREATE TABLE student_dataset_release_files (
 	FOREIGN KEY(release_id) REFERENCES student_dataset_releases (id)
 );
 
-CREATE TABLE student_dataset_comparisons (
-	id BIGSERIAL NOT NULL, 
-	clean_export_path TEXT NOT NULL, 
-	tainted_export_path TEXT NOT NULL, 
-	clean_generation_run_id BIGINT, 
-	tainted_generation_run_id BIGINT, 
-	compared_release_count BIGINT DEFAULT 0 NOT NULL, 
-	total_issue_count BIGINT DEFAULT 0 NOT NULL, 
-	missing_clean_release_count BIGINT DEFAULT 0 NOT NULL, 
-	missing_tainted_release_count BIGINT DEFAULT 0 NOT NULL, 
-	status VARCHAR(30) DEFAULT 'succeeded' NOT NULL, 
-	summary_payload TEXT NOT NULL, 
-	error_message TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
-	PRIMARY KEY (id), 
-	CONSTRAINT chk_student_dataset_comparison_counts CHECK (compared_release_count >= 0 AND total_issue_count >= 0 AND missing_clean_release_count >= 0 AND missing_tainted_release_count >= 0), 
-	CONSTRAINT chk_student_dataset_comparison_status CHECK (status IN ('succeeded', 'failed')), 
-	FOREIGN KEY(clean_generation_run_id) REFERENCES generation_runs (id), 
-	FOREIGN KEY(tainted_generation_run_id) REFERENCES generation_runs (id)
-);
-
 CREATE TABLE team_lifecycle_events (
 	id BIGSERIAL NOT NULL, 
 	generation_run_id BIGINT NOT NULL, 
@@ -745,24 +761,6 @@ CREATE TABLE team_memberships (
 	CONSTRAINT uq_team_player_joined UNIQUE (team_id, player_id, joined_date), 
 	FOREIGN KEY(team_id) REFERENCES teams (id), 
 	FOREIGN KEY(player_id) REFERENCES players (id)
-);
-
-CREATE TABLE audit_batch_team_rosters (
-	generation_run_id BIGINT NOT NULL,
-	batch_id BIGINT NOT NULL,
-	batch_month DATE NOT NULL,
-	team_id BIGINT NOT NULL,
-	player_one_id BIGINT NOT NULL,
-	player_two_id BIGINT NOT NULL,
-	roster_key VARCHAR(64) NOT NULL,
-	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	PRIMARY KEY (batch_id, team_id),
-	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id),
-	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id),
-	FOREIGN KEY(team_id) REFERENCES teams (id),
-	FOREIGN KEY(player_one_id) REFERENCES players (id),
-	FOREIGN KEY(player_two_id) REFERENCES players (id)
 );
 
 CREATE TABLE tournament_events (
@@ -1090,6 +1088,9 @@ CREATE TABLE tournament_official_games (
 
 CREATE INDEX idx_assessment_batch ON player_assessment_history (batch_id);
 CREATE INDEX idx_assessment_player_date ON player_assessment_history (player_id, assessment_date DESC);
+CREATE INDEX idx_audit_batch_team_rosters_run_batch ON audit_batch_team_rosters (generation_run_id, batch_id);
+CREATE INDEX idx_audit_batch_team_rosters_run_batch_month ON audit_batch_team_rosters (generation_run_id, batch_month);
+CREATE INDEX idx_audit_batch_team_rosters_run_roster_batch ON audit_batch_team_rosters (generation_run_id, roster_key, batch_id);
 CREATE INDEX idx_background_job_events_job ON ops.background_job_events (job_status_id, id);
 CREATE INDEX idx_background_job_events_type ON ops.background_job_events (event_type);
 CREATE INDEX idx_background_job_leases_expiry ON ops.background_job_leases (lease_expires_at);
@@ -1103,9 +1104,6 @@ CREATE INDEX idx_club_memberships_club ON club_memberships (club_id);
 CREATE INDEX idx_club_memberships_dates ON club_memberships (start_date, end_date);
 CREATE INDEX idx_club_memberships_player ON club_memberships (player_id);
 CREATE INDEX idx_club_memberships_primary ON club_memberships (player_id, is_primary) WHERE is_primary = true;
-CREATE INDEX idx_audit_batch_team_rosters_run_batch ON audit_batch_team_rosters (generation_run_id, batch_id);
-CREATE INDEX idx_audit_batch_team_rosters_run_roster_batch ON audit_batch_team_rosters (generation_run_id, roster_key, batch_id);
-CREATE INDEX idx_audit_batch_team_rosters_run_batch_month ON audit_batch_team_rosters (generation_run_id, batch_month);
 CREATE INDEX idx_clubs_generation_run ON clubs (generation_run_id);
 CREATE INDEX idx_clubs_region ON clubs (region_id);
 CREATE INDEX idx_clubs_type ON clubs (club_type);
@@ -1161,10 +1159,6 @@ CREATE INDEX idx_players_status ON players (player_status);
 CREATE INDEX idx_rating_batch ON player_rating_history (batch_id);
 CREATE INDEX idx_rating_player_date ON player_rating_history (player_id, rating_date DESC);
 CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log (batch_id);
-CREATE INDEX idx_realism_audit_query_runs_generation_run ON ops.realism_audit_query_runs (generation_run_id);
-CREATE INDEX idx_realism_audit_query_runs_job_index ON ops.realism_audit_query_runs (job_status_id, query_index);
-CREATE INDEX idx_realism_audit_query_runs_status ON ops.realism_audit_query_runs (status);
-CREATE UNIQUE INDEX uq_realism_audit_query_runs_job_query ON ops.realism_audit_query_runs (job_status_id, query_name);
 CREATE INDEX idx_raw_club_distributions_country_state ON raw_pickleball_club_distributions (country_code, state_province_code);
 CREATE INDEX idx_raw_club_distributions_load_run ON raw_pickleball_club_distributions (load_run_id);
 CREATE INDEX idx_raw_club_names_country_state ON raw_pickleball_club_names (country_code, state_province_code);
@@ -1187,31 +1181,28 @@ CREATE INDEX idx_raw_seed_load_runs_status ON raw_seed_load_runs (status);
 CREATE INDEX idx_raw_state_prov_biases_country_state ON raw_state_prov_biases (country_code, state_province_code);
 CREATE INDEX idx_raw_state_prov_biases_load_run ON raw_state_prov_biases (load_run_id);
 CREATE INDEX idx_raw_state_prov_biases_lookup ON raw_state_prov_biases (country_code, state_province_code, last_name);
-CREATE INDEX idx_student_dataset_release_files_release ON student_dataset_release_files (release_id);
-CREATE INDEX idx_student_dataset_release_files_table ON student_dataset_release_files (table_name);
+CREATE INDEX idx_realism_audit_query_runs_generation_run ON ops.realism_audit_query_runs (generation_run_id);
+CREATE INDEX idx_realism_audit_query_runs_job_index ON ops.realism_audit_query_runs (job_status_id, query_index);
+CREATE INDEX idx_realism_audit_query_runs_status ON ops.realism_audit_query_runs (status);
 CREATE INDEX idx_student_dataset_comparisons_clean_run ON student_dataset_comparisons (clean_generation_run_id);
 CREATE INDEX idx_student_dataset_comparisons_created ON student_dataset_comparisons (created_at);
 CREATE INDEX idx_student_dataset_comparisons_status ON student_dataset_comparisons (status);
 CREATE INDEX idx_student_dataset_comparisons_tainted_run ON student_dataset_comparisons (tainted_generation_run_id);
+CREATE INDEX idx_student_dataset_release_files_release ON student_dataset_release_files (release_id);
+CREATE INDEX idx_student_dataset_release_files_table ON student_dataset_release_files (table_name);
 CREATE INDEX idx_student_dataset_releases_generation_run ON student_dataset_releases (generation_run_id);
 CREATE INDEX idx_student_dataset_releases_status ON student_dataset_releases (status);
 CREATE INDEX idx_team_lifecycle_events_batch ON team_lifecycle_events (batch_id);
 CREATE INDEX idx_team_lifecycle_events_date ON team_lifecycle_events (event_date);
 CREATE INDEX idx_team_lifecycle_events_run ON team_lifecycle_events (generation_run_id);
 CREATE INDEX idx_team_lifecycle_events_team ON team_lifecycle_events (team_id);
-CREATE INDEX idx_team_lifecycle_events_run_date_team_id
-    ON team_lifecycle_events (generation_run_id, event_date, team_id, id);
 CREATE INDEX idx_team_memberships_dates ON team_memberships (joined_date, left_date);
 CREATE INDEX idx_team_memberships_player ON team_memberships (player_id);
 CREATE INDEX idx_team_memberships_team ON team_memberships (team_id);
-CREATE INDEX idx_team_memberships_team_dates_player
-    ON team_memberships (team_id, joined_date, left_date, player_id);
 CREATE INDEX idx_teams_country ON teams (country_code);
 CREATE INDEX idx_teams_formation_date ON teams (formation_date);
 CREATE INDEX idx_teams_status ON teams (team_status);
 CREATE INDEX idx_teams_type ON teams (team_type);
-CREATE INDEX idx_teams_run_status_formation_dissolution
-    ON teams (generation_run_id, team_status, formation_date, dissolution_date);
 CREATE INDEX idx_tournament_division_results_division ON tournament_division_results (slot_country_code, slot_division);
 CREATE INDEX idx_tournament_division_results_run ON tournament_division_results (simulation_run_id);
 CREATE INDEX idx_tournament_events_date ON tournament_events (tournament_date);
@@ -1242,3 +1233,4 @@ CREATE INDEX idx_validation_results_batch ON validation_results (batch_id);
 CREATE INDEX idx_validation_results_rule ON validation_results (validation_rule_id);
 CREATE INDEX idx_validation_results_severity ON validation_results (severity);
 CREATE UNIQUE INDEX uq_configuration_versions_single_valid ON configuration_profile_versions (lifecycle_status) WHERE lifecycle_status = 'valid';
+CREATE UNIQUE INDEX uq_realism_audit_query_runs_job_query ON ops.realism_audit_query_runs (job_status_id, query_name);

@@ -772,7 +772,7 @@ def _seed_old_generated_data(session):
         "INSERT INTO batch_runs (id, batch_id, run_status) VALUES (1, 1, 'succeeded')",
         "INSERT INTO export_runs (id, batch_id, export_type, export_format, export_path) VALUES (1, 1, 'student', 'parquet', '/tmp/old')",
         "INSERT INTO validation_results (id, batch_id, validation_rule_id, validation_rule_name, severity) VALUES (1, 1, 'rule', 'rule', 'error')",
-        "INSERT INTO student_dataset_releases (id, release_name, release_type, generation_run_id, output_path, status, created_at) VALUES (1, 'old release', 'historical_baseline', 1, '/tmp/release', 'succeeded', CURRENT_TIMESTAMP)",
+        "INSERT INTO student_dataset_releases (id, release_name, release_type, generation_run_id, output_path, status, created_at) VALUES (1, 'old release', 'initial_snapshot', 1, '/tmp/release', 'succeeded', CURRENT_TIMESTAMP)",
         "INSERT INTO student_dataset_release_files (id, release_id, table_name, file_path, created_at) VALUES (1, 1, 'players', '/tmp/release/players.parquet', CURRENT_TIMESTAMP)",
         "INSERT INTO job_status (id, job_type, job_id, status, created_at, updated_at) VALUES (1, 'generation_run', 'old-job', 'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         "INSERT INTO job_stage_progress (id, job_status_id, generation_run_id, batch_id, stage_name, status, progress_current, progress_total, created_at, updated_at) VALUES (1, 1, 1, 1, 'players', 'succeeded', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",

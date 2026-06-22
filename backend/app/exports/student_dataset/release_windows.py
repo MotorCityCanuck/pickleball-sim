@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.models import GenerationRun, MonthlyBatch
 
 
-HISTORICAL_BASELINE_RELEASE_TYPE = "historical_baseline"
+HISTORICAL_BASELINE_RELEASE_TYPE = "initial_snapshot"
 MONTHLY_INCREMENTAL_RELEASE_TYPE = "monthly_incremental"
 
 
@@ -56,10 +56,17 @@ class StudentDatasetReleaseWindow:
     batch_sequence_end: int
     batches: tuple[ReleaseBatch, ...]
     fact_batches: tuple[ReleaseBatch, ...] | None = None
+    prior_snapshot_batches: tuple[ReleaseBatch, ...] = ()
 
     def __post_init__(self) -> None:
         if self.fact_batches is None:
             object.__setattr__(self, "fact_batches", self.batches)
+
+    @property
+    def release_sequence_number(self) -> int:
+        """Return the one-based release sequence number."""
+
+        return self.release_index + 1
 
     @property
     def snapshot_batches(self) -> tuple[ReleaseBatch, ...]:
@@ -122,6 +129,32 @@ class StudentDatasetReleaseWindow:
         return tuple(batch.batch_month for batch in self.fact_batches or ())
 
     @property
+    def prior_snapshot_batch_ids(self) -> tuple[int, ...]:
+        """Return the previous snapshot-scope monthly batch ids."""
+
+        return tuple(batch.id for batch in self.prior_snapshot_batches)
+
+    @property
+    def prior_snapshot_batch_sequences(self) -> tuple[int, ...]:
+        """Return the previous snapshot-scope monthly batch sequences."""
+
+        return tuple(batch.batch_sequence for batch in self.prior_snapshot_batches)
+
+    @property
+    def prior_snapshot_batch_months(self) -> tuple[date, ...]:
+        """Return the previous snapshot-scope monthly batch months."""
+
+        return tuple(batch.batch_month for batch in self.prior_snapshot_batches)
+
+    @property
+    def release_month(self) -> date | None:
+        """Return the release month for incrementals; baseline releases return None."""
+
+        if self.release_type == HISTORICAL_BASELINE_RELEASE_TYPE:
+            return None
+        return self.fact_batches[-1].batch_month if self.fact_batches else None
+
+    @property
     def snapshot_month(self) -> date:
         """Return the newest monthly batch month included in this release."""
 
@@ -132,6 +165,22 @@ class StudentDatasetReleaseWindow:
         """Return the first day after the release snapshot month."""
 
         return first_day_of_next_month(self.snapshot_month)
+
+    @property
+    def prior_snapshot_month(self) -> date | None:
+        """Return the newest month in the previous snapshot, if any."""
+
+        if not self.prior_snapshot_batches:
+            return None
+        return self.prior_snapshot_batches[-1].batch_month
+
+    @property
+    def prior_snapshot_end_exclusive(self) -> date | None:
+        """Return the first day after the previous snapshot month, if any."""
+
+        if self.prior_snapshot_month is None:
+            return None
+        return first_day_of_next_month(self.prior_snapshot_month)
 
 
 def resolve_release_request(
@@ -207,11 +256,17 @@ def build_release_windows(
             batch_sequence_end=request.initial_history_month_count,
             batches=initial_batches,
             fact_batches=initial_batches,
+            prior_snapshot_batches=(),
         )
     )
 
     for offset in range(1, request.subsequent_month_count + 1):
         batch_sequence_end = request.initial_history_month_count + offset
+        previous_batch_sequence_end = batch_sequence_end - 1
+        prior_snapshot_batches = tuple(
+            batch_by_sequence[sequence]
+            for sequence in range(1, previous_batch_sequence_end + 1)
+        )
         snapshot_batches = tuple(
             batch_by_sequence[sequence]
             for sequence in range(1, batch_sequence_end + 1)
@@ -226,6 +281,7 @@ def build_release_windows(
                 batch_sequence_end=batch_sequence_end,
                 batches=snapshot_batches,
                 fact_batches=(batch_by_sequence[batch_sequence_end],),
+                prior_snapshot_batches=prior_snapshot_batches,
             )
         )
 

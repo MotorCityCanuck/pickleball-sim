@@ -52,7 +52,7 @@ class StudentDatasetRelease(Base, TimestampMixin):
         Index("idx_student_dataset_releases_generation_run", "generation_run_id"),
         Index("idx_student_dataset_releases_status", "status"),
         CheckConstraint(
-            "release_type IN ('historical_baseline', 'monthly_incremental')",
+            "release_type IN ('initial_snapshot', 'monthly_incremental')",
             name="chk_student_release_type",
         ),
         CheckConstraint(

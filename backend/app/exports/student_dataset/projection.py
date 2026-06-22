@@ -40,7 +40,7 @@ STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "matches",
     "monthly_batches",
     "player_assessment_history",
-    "player_master",
+    "players",
     "player_registrations",
     "regions",
     "team_memberships",
@@ -49,6 +49,7 @@ STUDENT_TABLE_ORDER: tuple[str, ...] = (
 
 EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
     {
+        "audit_batch_team_rosters",
         "batch_runs",
         "configuration_profile_versions",
         "configuration_profiles",
@@ -59,6 +60,10 @@ EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
         "job_stage_progress",
         "job_status",
         "last_names",
+        "ops.background_job_events",
+        "ops.background_job_leases",
+        "ops.background_workers",
+        "ops.realism_audit_query_runs",
         "ratings_update_log",
         "raw_first_names",
         "raw_last_names",
@@ -68,6 +73,7 @@ EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
         "raw_seed_load_errors",
         "raw_seed_load_runs",
         "raw_state_prov_biases",
+        "student_dataset_comparisons",
         "student_dataset_release_files",
         "student_dataset_releases",
         "player_rating_history",
@@ -140,7 +146,10 @@ class StudentTableProjection:
     def is_derived(self) -> bool:
         """Return whether this export table is derived from another source table."""
 
-        return self.output_table != self.source_table
+        return (
+            self.output_table != self.source_table
+            or self.included_columns != self.source_columns
+        )
 
 
 class ProjectionDriftError(ValueError):
@@ -257,7 +266,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "club_memberships",
                 "player_id",
-                "player_master",
+                "players",
                 parent_column="player_id",
             ),
             RelationshipValidation("club_memberships", "club_id", "clubs"),
@@ -343,7 +352,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         source_filter_key="match_team_players_for_included_match_teams",
         source_filter_description=(
             "Match-team player rows whose match_team_id belongs to included "
-            "match teams; player references are validated against player_master."
+            "match teams; player references are validated against players."
         ),
         relationship_validations=(
             RelationshipValidation(
@@ -354,7 +363,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "match_team_players",
                 "player_id",
-                "player_master",
+                "players",
                 parent_column="player_id",
             ),
         ),
@@ -369,6 +378,8 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "team_score",
             "expected_win_probability",
             "average_team_rating",
+            "pairing_source",
+            "source_team_id",
             "created_at",
             "updated_at",
         ),
@@ -381,6 +392,8 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
         excluded_columns=(
             "expected_win_probability",
+            "pairing_source",
+            "source_team_id",
             "created_at",
             "updated_at",
         ),
@@ -526,7 +539,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "player_assessment_history",
                 "player_id",
-                "player_master",
+                "players",
                 parent_column="player_id",
             ),
             RelationshipValidation(
@@ -539,7 +552,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
     _projection(
         model=Player,
         source_table="players",
-        output_table="player_master",
+        output_table="players",
         source_columns=(
             "id",
             "external_player_key",
@@ -583,14 +596,14 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "created_at",
             "updated_at",
         ),
-        source_filter_key="player_master_as_of_snapshot",
+        source_filter_key="players_as_of_snapshot",
         source_filter_description=(
             "One row per included player with static player attributes plus the latest "
             "available rating state as of the release snapshot month."
         ),
         relationship_validations=(
             RelationshipValidation(
-                "player_master",
+                "players",
                 "home_region_id",
                 "regions",
                 nullable=True,
@@ -598,14 +611,14 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
         temporal_validations=(
             TemporalValidation(
-                "player_master",
+                "players",
                 "registration_date < snapshot_end_exclusive",
-                "Player master rows must be registered before the release snapshot end.",
+                "Player rows must be registered before the release snapshot end.",
             ),
             TemporalValidation(
-                "player_master",
+                "players",
                 "rating_date IS NULL OR rating_date < snapshot_end_exclusive",
-                "Player master ratings must not be newer than the release snapshot month.",
+                "Player ratings must not be newer than the release snapshot month.",
             ),
         ),
     ),
@@ -642,7 +655,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "player_registrations",
                 "player_id",
-                "player_master",
+                "players",
                 parent_column="player_id",
             ),
             RelationshipValidation(
@@ -728,7 +741,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "team_memberships",
                 "player_id",
-                "player_master",
+                "players",
                 parent_column="player_id",
             ),
         ),

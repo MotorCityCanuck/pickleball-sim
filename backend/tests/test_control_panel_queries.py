@@ -725,10 +725,10 @@ def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(
                 id, release_name, release_type, release_month, generation_run_id, data_quality_level,
                 output_path, status, created_at, updated_at, completed_at
             ) VALUES
-                (81, 'clean_snapshot', 'historical_baseline', '2026-05-01', 8, 'none',
+                (81, 'clean_snapshot', 'initial_snapshot', '2026-05-01', 8, 'none',
                  'data/student_dataset_exports/clean_snapshot', 'succeeded',
                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:10:00'),
-                (82, 'tainted_snapshot', 'historical_baseline', '2026-05-01', 9, 'medium',
+                (82, 'tainted_snapshot', 'initial_snapshot', '2026-05-01', 9, 'medium',
                  'data/student_dataset_exports/tainted_snapshot', 'succeeded',
                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:12:00')
             """
@@ -764,8 +764,8 @@ def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(
                 {
                     "releases": [
                         {
-                            "release_type": "historical_baseline",
-                            "snapshot_month": "2026-05-01",
+                            "release_type": "initial_snapshot",
+                            "release_month": None,
                             "clean_release": {
                                 "generation_run_id": 8,
                                 "generation_name": "Comparison clean run",
@@ -793,7 +793,7 @@ def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(
     assert comparison.status == "succeeded"
     assert comparison.clean_generation_context == "#8 Comparison clean run"
     assert comparison.tainted_generation_context == "#9 Comparison tainted run"
-    assert comparison.release_context == "historical_baseline 2026-05-01"
+    assert comparison.release_context == "initial_snapshot"
     assert comparison.total_issue_count == 3
     assert comparison.clean_export_path == "data/student_dataset_exports/clean_snapshot"
 

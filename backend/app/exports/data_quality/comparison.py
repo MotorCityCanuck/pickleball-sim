@@ -85,7 +85,7 @@ class DataQualityReleaseComparison:
 
     comparison_key: str
     release_type: str
-    snapshot_month: str | None
+    release_month: str | None
     clean_release_path: str
     tainted_release_path: str
     tables: tuple[DataQualityTableComparison, ...]
@@ -118,7 +118,7 @@ class DataQualityExportComparisonResult:
 class _ReleaseDescriptor:
     comparison_key: str
     release_type: str
-    snapshot_month: str | None
+    release_month: str | None
     release_path: Path
 
 
@@ -182,12 +182,19 @@ def _discover_release_descriptors(path: Path) -> dict[str, _ReleaseDescriptor]:
 def _descriptor_from_manifest(release_path: Path) -> _ReleaseDescriptor:
     manifest = json.loads((release_path / "manifest.json").read_text(encoding="utf-8"))
     release_type = str(manifest.get("release_type") or "unknown")
-    snapshot_month = manifest.get("snapshot_month")
-    comparison_key = f"{release_type}:{snapshot_month or release_path.name}"
+    release_month = manifest.get("release_month")
+    if release_month is None:
+        release_month = manifest.get("snapshot_month")
+    release_sequence_number = manifest.get("release_sequence_number")
+    comparison_key = (
+        f"{release_sequence_number}:{release_type}:{release_month or release_path.name}"
+        if release_sequence_number is not None
+        else f"{release_type}:{release_month or release_path.name}"
+    )
     return _ReleaseDescriptor(
         comparison_key=comparison_key,
         release_type=release_type,
-        snapshot_month=str(snapshot_month) if snapshot_month is not None else None,
+        release_month=str(release_month) if release_month is not None else None,
         release_path=release_path,
     )
 
@@ -208,7 +215,7 @@ def _compare_release_pair(
     return DataQualityReleaseComparison(
         comparison_key=clean_release.comparison_key,
         release_type=clean_release.release_type,
-        snapshot_month=clean_release.snapshot_month,
+        release_month=clean_release.release_month,
         clean_release_path=str(clean_release.release_path),
         tainted_release_path=str(tainted_release.release_path),
         tables=tables,

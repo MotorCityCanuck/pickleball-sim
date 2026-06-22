@@ -170,7 +170,7 @@
                     <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
                         <div>
                             <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Pair</div>
-                            <div style="margin-top:6px; font-size:18px;">{{ release.release_type }}{% if release.snapshot_month %} | {{ release.snapshot_month }}{% endif %}</div>
+                            <div style="margin-top:6px; font-size:18px;">{{ release.release_type }}{% if release.release_month or release.snapshot_month %} | {{ release.release_month or release.snapshot_month }}{% endif %}</div>
                             <div style="margin-top:6px; color:#5a6477;"><code>{{ release.clean_release_path }}</code></div>
                             <div style="margin-top:4px; color:#5a6477;"><code>{{ release.tainted_release_path }}</code></div>
                         </div>

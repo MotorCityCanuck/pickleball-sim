@@ -44,7 +44,7 @@ ROW_RATE_ISSUES: frozenset[str] = frozenset({ISSUE_TYPE_DUPLICATE_LIKE_ROWS})
 
 
 TABLE_PRIMARY_KEY: Mapping[str, str] = {
-    "player_master": "player_id",
+    "players": "player_id",
 }
 
 PROTECTED_DATE_COLUMNS: frozenset[str] = frozenset(
@@ -118,7 +118,7 @@ TABLE_REQUIRED_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "assessment_value",
         "batch_id",
     ),
-    "player_master": (
+    "players": (
         "player_id",
         "external_player_key",
         "first_name",
@@ -148,7 +148,7 @@ MISSING_VALUE_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "club_memberships": ("membership_type",),
     "matches": ("court_type",),
     "player_assessment_history": ("confidence_score",),
-    "player_master": ("dominant_hand",),
+    "players": ("dominant_hand",),
     "player_registrations": ("registration_source",),
     "regions": ("state_province_code",),
 }
@@ -157,7 +157,7 @@ CATEGORICAL_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "clubs": ("club_type", "competitiveness_level"),
     "club_memberships": ("membership_type",),
     "matches": ("match_type", "court_type", "match_format"),
-    "player_master": ("gender", "dominant_hand", "player_status"),
+    "players": ("gender", "dominant_hand", "player_status"),
     "player_registrations": ("registration_source",),
     "regions": ("region_type",),
     "teams": ("team_type", "team_status"),
@@ -165,7 +165,7 @@ CATEGORICAL_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
 
 FORMATTING_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "clubs": ("club_name",),
-    "player_master": ("first_name", "last_name"),
+    "players": ("first_name", "last_name"),
     "regions": ("region_name",),
 }
 
@@ -173,7 +173,7 @@ ROUNDING_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "match_team_players": ("player_rating_at_match",),
     "match_teams": ("average_team_rating",),
     "player_assessment_history": ("assessment_value", "confidence_score"),
-    "player_master": (
+    "players": (
         "rating_value",
         "confidence_score",
         "volatility_score",
@@ -204,7 +204,7 @@ NUMERIC_OUTLIER_BOUNDS: Mapping[str, Mapping[str, tuple[float, float]]] = {
         "assessment_value": (0.0, 5000.0),
         "confidence_score": (0.0, 1.0),
     },
-    "player_master": {
+    "players": {
         "rating_value": (0.0, 5000.0),
         "confidence_score": (0.0, 1.0),
         "volatility_score": (0.0, 1.0),
@@ -219,7 +219,7 @@ NUMERIC_OUTLIER_BOUNDS: Mapping[str, Mapping[str, tuple[float, float]]] = {
 
 TIMESTAMP_JITTER_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "player_assessment_history": ("assessment_date",),
-    "player_master": ("rating_date",),
+    "players": ("rating_date",),
 }
 
 

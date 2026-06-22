@@ -31,7 +31,7 @@ def test_issue_type_candidate_rows_accumulate_across_tables():
             {
                 "release_id": "release-1",
                 "release_name": "release",
-                "release_type": "historical_baseline",
+                "release_type": "initial_snapshot",
             },
         )(),
         effective_level="medium",

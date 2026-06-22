@@ -9,10 +9,19 @@ from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Session
 
 from .reset_plan import GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+from app.models import AuditBatchTeamRoster
 
 
 DELETE_MODELS_IN_ORDER = GENERATED_OPERATIONAL_REBUILDABLE_MODELS
-TRUNCATE_MODELS = GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+TRUNCATE_MODELS = tuple(
+    model_to_truncate
+    for model in GENERATED_OPERATIONAL_REBUILDABLE_MODELS
+    for model_to_truncate in (
+        (AuditBatchTeamRoster, model)
+        if model.__name__ == "Team"
+        else (model,)
+    )
+)
 POSTGRES_TRUNCATE_DIALECTS = frozenset({"postgresql"})
 
 

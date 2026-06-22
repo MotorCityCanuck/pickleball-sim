@@ -1777,8 +1777,21 @@ def _comparison_history_payload(
         payload_releases.append(
             {
                 "comparison_key": getattr(release, "comparison_key", None),
-                "release_type": getattr(release, "release_type", None),
-                "snapshot_month": getattr(release, "snapshot_month", None),
+                "release_type": (
+                    "initial_snapshot"
+                    if getattr(release, "release_type", None) == "historical_baseline"
+                    else getattr(release, "release_type", None)
+                ),
+                "release_month": getattr(
+                    release,
+                    "release_month",
+                    getattr(release, "snapshot_month", None),
+                ),
+                "snapshot_month": getattr(
+                    release,
+                    "snapshot_month",
+                    getattr(release, "release_month", None),
+                ),
                 "clean_release_path": clean_release_path,
                 "tainted_release_path": tainted_release_path,
                 "issue_count": int(getattr(release, "issue_count", 0) or 0),

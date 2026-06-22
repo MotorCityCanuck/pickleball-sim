@@ -193,21 +193,32 @@ def test_plan_release_windows_builds_baseline_and_incremental_windows(session):
 
     assert len(windows) == 3
     assert windows[0].release_type == HISTORICAL_BASELINE_RELEASE_TYPE
+    assert windows[0].release_sequence_number == 1
     assert windows[0].folder_suffix == "_initial_history"
     assert windows[0].batch_sequences == (1, 2, 3)
     assert windows[0].snapshot_batch_sequences == (1, 2, 3)
     assert windows[0].fact_batch_sequences == (1, 2, 3)
+    assert windows[0].prior_snapshot_batch_sequences == ()
+    assert windows[0].release_month is None
     assert windows[0].snapshot_month == date(2025, 3, 1)
+    assert windows[0].prior_snapshot_month is None
     assert windows[0].snapshot_end_exclusive == date(2025, 4, 1)
+    assert windows[0].prior_snapshot_end_exclusive is None
 
     assert windows[1].release_type == MONTHLY_INCREMENTAL_RELEASE_TYPE
+    assert windows[1].release_sequence_number == 2
     assert windows[1].folder_suffix == "_snapshot_2025_04"
     assert windows[1].batch_sequences == (1, 2, 3, 4)
     assert windows[1].snapshot_batch_sequences == (1, 2, 3, 4)
     assert windows[1].fact_batch_sequences == (4,)
     assert windows[1].fact_batch_ids == (4,)
+    assert windows[1].prior_snapshot_batch_sequences == (1, 2, 3)
+    assert windows[1].release_month == date(2025, 4, 1)
+    assert windows[1].prior_snapshot_month == date(2025, 3, 1)
+    assert windows[1].prior_snapshot_end_exclusive == date(2025, 4, 1)
 
     assert windows[2].release_type == MONTHLY_INCREMENTAL_RELEASE_TYPE
+    assert windows[2].release_sequence_number == 3
     assert windows[2].folder_suffix == "_snapshot_2025_05"
     assert windows[2].batch_sequences == (1, 2, 3, 4, 5)
     assert windows[2].snapshot_batch_sequences == (1, 2, 3, 4, 5)
@@ -221,6 +232,10 @@ def test_plan_release_windows_builds_baseline_and_incremental_windows(session):
         date(2025, 5, 1),
     )
     assert windows[2].fact_batch_months == (date(2025, 5, 1),)
+    assert windows[2].prior_snapshot_batch_sequences == (1, 2, 3, 4)
+    assert windows[2].release_month == date(2025, 5, 1)
+    assert windows[2].prior_snapshot_month == date(2025, 4, 1)
+    assert windows[2].prior_snapshot_end_exclusive == date(2025, 5, 1)
 
 
 def test_plan_release_windows_requires_succeeded_generation_run(session):

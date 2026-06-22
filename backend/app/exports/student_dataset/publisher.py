@@ -130,7 +130,11 @@ def _persist_release_metadata(
     release = StudentDatasetRelease(
         release_name=staged_release.release_name,
         release_type=staged_release.release_type,
-        release_month=_parse_iso_date(manifest["snapshot_month"]),
+        release_month=_parse_optional_iso_date(
+            manifest["release_month"]
+            if "release_month" in manifest
+            else manifest.get("snapshot_month")
+        ),
         generation_run_id=build_parameters.generation_run_id,
         data_quality_level=build_parameters.data_quality_level,
         output_path=str(final_release_dir),
@@ -165,5 +169,7 @@ def _persist_release_metadata(
     )
 
 
-def _parse_iso_date(value: str):
+def _parse_optional_iso_date(value: str | None):
+    if value is None:
+        return None
     return datetime.strptime(value, "%Y-%m-%d").date()

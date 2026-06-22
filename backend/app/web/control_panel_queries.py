@@ -206,6 +206,10 @@ class StudentDatasetReleaseSummary:
     file_count: int
     total_row_count: int
 
+    @property
+    def display_release_type(self) -> str:
+        return _display_release_type(self.release_type)
+
 
 @dataclass(frozen=True)
 class StudentDatasetComparisonSummary:
@@ -2031,11 +2035,15 @@ def _comparison_release_context(release_payloads: list[object]) -> str:
     labels: list[str] = []
     for release_payload in release_payloads:
         release_mapping = _coerce_mapping(release_payload)
-        release_type = _coerce_str(release_mapping.get("release_type")) or "unknown"
-        snapshot_month = _coerce_str(release_mapping.get("snapshot_month"))
+        release_type = _display_release_type(
+            _coerce_str(release_mapping.get("release_type")) or "unknown"
+        )
+        release_month = _coerce_str(release_mapping.get("release_month"))
+        if release_month is None:
+            release_month = _coerce_str(release_mapping.get("snapshot_month"))
         labels.append(
-            f"{release_type} {snapshot_month}".strip()
-            if snapshot_month
+            f"{release_type} {release_month}".strip()
+            if release_month
             else release_type
         )
     return _summarize_labels(labels)
@@ -2048,6 +2056,12 @@ def _summarize_labels(labels: list[str]) -> str:
     if len(unique_labels) <= 2:
         return ", ".join(unique_labels)
     return f"{', '.join(unique_labels[:2])} +{len(unique_labels) - 2} more"
+
+
+def _display_release_type(value: str | None) -> str:
+    if value == "historical_baseline":
+        return "initial_snapshot"
+    return value or "unknown"
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:

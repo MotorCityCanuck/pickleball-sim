@@ -1,6 +1,6 @@
 <section
     class="info-card"
-    style="display:grid; gap:12px;"
+    style="display:grid; gap:18px; border:1px solid #d6d9df; border-radius:22px; padding:20px; background:linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);"
     {% if snapshot.student_dataset_export_summary.latest_export_job_is_active %}
         hx-get="/control/partials/orchestration"
         hx-trigger="every 10s"
@@ -8,142 +8,269 @@
         hx-swap="innerHTML"
     {% endif %}
 >
-    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
-        <div>
-            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Export Progress</div>
-            {% if snapshot.student_dataset_export_summary.latest_export_job %}
-                <div style="margin-top:8px; font-size:18px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' %}#247a3d{% else %}#1d2433{% endif %};">
-                    {{ snapshot.student_dataset_export_summary.latest_export_job.status }}
+    {% set latest_job = snapshot.student_dataset_export_summary.latest_export_job %}
+    {% set latest_status = latest_job.status if latest_job else 'idle' %}
+    {% set status_color = '#8f1d18' if latest_status == 'failed' else '#247a3d' if latest_status == 'succeeded' else '#1857c2' if latest_status in ('running', 'pending') else '#5a6477' %}
+    {% set status_tint = '#fef3f2' if latest_status == 'failed' else '#edf8f0' if latest_status == 'succeeded' else '#edf3ff' if latest_status in ('running', 'pending') else '#f4f6fa' %}
+    {% set status_border = '#f1b2ad' if latest_status == 'failed' else '#b7dfc2' if latest_status == 'succeeded' else '#b9d0fb' if latest_status in ('running', 'pending') else '#d6d9df' %}
+
+    <div style="display:grid; grid-template-columns:minmax(0, 1.7fr) minmax(280px, 0.9fr); gap:16px; align-items:stretch;">
+        <div style="display:grid; gap:14px; border:1px solid {{ status_border }}; border-radius:20px; background:{{ status_tint }}; padding:18px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                <div style="display:grid; gap:8px;">
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase; letter-spacing:0.08em;">Release Operations Console</div>
+                        {% if snapshot.student_dataset_export_summary.latest_export_job_is_active %}
+                            <div style="border:1px solid #b9d0fb; background:#ffffff; color:#173f8a; border-radius:999px; padding:4px 10px; font-size:12px;">Auto-refreshing every 10s</div>
+                        {% endif %}
+                    </div>
+                    <div style="font-size:30px; line-height:1.05; font-weight:800; color:#172033;">
+                        {% if latest_job %}
+                            {{ latest_status|replace('_', ' ')|title }}
+                        {% else %}
+                            No release family launched yet
+                        {% endif %}
+                    </div>
+                    <div style="max-width:880px; color:{{ '#8f1d18' if latest_status == 'failed' else '#46556c' }}; line-height:1.55;">
+                        {% if latest_job %}
+                            {{ latest_job.current_message or "No message" }}
+                            {% if latest_status == 'failed' and latest_job.percent_complete is not none %}
+                                Failed at {{ "%.2f"|format(latest_job.percent_complete) }}%.
+                            {% endif %}
+                            {% if latest_status == 'succeeded' and latest_job.elapsed_label %}
+                                Duration {{ latest_job.elapsed_label }}. Completed in {{ latest_job.elapsed_label }}.
+                            {% elif latest_status == 'failed' and latest_job.elapsed_label %}
+                                Failed after {{ latest_job.elapsed_label }}.
+                            {% elif latest_status in ('running', 'pending') and latest_job.elapsed_label %}
+                                Elapsed {{ latest_job.elapsed_label }}.
+                            {% endif %}
+                        {% else %}
+                            Launch the initial snapshot plus incremental package builder above to watch extraction, validation, packaging, and promotion move through this console.
+                        {% endif %}
+                    </div>
                 </div>
-                <div style="margin-top:6px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% else %}#5a6477{% endif %};">
-                    {{ snapshot.student_dataset_export_summary.latest_export_job.current_message or "No message" }}
-                    {% if snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' and snapshot.student_dataset_export_summary.latest_export_job.elapsed_label %}
-                        - Duration {{ snapshot.student_dataset_export_summary.latest_export_job.elapsed_label }}
-                    {% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' and snapshot.student_dataset_export_summary.latest_export_job.elapsed_label %}
-                        - Failed after {{ snapshot.student_dataset_export_summary.latest_export_job.elapsed_label }}
-                    {% endif %}
+
+                <div style="display:grid; gap:8px; min-width:180px;">
+                    <div style="border:1px solid #ffffff; background:rgba(255,255,255,0.72); border-radius:16px; padding:12px 14px;">
+                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Overall progress</div>
+                        <div style="margin-top:8px; font-size:34px; font-weight:800; color:{{ status_color }};">
+                            {% if latest_job and latest_job.percent_complete is not none %}
+                                {{ latest_job.percent_complete }}%
+                            {% else %}
+                                --
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
-            {% else %}
-                <div style="margin-top:8px; font-size:18px;">No export job yet</div>
-            {% endif %}
-        </div>
-        {% if snapshot.student_dataset_export_summary.latest_export_job and snapshot.student_dataset_export_summary.latest_export_job.percent_complete is not none %}
-            <div style="font-size:18px; color:{% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}#8f1d18{% elif snapshot.student_dataset_export_summary.latest_export_job.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};">
-                {% if snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}
-                    Failed at {{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%
-                {% else %}
-                    {{ snapshot.student_dataset_export_summary.latest_export_job.percent_complete }}%
-                {% endif %}
             </div>
-        {% endif %}
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                <div style="border:1px solid rgba(255,255,255,0.9); background:rgba(255,255,255,0.78); border-radius:16px; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest status</div>
+                    <div style="margin-top:8px; font-size:20px; font-weight:800; color:{{ status_color }};">
+                        {{ latest_status|replace('_', ' ')|title if latest_job else 'Idle' }}
+                    </div>
+                </div>
+                <div style="border:1px solid rgba(255,255,255,0.9); background:rgba(255,255,255,0.78); border-radius:16px; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Published releases</div>
+                    <div style="margin-top:8px; font-size:20px; font-weight:800; color:#172033;">
+                        {{ snapshot.student_dataset_export_summary.latest_releases|length }}
+                    </div>
+                </div>
+                <div style="border:1px solid rgba(255,255,255,0.9); background:rgba(255,255,255,0.78); border-radius:16px; padding:14px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Comparison history</div>
+                    <div style="margin-top:8px; font-size:20px; font-weight:800; color:#172033;">
+                        {{ snapshot.student_dataset_export_summary.comparison_history|length }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <aside style="display:grid; gap:12px;">
+            <div style="border:1px solid #d6d9df; border-radius:18px; background:#fff; padding:16px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Run shape</div>
+                <div style="margin-top:8px; font-size:18px; font-weight:800; color:#172033;">Initial snapshot + month-by-month releases</div>
+                <div style="margin-top:8px; color:#5a6477; line-height:1.5;">
+                    The export family writes one baseline package, then publishes monthly append and merge-ready packages that align with the redesign contract.
+                </div>
+            </div>
+            <div style="border:1px solid #d6d9df; border-radius:18px; background:#fff; padding:16px;">
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Operator guidance</div>
+                <div style="margin-top:10px; display:grid; gap:10px;">
+                    <div style="display:grid; gap:4px;">
+                        <div style="font-weight:700; color:#172033;">1. Watch stage health</div>
+                        <div style="color:#5a6477; line-height:1.5;">Failures stop promotion. Running stages update automatically every 10 seconds.</div>
+                    </div>
+                    <div style="display:grid; gap:4px;">
+                        <div style="font-weight:700; color:#172033;">2. Inspect published packages</div>
+                        <div style="color:#5a6477; line-height:1.5;">Open the folder, copy the path, or download the packaged release for handoff.</div>
+                    </div>
+                    <div style="display:grid; gap:4px;">
+                        <div style="font-weight:700; color:#172033;">3. Run QC on demand</div>
+                        <div style="color:#5a6477; line-height:1.5;">Use the built-in release check to verify the published package before distribution.</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
     </div>
 
-    {% if snapshot.student_dataset_export_summary.latest_export_job and snapshot.student_dataset_export_summary.latest_export_job.status == 'failed' %}
-        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
-            Export failed. Review the failed stage details below before starting another export.
+    {% if latest_job and latest_status == 'failed' %}
+        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:14px; padding:12px 14px;">
+            Export failed. Review the failed stage details below, fix the blocker, and relaunch the release family.
         </div>
     {% endif %}
 
     {% if snapshot.student_dataset_export_summary.latest_export_stage_progress %}
-        <div style="display:grid; gap:10px;">
-            {% for stage in snapshot.student_dataset_export_summary.latest_export_stage_progress %}
+        <div style="display:grid; gap:12px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end; flex-wrap:wrap;">
                 <div>
-                    <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
-                        <span>{{ stage.stage_name }}</span>
-                        <span>
-                            {{ stage.status }}
-                            {% if stage.progress_percent is not none %}
-                                | {{ stage.progress_percent }}%
-                            {% endif %}
-                        </span>
-                    </div>
-                    <div style="margin-top:6px; height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
-                        <div
-                            style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{% if stage.status == 'failed' %}#b42318{% elif stage.status == 'succeeded' %}#247a3d{% else %}#1857c2{% endif %};"
-                        ></div>
-                    </div>
-                    {% if stage.completion_message or stage.progress_message or stage.error_message %}
-                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">
-                            {{ stage.error_message or stage.completion_message or stage.progress_message }}
-                        </div>
-                    {% endif %}
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Execution timeline</div>
+                    <div style="margin-top:6px; font-size:20px; color:#172033; font-weight:800;">Release family pipeline</div>
                 </div>
-            {% endfor %}
+                <div style="color:#5a6477; font-size:13px;">
+                    Stage cards show the active step, the latest message, and completion depth for the current export family.
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+                {% for stage in snapshot.student_dataset_export_summary.latest_export_stage_progress %}
+                    {% set stage_color = '#b42318' if stage.status == 'failed' else '#247a3d' if stage.status == 'succeeded' else '#1857c2' if stage.status == 'running' else '#97a1b2' %}
+                    {% set stage_tint = '#fef3f2' if stage.status == 'failed' else '#edf8f0' if stage.status == 'succeeded' else '#edf3ff' if stage.status == 'running' else '#f7f8fb' %}
+                    <article style="display:grid; gap:12px; border:1px solid #d6d9df; border-radius:18px; background:#fff; padding:16px;">
+                        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                            <div style="display:grid; gap:8px;">
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <div style="width:12px; height:12px; border-radius:999px; background:{{ stage_color }};"></div>
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Stage</div>
+                                </div>
+                                <div style="font-size:18px; font-weight:800; color:#172033;">{{ stage.stage_name }}</div>
+                            </div>
+                            <div style="border:1px solid #d6d9df; border-radius:999px; padding:4px 10px; font-size:12px; color:{{ stage_color }}; background:{{ stage_tint }};">
+                                {{ stage.status }}
+                            </div>
+                        </div>
+
+                        <div style="color:#5a6477; line-height:1.5; min-height:66px;">
+                            {{ stage.error_message or stage.completion_message or stage.progress_message or "No stage detail yet." }}
+                        </div>
+
+                        <div style="display:grid; gap:8px;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:13px;">
+                                <span style="color:#5a6477;">Completion</span>
+                                <span style="font-weight:700; color:{{ stage_color }};">
+                                    {% if stage.progress_percent is not none %}
+                                        {{ stage.progress_percent }}%
+                                    {% elif stage.status == 'succeeded' %}
+                                        100%
+                                    {% else %}
+                                        --
+                                    {% endif %}
+                                </span>
+                            </div>
+                            <div style="height:10px; background:#eef1f5; border-radius:999px; overflow:hidden;">
+                                <div
+                                    style="height:10px; width:{% if stage.progress_percent is not none %}{{ stage.progress_percent }}{% elif stage.status == 'succeeded' %}100{% else %}0{% endif %}%; background:{{ stage_color }};"
+                                ></div>
+                            </div>
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
         </div>
     {% endif %}
 
     {% if snapshot.student_dataset_export_summary.latest_releases %}
         <div
             id="export-release-action-status"
-            style="display:none; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:8px; padding:10px 12px;"
+            style="display:none; border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:12px; padding:10px 12px;"
         ></div>
-        <div style="overflow:auto;">
-            <table style="width:100%; border-collapse:collapse; font-size:14px;">
-                <thead>
-                    <tr style="text-align:left; color:#5a6477; border-bottom:1px solid #d6d9df;">
-                        <th style="padding:8px 10px;">Release</th>
-                        <th style="padding:8px 10px;">Type</th>
-                        <th style="padding:8px 10px;">Month</th>
-                        <th style="padding:8px 10px;">Files</th>
-                        <th style="padding:8px 10px;">Rows</th>
-                        <th style="padding:8px 10px;">Path</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for release in snapshot.student_dataset_export_summary.latest_releases %}
-                        <tr>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_name }}</td>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_type }}</td>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.release_month or "n/a" }}</td>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ release.file_count }}</td>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">{{ "{:,}".format(release.total_row_count) }}</td>
-                            <td style="padding:8px 10px; border-bottom:1px solid #d6d9df;">
-                                <div style="display:grid; gap:8px;">
-                                    <code>{{ release.output_path }}</code>
+
+        <div style="display:grid; gap:12px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Published release packages</div>
+                    <div style="margin-top:6px; font-size:20px; color:#172033; font-weight:800;">Release catalog</div>
+                </div>
+                <div style="color:#5a6477; font-size:13px;">
+                    Each card is a published package with its release type, row volume, and direct operator actions.
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px;">
+                {% for release in snapshot.student_dataset_export_summary.latest_releases %}
+                    <article style="display:grid; gap:16px; border:1px solid #d6d9df; border-radius:18px; background:#fff; padding:18px;">
+                        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                            <div style="display:grid; gap:6px;">
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">{{ release.display_release_type }}</div>
+                                    {% if release.release_month %}
+                                        <div style="border:1px solid #d6d9df; border-radius:999px; padding:4px 10px; font-size:12px; color:#5a6477;">{{ release.release_month }}</div>
+                                    {% endif %}
                                 </div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td colspan="6" style="padding:6px 10px 12px 10px; border-bottom:1px solid #d6d9df;">
-                                <div style="display:grid; grid-template-columns:repeat(4, max-content); gap:8px; justify-content:start; align-items:center;">
-                                    <button
-                                        type="button"
-                                        onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
-                                        title="Copy release path"
-                                    >
-                                        Copy Path
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onclick="window.downloadControlPanelReleasePackage({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
-                                        title="Download a zip package containing manifest.json and all Parquet files"
-                                    >
-                                        Download Package
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onclick="window.openControlPanelFolder({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
-                                        title="Open release folder"
-                                    >
-                                        Open Folder
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onclick="window.runControlPanelReleaseQc({{ release.output_path|tojson }})"
-                                        style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:7px; padding:6px 8px; cursor:pointer; font-size:11px; line-height:1.2; text-align:center; white-space:nowrap;"
-                                        title="Run DuckDB quality checks for this release"
-                                    >
-                                        Run QC
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+                                <div style="font-size:20px; color:#172033; font-weight:800;">{{ release.release_name }}</div>
+                            </div>
+                            <div style="border:1px solid #d6d9df; border-radius:999px; padding:4px 10px; font-size:12px; color:#5a6477; background:#fbfcfe;">
+                                {{ release.status }}
+                            </div>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px;">
+                            <div style="border:1px solid #eef1f5; border-radius:14px; padding:12px; background:#fbfcfe;">
+                                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Files</div>
+                                <div style="margin-top:6px; font-size:22px; color:#172033; font-weight:800;">{{ release.file_count }}</div>
+                            </div>
+                            <div style="border:1px solid #eef1f5; border-radius:14px; padding:12px; background:#fbfcfe;">
+                                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Rows</div>
+                                <div style="margin-top:6px; font-size:22px; color:#172033; font-weight:800;">{{ "{:,}".format(release.total_row_count) }}</div>
+                            </div>
+                            <div style="border:1px solid #eef1f5; border-radius:14px; padding:12px; background:#fbfcfe;">
+                                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Package state</div>
+                                <div style="margin-top:6px; font-size:16px; color:#172033; font-weight:800;">Ready</div>
+                            </div>
+                        </div>
+
+                        <div style="display:grid; gap:6px;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Published path</div>
+                            <code style="display:block; white-space:pre-wrap; word-break:break-word; border:1px solid #eef1f5; border-radius:12px; background:#f9fbfd; padding:10px 12px;">{{ release.output_path }}</code>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
+                            <button
+                                type="button"
+                                onclick="window.copyControlPanelText({{ release.output_path|tojson }})"
+                                style="border:1px solid #d6d9df; background:#fff; color:#1d2433; border-radius:12px; padding:10px 12px; cursor:pointer; font-size:12px; font-weight:800;"
+                                title="Copy release path"
+                            >
+                                Copy Path
+                            </button>
+                            <button
+                                type="button"
+                                onclick="window.openControlPanelFolder({{ release.output_path|tojson }})"
+                                style="border:1px solid #d6d9df; background:#fff; color:#1d2433; border-radius:12px; padding:10px 12px; cursor:pointer; font-size:12px; font-weight:800;"
+                                title="Open release folder"
+                            >
+                                Open Folder
+                            </button>
+                            <button
+                                type="button"
+                                onclick="window.downloadControlPanelReleasePackage({{ release.output_path|tojson }})"
+                                style="border:1px solid #c5d1e6; background:#eff4ff; color:#173f8a; border-radius:12px; padding:10px 12px; cursor:pointer; font-size:12px; font-weight:800;"
+                                title="Download a zip package containing manifest.json and all Parquet files"
+                            >
+                                Download Package
+                            </button>
+                            <button
+                                type="button"
+                                onclick="window.runControlPanelReleaseQc({{ release.output_path|tojson }})"
+                                style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:12px; padding:10px 12px; cursor:pointer; font-size:12px; font-weight:800;"
+                                title="Run DuckDB quality checks for this release"
+                            >
+                                Run QC
+                            </button>
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
         </div>
     {% endif %}
 </section>

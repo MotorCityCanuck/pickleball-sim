@@ -47,7 +47,7 @@ def session(session_factory):
 def release_window():
     return StudentDatasetReleaseWindow(
         release_index=0,
-        release_type="historical_baseline",
+        release_type="initial_snapshot",
         folder_suffix="_initial_history",
         batch_sequence_start=1,
         batch_sequence_end=2,
@@ -81,6 +81,10 @@ def incremental_release_window():
         ),
         fact_batches=(
             ReleaseBatch(id=103, batch_sequence=3, batch_month=date(2025, 3, 1)),
+        ),
+        prior_snapshot_batches=(
+            ReleaseBatch(id=101, batch_sequence=1, batch_month=date(2025, 1, 1)),
+            ReleaseBatch(id=102, batch_sequence=2, batch_month=date(2025, 2, 1)),
         ),
     )
 
@@ -420,29 +424,18 @@ def test_incremental_dimension_queries_remain_snapshot_scoped(
 ):
     seed_snapshot_query_data(session)
 
-    assert [row["player_id"] for row in rows(session, "player_master", incremental_query_context)] == [1, 2]
-    assert [row["id"] for row in rows(session, "teams", incremental_query_context)] == [
-        1,
-        2,
-        3,
-    ]
-    assert [row["id"] for row in rows(session, "club_memberships", incremental_query_context)] == [
-        1,
-        2,
-        4,
-    ]
-    assert [row["id"] for row in rows(session, "regions", incremental_query_context)] == [
-        1,
-        2,
-        3,
-        4,
-    ]
+    assert [row["player_id"] for row in rows(session, "players", incremental_query_context)] == [1, 2]
+    assert [row["id"] for row in rows(session, "teams", incremental_query_context)] == [1, 3]
+    assert [row["id"] for row in rows(session, "clubs", incremental_query_context)] == [1]
+    assert [row["id"] for row in rows(session, "club_memberships", incremental_query_context)] == [4]
+    assert [row["id"] for row in rows(session, "team_memberships", incremental_query_context)] == [3, 4]
+    assert [row["id"] for row in rows(session, "regions", incremental_query_context)] == [1, 2, 3, 4]
 
 
-def test_player_master_query_uses_latest_snapshot_scope_rating(session, query_context):
+def test_players_query_uses_latest_snapshot_scope_rating(session, query_context):
     seed_snapshot_query_data(session)
 
-    row = rows(session, "player_master", query_context)[0]
+    row = rows(session, "players", query_context)[0]
 
     assert row["player_id"] == 1
     assert str(row["external_player_key"]) == "00000000-0000-0000-0000-000000000001"
@@ -464,13 +457,13 @@ def test_player_master_query_uses_latest_snapshot_scope_rating(session, query_co
     assert row["snapshot_month"] == date(2025, 2, 1)
 
 
-def test_player_master_query_keeps_snapshot_players_and_latest_ratings_for_incrementals(
+def test_players_query_returns_only_incremental_player_deltas(
     session,
     incremental_query_context,
 ):
     seed_snapshot_query_data(session)
 
-    rows_out = rows(session, "player_master", incremental_query_context)
+    rows_out = rows(session, "players", incremental_query_context)
 
     assert [row["player_id"] for row in rows_out] == [1, 2]
     assert float(rows_out[0]["rating_value"]) == 1412.0
@@ -487,7 +480,7 @@ def test_player_and_match_participation_queries_do_not_export_future_players(
 ):
     seed_snapshot_query_data(session)
 
-    assert [row["player_id"] for row in rows(session, "player_master", query_context)] == [1]
+    assert [row["player_id"] for row in rows(session, "players", query_context)] == [1]
     assert [row["id"] for row in rows(session, "match_team_players", query_context)] == [
         100,
         101,

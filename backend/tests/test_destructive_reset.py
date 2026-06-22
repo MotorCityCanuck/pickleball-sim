@@ -18,6 +18,7 @@ from app.generation.destructive_reset import (  # noqa: E402
     _truncate_statement,
 )
 from app.models import (  # noqa: E402
+    AuditBatchTeamRoster,
     BatchRun,
     ExportRun,
     JobStageProgress,
@@ -40,6 +41,11 @@ def test_postgres_truncate_statement_targets_explicit_generated_domain():
     assert "match_team_players" in statement
     assert "match_teams" in statement
     assert "matches" in statement
+    assert "audit_batch_team_rosters" in statement
+    truncate_tables = statement.removeprefix("TRUNCATE TABLE ").removesuffix(
+        " RESTART IDENTITY"
+    ).split(", ")
+    assert truncate_tables.index("audit_batch_team_rosters") < truncate_tables.index("teams")
     assert "tournament_submissions" in statement
     assert "tournament_team_results" in statement
     assert "tournament_official_matches" in statement
@@ -52,6 +58,7 @@ def test_generated_reset_plan_keeps_history_tables_out_of_runtime_reset():
     assert MatchTeamPlayer in reset_models
     assert MatchTeam in reset_models
     assert Match in reset_models
+    assert AuditBatchTeamRoster not in reset_models
     assert MonthlyBatch not in reset_models
     assert JobStageProgress not in reset_models
     assert BatchRun not in reset_models

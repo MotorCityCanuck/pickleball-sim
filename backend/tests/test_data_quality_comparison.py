@@ -84,13 +84,13 @@ def test_compare_export_locations_detects_missingness_variants_and_duplicates(
     tainted_release_dir = tmp_path / "tainted_release"
     shutil.copytree(clean_release_dir, tainted_release_dir)
 
-    player_master = pq.read_table(tainted_release_dir / "player_master.parquet").to_pylist()
-    player_master[0]["dominant_hand"] = None
-    player_master[0]["first_name"] = str(player_master[0]["first_name"]).upper()
+    players = pq.read_table(tainted_release_dir / "players.parquet").to_pylist()
+    players[0]["dominant_hand"] = None
+    players[0]["first_name"] = str(players[0]["first_name"]).upper()
     _write_rows(
-        tainted_release_dir / "player_master.parquet",
-        player_master,
-        pq.read_table(clean_release_dir / "player_master.parquet").column_names,
+        tainted_release_dir / "players.parquet",
+        players,
+        pq.read_table(clean_release_dir / "players.parquet").column_names,
     )
 
     matches = pq.read_table(tainted_release_dir / "matches.parquet").to_pylist()
@@ -111,14 +111,14 @@ def test_compare_export_locations_detects_missingness_variants_and_duplicates(
     assert result.compared_release_count == 1
     assert result.total_issue_count > 0
     release = result.releases[0]
-    player_master_table = next(table for table in release.tables if table.table_name == "player_master")
+    players_table = next(table for table in release.tables if table.table_name == "players")
     assert any(
         issue.issue_type == "missing_optional_values" and issue.column_name == "dominant_hand"
-        for issue in player_master_table.column_issues
+        for issue in players_table.column_issues
     )
     assert any(
         issue.issue_type == "name_case_variants" and issue.column_name == "first_name"
-        for issue in player_master_table.column_issues
+        for issue in players_table.column_issues
     )
     matches_table = next(table for table in release.tables if table.table_name == "matches")
     assert matches_table.row_delta == 1

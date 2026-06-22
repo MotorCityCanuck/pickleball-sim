@@ -217,7 +217,7 @@ def test_published_family_assertion_requires_parquet_files(tmp_path):
             PublishedStudentDatasetRelease(
                 release_id=1,
                 release_name="release",
-                release_type="historical_baseline",
+                release_type="initial_snapshot",
                 release_dir=release_dir,
                 manifest_path=release_dir / "manifest.json",
                 file_count=0,

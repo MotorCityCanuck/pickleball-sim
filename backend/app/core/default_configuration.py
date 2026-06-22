@@ -414,7 +414,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "level": "medium",
         "random_seed": 12345,
         "apply_to_release_types": [
-            "historical_baseline",
+            "initial_snapshot",
             "monthly_incremental",
         ],
         "write_instructor_manifest": True,
@@ -494,7 +494,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
                     "timestamp_jitter",
                 ],
             },
-            "player_master": {
+            "players": {
                 "enabled": True,
                 "issue_profile": "medium",
                 "allowed_issue_types": [

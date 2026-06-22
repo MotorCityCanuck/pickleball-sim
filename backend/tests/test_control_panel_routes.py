@@ -2240,7 +2240,7 @@ def test_export_progress_renders_release_actions(session_factory):
                     id, release_name, release_type, release_month, generation_run_id,
                     data_quality_level, output_path, status, created_at, updated_at, completed_at
                 ) VALUES (
-                    61, 'student_release_initial_history', 'historical_baseline', '2026-05-01', 2,
+                    61, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 2,
                     'none', 'data/student_dataset_exports/student_release/student_release_initial_history',
                     'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
@@ -2253,7 +2253,7 @@ def test_export_progress_renders_release_actions(session_factory):
                 INSERT INTO student_dataset_release_files (
                     release_id, table_name, file_path, row_count, schema_hash, checksum, created_at
                 ) VALUES
-                    (61, 'player_master', 'data/student_dataset_exports/student_release/student_release_initial_history/player_master.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
+                    (61, 'players', 'data/student_dataset_exports/student_release/student_release_initial_history/players.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -2382,14 +2382,14 @@ def test_student_dataset_compare_route_renders_comparison_summary(session_factor
                 missing_tainted_releases=(),
                 releases=(
                     SimpleNamespace(
-                        release_type="historical_baseline",
-                        snapshot_month="2026-05-01",
+                        release_type="initial_snapshot",
+                        release_month=None,
                         clean_release_path="/tmp/clean_release",
                         tainted_release_path="/tmp/tainted_release",
                         issue_count=3,
                         tables=(
                             SimpleNamespace(
-                                table_name="player_master",
+                                table_name="players",
                                 clean_row_count=10,
                                 tainted_row_count=10,
                                 row_delta=0,

@@ -309,13 +309,27 @@ def _release_manifest(
 ) -> dict[str, Any]:
     release_mode = (
         "baseline"
-        if release_window.release_type == "historical_baseline"
+        if release_window.release_type == "initial_snapshot"
         else "monthly_incremental"
+    )
+    manifest_release_type = release_window.release_type
+    load_strategy = (
+        "full_load"
+        if release_window.release_type == "initial_snapshot"
+        else "incremental_load"
     )
     return {
         "release_name": release_name,
+        "release_sequence_number": release_window.release_sequence_number,
         "release_mode": release_mode,
-        "release_type": release_window.release_type,
+        "release_type": manifest_release_type,
+        "release_month": (
+            release_window.release_month.isoformat()
+            if release_window.release_month is not None
+            else None
+        ),
+        "included_months": list(release_window.fact_batch_sequences),
+        "load_strategy": load_strategy,
         "student_dataset_schema_version": STUDENT_DATASET_SCHEMA_VERSION,
         "included_batch_sequences": list(release_window.fact_batch_sequences),
         "included_batch_months": [

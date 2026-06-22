@@ -17,7 +17,7 @@ ISSUE_TYPE_TIMESTAMP_JITTER = "timestamp_jitter"
 ISSUE_TYPE_DUPLICATE_LIKE_ROWS = "duplicate_like_rows"
 ISSUE_TYPE_DELAYED_RATING_UPDATES = "delayed_rating_updates"
 ISSUE_TYPE_SOFT_JOIN_AMBIGUITY = "soft_join_ambiguity"
-HISTORICAL_BASELINE_RELEASE_TYPE = "historical_baseline"
+HISTORICAL_BASELINE_RELEASE_TYPE = "initial_snapshot"
 MONTHLY_INCREMENTAL_RELEASE_TYPE = "monthly_incremental"
 
 SUPPORTED_DATA_QUALITY_LEVELS: tuple[str, ...] = (
@@ -252,7 +252,7 @@ DEFAULT_TABLE_RULES: Mapping[str, DataQualityTableRule] = {
             ISSUE_TYPE_TIMESTAMP_JITTER,
         ),
     ),
-    "player_master": DataQualityTableRule(
+    "players": DataQualityTableRule(
         issue_profile="medium",
         allowed_issue_types=(
             ISSUE_TYPE_NAME_CASE_VARIANTS,
@@ -317,5 +317,3 @@ def level_profile(level: str) -> DataQualityLevelProfile:
     """Return the configured frequency profile for one normalized level."""
 
     return DEFAULT_LEVEL_PROFILES[normalize_data_quality_level(level)]
-HISTORICAL_BASELINE_RELEASE_TYPE = "historical_baseline"
-MONTHLY_INCREMENTAL_RELEASE_TYPE = "monthly_incremental"
