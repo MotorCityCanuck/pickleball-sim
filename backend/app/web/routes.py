@@ -44,6 +44,7 @@ from app.generation import (
     RealismAuditService,
     SeedRefreshService,
     default_realism_audit_assessment_thresholds,
+    initialize_realism_audit_query_checkpoints,
     normalize_realism_audit_assessment_thresholds,
     resolve_realism_audit_parameters,
     save_realism_audit_snapshot,
@@ -1642,7 +1643,8 @@ def _register_realism_audit_job(
     ):
         raise ValueError("A realism audit is already running.")
 
-    query_count = len(RealismAuditRunner(session).available_queries())
+    audit_queries = RealismAuditRunner(session).available_queries()
+    query_count = len(audit_queries)
     normalized_thresholds = normalize_realism_audit_assessment_thresholds(
         assessment_thresholds
     )
@@ -1671,6 +1673,13 @@ def _register_realism_audit_job(
             progress_message="Queued realism audit.",
             metadata_json={"assessment_thresholds": normalized_thresholds},
         )
+    )
+    initialize_realism_audit_query_checkpoints(
+        session,
+        job_status_id=job_status.id,
+        generation_run_id=generation_run_id,
+        batch_id=batch_id,
+        queries=audit_queries,
     )
     session.flush()
     return job_status

@@ -36,6 +36,13 @@ from .realism_audit_assessment import (
     default_realism_audit_assessment_thresholds,
     normalize_realism_audit_assessment_thresholds,
 )
+from .realism_audit_checkpoints import (
+    initialize_realism_audit_query_checkpoints,
+    load_realism_audit_query_checkpoints,
+    mark_realism_audit_query_failed,
+    mark_realism_audit_query_running,
+    mark_realism_audit_query_succeeded,
+)
 from .realism_audit_history import (
     DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR,
     build_realism_audit_snapshot_filename,
@@ -91,6 +98,11 @@ __all__ = [
     "format_table",
     "generate_worker_identity",
     "heartbeat_worker",
+    "initialize_realism_audit_query_checkpoints",
+    "load_realism_audit_query_checkpoints",
+    "mark_realism_audit_query_failed",
+    "mark_realism_audit_query_running",
+    "mark_realism_audit_query_succeeded",
     "normalize_realism_audit_assessment_thresholds",
     "register_worker",
     "release_job_lease",

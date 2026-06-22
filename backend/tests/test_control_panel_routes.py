@@ -37,6 +37,7 @@ def session_factory():
     )
     with engine.begin() as conn:
         conn.exec_driver_sql("PRAGMA foreign_keys = ON")
+        conn.exec_driver_sql("ATTACH DATABASE ':memory:' AS ops")
         conn.exec_driver_sql(
             """
             CREATE TABLE raw_seed_load_runs (
@@ -249,6 +250,28 @@ def session_factory():
                 foreign key(job_status_id) references job_status(id),
                 foreign key(generation_run_id) references generation_runs(id),
                 foreign key(batch_id) references monthly_batches(id)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE ops.realism_audit_query_runs (
+                id integer primary key autoincrement,
+                job_status_id bigint not null,
+                generation_run_id bigint,
+                batch_id bigint,
+                query_index integer not null,
+                query_name varchar(255) not null,
+                status varchar(30) default 'pending' not null,
+                started_at datetime,
+                completed_at datetime,
+                elapsed_ms bigint,
+                row_count bigint,
+                result_json json,
+                error_message text,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null,
+                unique (job_status_id, query_name)
             )
             """
         )
@@ -1805,6 +1828,23 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
                 """
             )
         )
+        checkpoint_count = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM ops.realism_audit_query_runs
+                WHERE job_status_id = (
+                    SELECT id
+                    FROM job_status
+                    WHERE job_type = 'realism_audit'
+                    LIMIT 1
+                )
+                AND generation_run_id = 2
+                AND batch_id = 22
+                AND status = 'pending'
+                """
+            )
+        ).scalar_one()
         session.execute(
             text(
                 """
@@ -1833,6 +1873,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
 
     body = response.body.decode()
     assert response.status_code == 200
+    assert checkpoint_count > 0
     assert "Realism audit started in background." in body
     assert "Audit in progress" in body
     assert "Audit Progress" in body
