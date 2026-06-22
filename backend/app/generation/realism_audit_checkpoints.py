@@ -11,6 +11,7 @@ from app.models import RealismAuditQueryRun
 
 from .durable_worker import utc_now
 from .realism_audit import RealismAuditQuery, RealismAuditResult
+from .realism_audit_report import results_to_json_ready
 
 
 def initialize_realism_audit_query_checkpoints(
@@ -122,10 +123,4 @@ def mark_realism_audit_query_failed(
 def _result_to_payload(result: RealismAuditResult | dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, dict):
         return result
-    return {
-        "query": result.query.name,
-        "scope": result.query.scope,
-        "category": result.query.category,
-        "description": result.query.description,
-        "rows": result.rows,
-    }
+    return results_to_json_ready((result,))[0]

@@ -20,7 +20,6 @@ from app.db.session import session_scope  # noqa: E402
 from app.generation.durable_worker import (  # noqa: E402
     REALISM_AUDIT_JOB_TYPE,
     WorkerIdentity,
-    claim_next_realism_audit_job,
     generate_worker_identity,
     heartbeat_worker,
     register_worker,
@@ -29,8 +28,8 @@ from app.generation.durable_worker import (  # noqa: E402
     utc_now,
     write_job_event,
 )
+from app.generation.realism_audit_job_handler import RealismAuditJobHandler  # noqa: E402
 from app.models import BackgroundJobLease  # noqa: E402
-from app.web.routes import _execute_realism_audit_job  # noqa: E402
 
 
 logger = logging.getLogger("pickleball.background_worker")
@@ -263,9 +262,8 @@ def _claim_next_job(
         for queue in config.queues:
             if queue != REALISM_AUDIT_JOB_TYPE:
                 continue
-            lease = claim_next_realism_audit_job(
-                session,
-                worker_id,
+            lease = RealismAuditJobHandler(session).claim_next_job(
+                worker_id=worker_id,
                 lease_duration=_seconds_to_timedelta(config.lease_seconds),
             )
             if lease is not None:
@@ -359,7 +357,7 @@ def _run_claimed_job(
 
 def _run_realism_audit_handler(job_status_id: int) -> None:
     with session_scope() as session:
-        _execute_realism_audit_job(session=session, job_status_id=job_status_id)
+        RealismAuditJobHandler(session).run_claimed_job(job_status_id=job_status_id)
 
 
 def _normalize_queues(raw_queues: Sequence[str]) -> tuple[str, ...]:

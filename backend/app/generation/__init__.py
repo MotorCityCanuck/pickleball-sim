@@ -48,6 +48,10 @@ from .realism_audit_history import (
     build_realism_audit_snapshot_filename,
     save_realism_audit_snapshot,
 )
+from .realism_audit_job_handler import (
+    RealismAuditJobHandler,
+    RealismAuditJobHandlerResult,
+)
 from .realism_audit_report import (
     execution_to_json_ready,
     execution_to_markdown,
@@ -85,6 +89,8 @@ __all__ = [
     "RealismAuditResult",
     "RealismAuditRunner",
     "RealismAuditService",
+    "RealismAuditJobHandler",
+    "RealismAuditJobHandlerResult",
     "REALISM_AUDIT_JOB_TYPE",
     "SeedRefreshResult",
     "SeedRefreshService",
