@@ -416,6 +416,50 @@ def test_validate_staged_release_rejects_duplicate_players_rows(
     assert "players:one_row_per_player" in failed_names
 
 
+def test_validate_staged_incremental_release_allows_empty_clubs_and_memberships(
+    session,
+    incremental_release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    _seed_incremental_match_shape(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=1,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(incremental_release_window,),
+        build_parameters=build_parameters,
+    )
+    release = result.releases[0]
+    row_counts = {file.table_name: file.row_count for file in release.files}
+
+    for table_name in ("clubs", "club_memberships"):
+        file_path = release.release_dir / f"{table_name}.parquet"
+        existing = pq.read_table(file_path)
+        empty_columns = {
+            field.name: pa.array([], type=field.type)
+            for field in existing.schema
+        }
+        pq.write_table(pa.table(empty_columns), file_path)
+        row_counts[table_name] = 0
+
+    validation_result = validate_staged_release(
+        release_dir=release.release_dir,
+        release_window=incremental_release_window,
+        manifest_row_counts=row_counts,
+    )
+
+    assert validation_result.status == "passed"
+
+
 def test_validate_staged_release_rejects_players_snapshot_month_mismatch(
     session,
     release_window,

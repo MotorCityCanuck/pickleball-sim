@@ -18,7 +18,7 @@ from .projection import (
 from .release_windows import StudentDatasetReleaseWindow
 
 
-REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
+BASELINE_REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
     {
         "clubs",
         "club_memberships",
@@ -34,6 +34,25 @@ REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
         "teams",
     }
 )
+
+INCREMENTAL_REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
+    {
+        "match_games",
+        "match_team_players",
+        "match_teams",
+        "matches",
+        "monthly_batches",
+        "players",
+        "player_registrations",
+        "regions",
+        "team_memberships",
+        "teams",
+    }
+)
+
+# Backward-compatible export surface for callers that still import the older
+# single-set constant. The validator no longer uses this directly.
+REQUIRED_NON_EMPTY_TABLES: frozenset[str] = BASELINE_REQUIRED_NON_EMPTY_TABLES
 
 
 class StudentDatasetValidationError(RuntimeError):
@@ -106,7 +125,7 @@ def validate_staged_release(
         checks.extend(_validate_excluded_files(release_dir))
         checks.extend(_validate_primary_key_uniqueness(connection))
         checks.extend(_validate_row_counts(connection, manifest_row_counts))
-        checks.extend(_validate_required_non_empty_tables(connection))
+        checks.extend(_validate_required_non_empty_tables(connection, release_window))
         checks.extend(_validate_relationships(connection))
         checks.extend(_validate_players(connection, release_window))
         checks.extend(_validate_match_shape(connection))
@@ -289,9 +308,15 @@ def _validate_row_counts(
 
 def _validate_required_non_empty_tables(
     connection: duckdb.DuckDBPyConnection,
+    release_window: StudentDatasetReleaseWindow,
 ) -> tuple[StudentDatasetValidationCheck, ...]:
     checks: list[StudentDatasetValidationCheck] = []
-    for table_name in sorted(REQUIRED_NON_EMPTY_TABLES):
+    required_tables = (
+        BASELINE_REQUIRED_NON_EMPTY_TABLES
+        if release_window.release_type == "initial_snapshot"
+        else INCREMENTAL_REQUIRED_NON_EMPTY_TABLES
+    )
+    for table_name in sorted(required_tables):
         row_count = _count(connection, f'SELECT COUNT(*) FROM "{table_name}"')
         checks.append(
             _check(
