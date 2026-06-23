@@ -14,13 +14,15 @@ PORT="8000"
 OPEN_BROWSER="true"
 RELOAD="false"
 SERVER_PID=""
+WORKER_PID=""
 
 usage() {
     cat <<'EOF'
 Usage: ./scripts/start_control_panel.sh [options]
 
 Starts the local Postgres container, runs the FastAPI control panel with the
-project virtualenv, waits for the page to respond, and opens /control.
+project virtualenv, starts the durable worker, waits for the page to respond,
+and opens /control.
 
 Options:
   --host <host>       Bind host for uvicorn. Default: 0.0.0.0
@@ -45,6 +47,10 @@ fail() {
 cleanup() {
     local exit_code
     exit_code=$?
+    if [[ -n "$WORKER_PID" ]] && kill -0 "$WORKER_PID" >/dev/null 2>&1; then
+        kill "$WORKER_PID" >/dev/null 2>&1 || true
+        wait "$WORKER_PID" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
         kill "$SERVER_PID" >/dev/null 2>&1 || true
         wait "$SERVER_PID" >/dev/null 2>&1 || true
@@ -129,24 +135,32 @@ open_browser() {
 }
 
 find_existing_server_pids() {
-    pgrep -f "uvicorn app.main:app.*--port ${PORT}" || true
+    pgrep -f "app.main:app.*--port ${PORT}" || true
 }
 
-stop_existing_server() {
-    local pids
-    pids="$(find_existing_server_pids)"
+find_existing_worker_pids() {
+    pgrep -f "backend/scripts/run_background_worker.py" || true
+}
+
+stop_pids() {
+    local label pids wait_seconds check_fn
+    label="$1"
+    pids="$2"
+    wait_seconds="$3"
+    check_fn="$4"
+
     if [[ -z "$pids" ]]; then
         return 1
     fi
 
-    log "Stopping existing control panel server on port ${PORT}..."
+    log "Stopping existing ${label}..."
     while IFS= read -r pid; do
         [[ -n "$pid" ]] || continue
         kill "$pid" >/dev/null 2>&1 || true
     done <<< "$pids"
 
-    for _ in {1..10}; do
-        if ! port_in_use; then
+    for _ in $(seq 1 "$wait_seconds"); do
+        if ! "$check_fn"; then
             return 0
         fi
         sleep 1
@@ -158,10 +172,30 @@ stop_existing_server() {
     done <<< "$pids"
     sleep 1
 
-    if port_in_use; then
-        fail "Port ${PORT} is still in use after stopping the existing control panel server."
+    if "$check_fn"; then
+        fail "Existing ${label} could not be stopped cleanly."
     fi
     return 0
+}
+
+have_existing_server_pids() {
+    [[ -n "$(find_existing_server_pids)" ]]
+}
+
+have_existing_worker_pids() {
+    [[ -n "$(find_existing_worker_pids)" ]]
+}
+
+stop_existing_server() {
+    local pids
+    pids="$(find_existing_server_pids)"
+    stop_pids "control panel server on port ${PORT}" "$pids" 10 port_in_use
+}
+
+stop_existing_worker() {
+    local pids
+    pids="$(find_existing_worker_pids)"
+    stop_pids "durable background worker" "$pids" 10 have_existing_worker_pids
 }
 
 while [[ $# -gt 0 ]]; do
@@ -238,6 +272,8 @@ wait_for_postgres
 log "Checking backend dependencies in the virtualenv..."
 "$VENV_PYTHON" -c "import duckdb, fastapi, jinja2, multipart, pyarrow, starlette, uvicorn"
 
+stop_existing_worker || true
+
 if port_in_use; then
     if url_responds "$APP_URL"; then
         stop_existing_server || fail "A control panel is responding at $APP_URL, but its process could not be identified for restart."
@@ -246,11 +282,16 @@ if port_in_use; then
 fi
 
 if [[ "$RELOAD" == "true" ]]; then
-    log "Uvicorn reload is enabled. Avoid starting generation/export/compare background jobs in this mode."
+    log "Uvicorn reload is enabled. The durable worker will still be restarted, but avoid running in-process generation/export/compare background jobs in this mode."
     RELOAD_ARGS=(--reload --reload-dir "$BACKEND_DIR")
 else
     RELOAD_ARGS=()
 fi
+
+log "Starting durable background worker..."
+"$VENV_PYTHON" "$BACKEND_DIR/scripts/run_background_worker.py" \
+    --queues realism_audit &
+WORKER_PID=$!
 
 log "Starting FastAPI control panel on ${HOST}:${PORT}..."
 "$VENV_PYTHON" -m uvicorn app.main:app \
@@ -263,7 +304,7 @@ SERVER_PID=$!
 wait_for_app "$APP_URL"
 open_browser "$APP_URL"
 
-log "Control panel is running. Press Ctrl+C to stop the web server."
+log "Control panel and durable worker are running. Press Ctrl+C to stop both."
 log "Postgres will continue running in Docker until you stop it."
 
 wait "$SERVER_PID"
