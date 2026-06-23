@@ -263,22 +263,20 @@
                 el.textContent = message;
             };
 
-            window.copyControlPanelText = async function copyControlPanelText(value) {
+            window.controlPanelFetchWithTimeout = async function controlPanelFetchWithTimeout(url, options, timeoutMs) {
+                const controller = new AbortController();
+                const timer = window.setTimeout(() => controller.abort(), timeoutMs);
                 try {
-                    const response = await window.fetch("/control/system/copy-path", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                        },
-                        body: new URLSearchParams({ path: value }),
+                    return await window.fetch(url, {
+                        ...options,
+                        signal: controller.signal,
                     });
-                    if (response.ok) {
-                        window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
-                        return;
-                    }
-                } catch (error) {
-                    console.error(error);
+                } finally {
+                    window.clearTimeout(timer);
                 }
+            };
+
+            window.copyControlPanelText = async function copyControlPanelText(value) {
                 try {
                     if (window.navigator?.clipboard?.writeText) {
                         await window.navigator.clipboard.writeText(value);
@@ -288,19 +286,35 @@
                 } catch (error) {
                     console.error(error);
                 }
-                window.prompt("Copy path:", value);
-            };
-
-            window.openControlPanelFolder = async function openControlPanelFolder(value) {
-                window.setControlPanelActionStatus(`Opening folder for ${value}...`, "success");
                 try {
-                    const response = await window.fetch("/control/system/open-folder", {
+                    const response = await window.controlPanelFetchWithTimeout("/control/system/copy-path", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
                         },
                         body: new URLSearchParams({ path: value }),
-                    });
+                    }, 5000);
+                    if (response.ok) {
+                        window.setControlPanelActionStatus(`Copied release path: ${value}`, "success");
+                        return;
+                    }
+                } catch (error) {
+                    console.error(error);
+                }
+                window.prompt("Copy path:", value);
+                window.setControlPanelActionStatus("Clipboard helpers were unavailable; copied path prompt opened instead.", "error");
+            };
+
+            window.openControlPanelFolder = async function openControlPanelFolder(value) {
+                window.setControlPanelActionStatus(`Opening folder for ${value}...`, "success");
+                try {
+                    const response = await window.controlPanelFetchWithTimeout("/control/system/open-folder", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: new URLSearchParams({ path: value }),
+                    }, 8000);
                     const payload = await response.json();
                     if (!response.ok || !payload.ok) {
                         throw new Error(payload.error || "Could not open the release folder.");
@@ -308,7 +322,10 @@
                     window.setControlPanelActionStatus(payload.message, "success");
                 } catch (error) {
                     console.error(error);
-                    window.setControlPanelActionStatus(error.message || "Could not open the release folder.", "error");
+                    const message = error?.name === "AbortError"
+                        ? "Timed out while opening the release folder."
+                        : (error.message || "Could not open the release folder.");
+                    window.setControlPanelActionStatus(message, "error");
                 }
             };
 

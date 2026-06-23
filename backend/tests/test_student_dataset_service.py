@@ -13,6 +13,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.exports.student_dataset import (  # noqa: E402
+    StagedStudentDatasetFamily,
+    StagedStudentDatasetRelease,
     PublishedStudentDatasetFamily,
     PublishedStudentDatasetRelease,
     ReleaseWindowValidationError,
@@ -22,6 +24,7 @@ from app.exports.student_dataset import (  # noqa: E402
     StudentDatasetExportPreflightError,
     build_student_dataset_release,
 )
+from app.exports.student_dataset import service as service_module  # noqa: E402
 from test_student_dataset_queries import (  # noqa: E402
     seed_snapshot_query_data,
     session,
@@ -205,6 +208,160 @@ def test_registered_export_writes_paired_clean_and_tainted_outputs(session, tmp_
     assert [row["data_quality_level"] for row in release_rows] == ["medium", "none"]
     assert any("/clean/" in row["output_path"] for row in release_rows)
     assert any("/tainted/" in row["output_path"] for row in release_rows)
+
+
+def test_registered_export_updates_stage_progress_per_release_folder(
+    session,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    _seed_succeeded_generation_run(session)
+    _create_job_tracking_tables(session)
+    service = StudentDatasetExportService()
+    registration = service.register_export_job(
+        session=session,
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=1,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+    )
+
+    observed: list[tuple[str, int, int, str]] = []
+
+    fake_staged_root = tmp_path / ".staging"
+    fake_staged_root.mkdir()
+    fake_release_dir = fake_staged_root / "napa_student_release_initial_history"
+    fake_release_dir.mkdir()
+    fake_manifest = fake_release_dir / "manifest.json"
+    fake_manifest.write_text("{}", encoding="utf-8")
+    fake_staged_family = StagedStudentDatasetFamily(
+        release_name="napa_student_release",
+        staging_root=fake_staged_root,
+        releases=(
+            StagedStudentDatasetRelease(
+                release_name="napa_student_release_initial_history",
+                release_type="initial_snapshot",
+                release_dir=fake_release_dir,
+                manifest_path=fake_manifest,
+                files=(),
+            ),
+            StagedStudentDatasetRelease(
+                release_name="napa_student_release_snapshot_2025_03",
+                release_type="monthly_incremental",
+                release_dir=fake_staged_root / "napa_student_release_snapshot_2025_03",
+                manifest_path=fake_staged_root / "napa_student_release_snapshot_2025_03" / "manifest.json",
+                files=(),
+            ),
+        ),
+    )
+    fake_published_family = PublishedStudentDatasetFamily(
+        release_name="napa_student_release",
+        final_root=tmp_path / "napa_student_release",
+        releases=(
+            PublishedStudentDatasetRelease(
+                release_id=1,
+                release_name="napa_student_release_initial_history",
+                release_type="initial_snapshot",
+                release_dir=tmp_path / "napa_student_release" / "napa_student_release_initial_history",
+                manifest_path=tmp_path / "napa_student_release" / "napa_student_release_initial_history" / "manifest.json",
+                file_count=0,
+            ),
+            PublishedStudentDatasetRelease(
+                release_id=2,
+                release_name="napa_student_release_snapshot_2025_03",
+                release_type="monthly_incremental",
+                release_dir=tmp_path / "napa_student_release" / "napa_student_release_snapshot_2025_03",
+                manifest_path=tmp_path / "napa_student_release" / "napa_student_release_snapshot_2025_03" / "manifest.json",
+                file_count=0,
+            ),
+        ),
+    )
+
+    def fake_write_staged_release_family(**kwargs):
+        progress_callback = kwargs["progress_callback"]
+        progress_callback("napa_student_release_initial_history", 1, 2)
+        write_stage = session.execute(
+            text(
+                """
+                SELECT progress_current, progress_total, status, progress_message
+                FROM job_stage_progress
+                WHERE job_status_id = :job_status_id
+                  AND stage_name = 'write_validate_parquet'
+                """
+            ),
+            {"job_status_id": registration.job_status.id},
+        ).mappings().one()
+        observed.append(
+            (
+                "write",
+                int(write_stage["progress_current"]),
+                int(write_stage["progress_total"]),
+                str(write_stage["status"]),
+            )
+        )
+        progress_callback("napa_student_release_snapshot_2025_03", 2, 2)
+        return fake_staged_family
+
+    def fake_promote_staged_release_family(**kwargs):
+        progress_callback = kwargs["progress_callback"]
+        progress_callback("napa_student_release_initial_history", 1, 2)
+        promote_stage = session.execute(
+            text(
+                """
+                SELECT progress_current, progress_total, status, progress_message
+                FROM job_stage_progress
+                WHERE job_status_id = :job_status_id
+                  AND stage_name = 'promote_metadata'
+                """
+            ),
+            {"job_status_id": registration.job_status.id},
+        ).mappings().one()
+        observed.append(
+            (
+                "promote",
+                int(promote_stage["progress_current"]),
+                int(promote_stage["progress_total"]),
+                str(promote_stage["status"]),
+            )
+        )
+        progress_callback("napa_student_release_snapshot_2025_03", 2, 2)
+        return fake_published_family
+
+    monkeypatch.setattr(
+        service_module,
+        "write_staged_release_family",
+        fake_write_staged_release_family,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "promote_staged_release_family",
+        fake_promote_staged_release_family,
+    )
+    monkeypatch.setattr(
+        StudentDatasetExportService,
+        "_assert_published_family_has_files",
+        staticmethod(lambda published_family: None),
+    )
+
+    result = service.execute_registered_export(
+        session=session,
+        job_status_id=registration.job_status.id,
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=1,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+    )
+
+    assert result is not None
+    assert observed == [
+        ("write", 1, 2, "running"),
+        ("promote", 1, 2, "running"),
+    ]
 
 
 def test_published_family_assertion_requires_parquet_files(tmp_path):

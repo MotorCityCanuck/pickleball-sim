@@ -1950,12 +1950,16 @@ def _copy_to_windows_clipboard(value: str) -> None:
     clip_exe = shutil.which("clip.exe")
     if clip_exe is None:
         raise RuntimeError("clip.exe is not available in this environment.")
-    subprocess.run(
-        [clip_exe],
-        input=value,
-        text=True,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [clip_exe],
+            input=value,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("clip.exe timed out while copying the release path.") from exc
 
 
 def _resolve_control_panel_path(value: str) -> Path:
@@ -1972,18 +1976,30 @@ def _open_folder_in_host(path: Path) -> None:
     explorer_exe = shutil.which("explorer.exe")
     if wslpath_exe is None or explorer_exe is None:
         raise RuntimeError("wslpath or explorer.exe is not available in this environment.")
-    windows_path = subprocess.run(
-        [wslpath_exe, "-w", str(path)],
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout.strip()
+    try:
+        windows_path = subprocess.run(
+            [wslpath_exe, "-w", str(path)],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "wslpath timed out while resolving the release folder path."
+        ) from exc
     if not windows_path:
         raise RuntimeError(f"Could not resolve Windows path for {path}")
-    subprocess.run(
-        [explorer_exe, windows_path],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [explorer_exe, windows_path],
+            check=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "explorer.exe timed out while opening the release folder."
+        ) from exc
 
 
 def _select_folder_in_host(current_path: Path | None = None) -> Path:

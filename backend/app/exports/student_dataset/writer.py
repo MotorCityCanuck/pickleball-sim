@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 import pyarrow as pa
@@ -36,6 +36,7 @@ from .validation import StudentDatasetValidationResult, validate_staged_release
 
 MANIFEST_FILE_NAME = "manifest.json"
 DEFAULT_PARQUET_COMPRESSION = "snappy"
+ReleaseProgressCallback = Callable[[str, int, int], None]
 
 
 class StudentDatasetWriteError(RuntimeError):
@@ -147,12 +148,15 @@ def write_staged_release_family(
     release_windows: tuple[StudentDatasetReleaseWindow, ...],
     build_parameters: StudentDatasetBuildParameters,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
+    progress_callback: ReleaseProgressCallback | None = None,
 ) -> StagedStudentDatasetFamily:
     """Write all release windows under a unique staging root."""
 
     staging_root = create_staging_root(output_root, release_name)
-    releases = tuple(
-        write_staged_release(
+    total_releases = len(release_windows)
+    releases_list: list[StagedStudentDatasetRelease] = []
+    for index, release_window in enumerate(release_windows, start=1):
+        release = write_staged_release(
             session=session,
             staging_root=staging_root,
             release_name=release_name,
@@ -160,8 +164,10 @@ def write_staged_release_family(
             build_parameters=build_parameters,
             compression=compression,
         )
-        for release_window in release_windows
-    )
+        releases_list.append(release)
+        if progress_callback is not None:
+            progress_callback(release.release_name, index, total_releases)
+    releases = tuple(releases_list)
     instructor_manifest_path = _write_instructor_manifest(
         staging_root=staging_root,
         releases=releases,

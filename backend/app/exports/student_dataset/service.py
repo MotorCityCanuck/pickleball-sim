@@ -72,6 +72,11 @@ class StudentDatasetExportService:
         """Create a pending export job and progress rows."""
 
         self._ensure_no_active_export_job(session)
+        normalized_level = normalize_data_quality_level(data_quality_level)
+        planned_release_count = 1 + subsequent_month_count
+        release_folder_count = planned_release_count * (
+            2 if normalized_level != "none" else 1
+        )
         job_status = JobStatus(
             job_type="student_dataset_export",
             job_id=f"student-dataset-export-{generation_run_id}-{uuid4().hex[:8]}",
@@ -84,8 +89,8 @@ class StudentDatasetExportService:
         session.flush()
         for sequence, stage_name, total, unit in (
             (1, "preflight", 1, "check"),
-            (2, "write_validate_parquet", 1, "release_family"),
-            (3, "promote_metadata", 1, "release_family"),
+            (2, "write_validate_parquet", release_folder_count, "release_folder"),
+            (3, "promote_metadata", release_folder_count, "release_folder"),
         ):
             session.add(
                 JobStageProgress(
@@ -109,10 +114,11 @@ class StudentDatasetExportService:
                         "incremental_month_count": subsequent_month_count,
                         "output_root": str(output_root),
                         "release_name": release_name,
-                        "data_quality_level": normalize_data_quality_level(data_quality_level),
+                        "data_quality_level": normalized_level,
                         "clean_subfolder": clean_subfolder,
                         "tainted_subfolder": tainted_subfolder,
                         "overwrite_existing": overwrite_existing,
+                        "release_folder_count": release_folder_count,
                     },
                 )
             )
@@ -276,6 +282,15 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=build_parameters,
+                    progress_callback=lambda release_id, current, total: self._advance_stage_progress(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        current=current,
+                        total=total,
+                        message=f"Wrote and validated release folder {current} of {total}: {release_id}.",
+                    ),
                 )
             else:
                 assert paired_output_root is not None
@@ -305,6 +320,15 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=clean_build_parameters,
+                    progress_callback=lambda release_id, current, total: self._advance_stage_progress(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        current=current,
+                        total=total * 2,
+                        message=f"Wrote and validated clean release folder {current} of {total * 2}: {release_id}.",
+                    ),
                 )
                 staged_family = write_staged_release_family(
                     session=session,
@@ -312,6 +336,15 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=build_parameters,
+                    progress_callback=lambda release_id, current, total: self._advance_stage_progress(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        current=total + current,
+                        total=total * 2,
+                        message=f"Wrote and validated tainted release folder {total + current} of {total * 2}: {release_id}.",
+                    ),
                 )
             self._mark_stage(
                 session,
@@ -349,11 +382,33 @@ class StudentDatasetExportService:
                     session=session,
                     staged_family=clean_staged_family,
                     build_parameters=clean_build_parameters,
+                    progress_callback=lambda release_id, current, total: self._advance_stage_progress(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="promote_metadata",
+                        current=current,
+                        total=total * 2,
+                        message=f"Promoted clean release folder {current} of {total * 2}: {release_id}.",
+                    ),
                 )
             published_family = promote_staged_release_family(
                 session=session,
                 staged_family=staged_family,
                 build_parameters=build_parameters,
+                progress_callback=lambda release_id, current, total: self._advance_stage_progress(
+                    session=session,
+                    checkpoint=checkpoint,
+                    job_status=job_status,
+                    stage_name="promote_metadata",
+                    current=(total + current) if clean_published_family is not None else current,
+                    total=total * 2 if clean_published_family is not None else total,
+                    message=(
+                        f"Promoted tainted release folder {total + current} of {total * 2}: {release_id}."
+                        if clean_published_family is not None
+                        else f"Promoted release folder {current} of {total}: {release_id}."
+                    ),
+                ),
             )
             if clean_published_family is not None:
                 self._assert_published_family_has_files(clean_published_family)
@@ -510,6 +565,35 @@ class StudentDatasetExportService:
         if status == "failed":
             stage.error_message = message
         session.flush()
+
+    def _advance_stage_progress(
+        self,
+        *,
+        session: Session,
+        checkpoint,
+        job_status: JobStatus,
+        stage_name: str,
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        stage = self._get_stage(session, job_status_id=job_status.id, stage_name=stage_name)
+        now = _utc_now()
+        stage.status = "running"
+        stage.started_at = stage.started_at or now
+        stage.last_heartbeat_at = now
+        stage.progress_total = total
+        stage.progress_current = current
+        stage.progress_percent = _percent(current, total)
+        stage.progress_message = message
+        self._set_job_status(
+            job_status,
+            status="running",
+            phase=stage_name,
+            message=message,
+            percent_complete=overall_percent_complete(session, job_status.id),
+        )
+        self._checkpoint(session, checkpoint)
 
     def _get_stage(self, session: Session, *, job_status_id: int, stage_name: str) -> JobStageProgress:
         stage = session.scalar(

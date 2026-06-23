@@ -14,6 +14,7 @@ from app.models import StudentDatasetRelease, StudentDatasetReleaseFile
 
 from .writer import (
     MANIFEST_FILE_NAME,
+    ReleaseProgressCallback,
     StagedStudentDatasetFamily,
     StagedStudentDatasetRelease,
     StudentDatasetBuildParameters,
@@ -50,6 +51,7 @@ def promote_staged_release_family(
     session: Session,
     staged_family: StagedStudentDatasetFamily,
     build_parameters: StudentDatasetBuildParameters,
+    progress_callback: ReleaseProgressCallback | None = None,
 ) -> PublishedStudentDatasetFamily:
     """Promote a validated staging folder and persist release/file metadata."""
 
@@ -73,16 +75,24 @@ def promote_staged_release_family(
     shutil.move(str(staged_family.staging_root), str(final_root))
 
     try:
-        published_releases = tuple(
-            _persist_release_metadata(
+        total_releases = len(staged_family.releases)
+        published_releases_list: list[PublishedStudentDatasetRelease] = []
+        for index, staged_release in enumerate(staged_family.releases, start=1):
+            published_release = _persist_release_metadata(
                 session=session,
                 staged_release=staged_release,
                 final_root=final_root,
                 staging_root=staged_family.staging_root,
                 build_parameters=build_parameters,
             )
-            for staged_release in staged_family.releases
-        )
+            published_releases_list.append(published_release)
+            if progress_callback is not None:
+                progress_callback(
+                    published_release.release_name,
+                    index,
+                    total_releases,
+                )
+        published_releases = tuple(published_releases_list)
         session.commit()
     except Exception:
         session.rollback()
