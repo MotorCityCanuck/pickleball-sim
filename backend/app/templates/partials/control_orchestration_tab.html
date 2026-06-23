@@ -372,7 +372,7 @@
                         type="text"
                         name="generation_name"
                         hx-preserve
-                        value="{% if snapshot.config_summary and snapshot.config_summary.simulation_name %}{{ snapshot.config_summary.simulation_name }} run{% else %}Generation run{% endif %}"
+                        value="{{ default_generation_name }}"
                         style="width:100%; border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;"
                     >
                 </label>

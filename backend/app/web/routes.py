@@ -1891,6 +1891,7 @@ def _build_orchestration_template_context(
         "export_launch_message": export_launch_message,
         "export_launch_error": export_launch_error,
         "export_config": export_config or _default_export_config(snapshot),
+        "default_generation_name": _default_generation_name(snapshot),
         "comparison_config": resolved_comparison_config,
         **_comparison_readiness_context(snapshot, resolved_comparison_config),
         "comparison_result": comparison_result,
@@ -2446,6 +2447,11 @@ def _change_count(
 
 
 def _default_generation_name(snapshot: ControlPanelSnapshot) -> str:
+    if (
+        snapshot.generation_run_summary is not None
+        and snapshot.generation_run_summary.generation_name
+    ):
+        return snapshot.generation_run_summary.generation_name
     if snapshot.config_summary is not None and snapshot.config_summary.simulation_name:
         return f"{snapshot.config_summary.simulation_name} run"
     return "Generation run"
