@@ -351,7 +351,11 @@ class StudentDatasetExportService:
                 job_status_id=job_status.id,
                 stage_name="write_validate_parquet",
                 status="succeeded",
-                current=1,
+                current=self._stage_total(
+                    session,
+                    job_status_id=job_status.id,
+                    stage_name="write_validate_parquet",
+                ),
                 message=(
                     f"Validated {len(staged_family.releases)} tainted and "
                     f"{len(clean_staged_family.releases)} clean release folder(s)."
@@ -418,7 +422,11 @@ class StudentDatasetExportService:
                 job_status_id=job_status.id,
                 stage_name="promote_metadata",
                 status="succeeded",
-                current=1,
+                current=self._stage_total(
+                    session,
+                    job_status_id=job_status.id,
+                    stage_name="promote_metadata",
+                ),
                 message=(
                     f"Published {len(published_family.releases)} tainted and "
                     f"{len(clean_published_family.releases)} clean release folder(s)."
@@ -607,6 +615,20 @@ class StudentDatasetExportService:
                 f"Missing job_stage_progress row for job={job_status_id}, stage={stage_name}."
             )
         return stage
+
+    def _stage_total(
+        self,
+        session: Session,
+        *,
+        job_status_id: int,
+        stage_name: str,
+    ) -> int:
+        stage = self._get_stage(
+            session,
+            job_status_id=job_status_id,
+            stage_name=stage_name,
+        )
+        return int(stage.progress_total or 1)
 
     def _fail_incomplete_stages(
         self,
