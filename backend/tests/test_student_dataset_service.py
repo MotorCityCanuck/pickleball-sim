@@ -230,6 +230,7 @@ def test_registered_export_updates_stage_progress_per_release_folder(
     )
 
     observed: list[tuple[str, int, int, str]] = []
+    heartbeat_messages: list[str] = []
 
     fake_staged_root = tmp_path / ".staging"
     fake_staged_root.mkdir()
@@ -282,6 +283,20 @@ def test_registered_export_updates_stage_progress_per_release_folder(
 
     def fake_write_staged_release_family(**kwargs):
         progress_callback = kwargs["progress_callback"]
+        activity_callback = kwargs["activity_callback"]
+        activity_callback("Loading source rows for napa_student_release_initial_history: players.")
+        write_stage_before = session.execute(
+            text(
+                """
+                SELECT progress_current, progress_total, status, progress_message
+                FROM job_stage_progress
+                WHERE job_status_id = :job_status_id
+                  AND stage_name = 'write_validate_parquet'
+                """
+            ),
+            {"job_status_id": registration.job_status.id},
+        ).mappings().one()
+        heartbeat_messages.append(str(write_stage_before["progress_message"]))
         progress_callback("napa_student_release_initial_history", 1, 2)
         write_stage = session.execute(
             text(
@@ -358,6 +373,9 @@ def test_registered_export_updates_stage_progress_per_release_folder(
     )
 
     assert result is not None
+    assert heartbeat_messages == [
+        "Loading source rows for napa_student_release_initial_history: players."
+    ]
     assert observed == [
         ("write", 1, 2, "running"),
         ("promote", 1, 2, "running"),

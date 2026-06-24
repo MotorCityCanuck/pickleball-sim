@@ -37,6 +37,7 @@ from .validation import StudentDatasetValidationResult, validate_staged_release
 MANIFEST_FILE_NAME = "manifest.json"
 DEFAULT_PARQUET_COMPRESSION = "snappy"
 ReleaseProgressCallback = Callable[[str, int, int], None]
+ReleaseActivityCallback = Callable[[str], None]
 
 
 class StudentDatasetWriteError(RuntimeError):
@@ -149,6 +150,7 @@ def write_staged_release_family(
     build_parameters: StudentDatasetBuildParameters,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
     progress_callback: ReleaseProgressCallback | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
 ) -> StagedStudentDatasetFamily:
     """Write all release windows under a unique staging root."""
 
@@ -156,6 +158,11 @@ def write_staged_release_family(
     total_releases = len(release_windows)
     releases_list: list[StagedStudentDatasetRelease] = []
     for index, release_window in enumerate(release_windows, start=1):
+        if activity_callback is not None:
+            activity_callback(
+                f"Starting staged release folder {index} of {total_releases}: "
+                f"{release_name}{release_window.folder_suffix}."
+            )
         release = write_staged_release(
             session=session,
             staging_root=staging_root,
@@ -163,6 +170,7 @@ def write_staged_release_family(
             release_window=release_window,
             build_parameters=build_parameters,
             compression=compression,
+            activity_callback=activity_callback,
         )
         releases_list.append(release)
         if progress_callback is not None:
@@ -189,6 +197,7 @@ def write_staged_release(
     release_window: StudentDatasetReleaseWindow,
     build_parameters: StudentDatasetBuildParameters,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
+    activity_callback: ReleaseActivityCallback | None = None,
 ) -> StagedStudentDatasetRelease:
     """Write one release folder and manifest under an existing staging root."""
 
@@ -200,17 +209,24 @@ def write_staged_release(
         generation_run_id=build_parameters.generation_run_id,
         release_window=release_window,
     )
-    clean_tables = {
-        table_name: _load_table_rows(
+    clean_tables: dict[str, list[dict[str, Any]]] = {}
+    for table_name in STUDENT_TABLE_ORDER:
+        if activity_callback is not None:
+            activity_callback(
+                f"Loading source rows for {concrete_release_name}: {table_name}."
+            )
+        clean_tables[table_name] = _load_table_rows(
             session=session,
             table_name=table_name,
             context=context,
         )
-        for table_name in STUDENT_TABLE_ORDER
-    }
     data_quality_config = build_default_data_quality_config(
         level=build_parameters.data_quality_level,
     )
+    if activity_callback is not None:
+        activity_callback(
+            f"Applying data quality rules for {concrete_release_name}."
+        )
     injection_result = inject_data_quality_issues(
         tables=clean_tables,
         config=data_quality_config,
@@ -222,20 +238,30 @@ def write_staged_release(
             snapshot_month=release_window.snapshot_month,
         ),
     )
-    files = tuple(
-        _write_table_rows(
+    files_list: list[StudentDatasetFileManifest] = []
+    for table_name in STUDENT_TABLE_ORDER:
+        if activity_callback is not None:
+            activity_callback(
+                f"Writing parquet for {concrete_release_name}: {table_name}."
+            )
+        files_list.append(
+            _write_table_rows(
             release_dir=release_dir,
             table_name=table_name,
             row_dicts=injection_result.tables[table_name],
             compression=compression,
         )
-        for table_name in STUDENT_TABLE_ORDER
-    )
+        )
+    files = tuple(files_list)
     manifest_path = release_dir / MANIFEST_FILE_NAME
     manifest_row_counts = {
         file_manifest.table_name: file_manifest.row_count
         for file_manifest in files
     }
+    if activity_callback is not None:
+        activity_callback(
+            f"Running DuckDB validation for {concrete_release_name}."
+        )
     validation_result = validate_staged_release(
         release_dir=release_dir,
         release_window=release_window,
@@ -250,6 +276,10 @@ def write_staged_release(
         compression=compression,
         validation_result=validation_result,
     )
+    if activity_callback is not None:
+        activity_callback(
+            f"Writing manifest for {concrete_release_name}."
+        )
     _write_json(manifest_path, manifest)
     return StagedStudentDatasetRelease(
         release_name=concrete_release_name,

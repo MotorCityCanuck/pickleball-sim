@@ -291,6 +291,13 @@ class StudentDatasetExportService:
                         total=total,
                         message=f"Wrote and validated release folder {current} of {total}: {release_id}.",
                     ),
+                    activity_callback=lambda message: self._heartbeat_stage(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        message=message,
+                    ),
                 )
             else:
                 assert paired_output_root is not None
@@ -329,6 +336,13 @@ class StudentDatasetExportService:
                         total=total * 2,
                         message=f"Wrote and validated clean release folder {current} of {total * 2}: {release_id}.",
                     ),
+                    activity_callback=lambda message: self._heartbeat_stage(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        message=message,
+                    ),
                 )
                 staged_family = write_staged_release_family(
                     session=session,
@@ -344,6 +358,13 @@ class StudentDatasetExportService:
                         current=total + current,
                         total=total * 2,
                         message=f"Wrote and validated tainted release folder {total + current} of {total * 2}: {release_id}.",
+                    ),
+                    activity_callback=lambda message: self._heartbeat_stage(
+                        session=session,
+                        checkpoint=checkpoint,
+                        job_status=job_status,
+                        stage_name="write_validate_parquet",
+                        message=message,
                     ),
                 )
             self._mark_stage(
@@ -600,6 +621,30 @@ class StudentDatasetExportService:
             phase=stage_name,
             message=message,
             percent_complete=overall_percent_complete(session, job_status.id),
+        )
+        self._checkpoint(session, checkpoint)
+
+    def _heartbeat_stage(
+        self,
+        *,
+        session: Session,
+        checkpoint,
+        job_status: JobStatus,
+        stage_name: str,
+        message: str,
+    ) -> None:
+        stage = self._get_stage(session, job_status_id=job_status.id, stage_name=stage_name)
+        now = _utc_now()
+        stage.status = "running"
+        stage.started_at = stage.started_at or now
+        stage.last_heartbeat_at = now
+        stage.progress_message = message
+        self._set_job_status(
+            job_status,
+            status="running",
+            phase=stage_name,
+            message=message,
+            percent_complete=job_status.percent_complete,
         )
         self._checkpoint(session, checkpoint)
 
