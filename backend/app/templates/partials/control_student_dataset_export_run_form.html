@@ -124,7 +124,7 @@
         </div>
 
         <aside style="display:grid; gap:14px; min-width:0;">
-            <div style="border:1px solid #d6d9df; border-radius:16px; background:radial-gradient(circle at top right, #f2f7ff 0%, #ffffff 62%); padding:16px; min-width:0;">
+            <div style="border:1px solid #d6d9df; border-radius:16px; background:radial-gradient(circle at top right, #f2f7ff 0%, #ffffff 62%); padding:16px; min-width:0; overflow:hidden;">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Architecture</div>
                 <div style="margin-top:10px; display:grid; gap:10px;">
                     <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
@@ -137,7 +137,7 @@
                     <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
                         <div style="width:10px; height:10px; border-radius:999px; background:#247a3d; margin-top:6px;"></div>
                         <div style="min-width:0;">
-                            <div style="font-weight:700; color:#172033; overflow-wrap:anywhere;">2. Monthly incremental packages</div>
+                            <div style="font-weight:700; color:#172033; word-break:break-word; overflow-wrap:anywhere;">2. Monthly incremental packages</div>
                             <div style="margin-top:4px; color:#5a6477; font-size:13px; overflow-wrap:anywhere;">Each later release is keyed to one release month and is designed for append + merge workflows.</div>
                         </div>
                     </div>
@@ -151,17 +151,17 @@
                 </div>
             </div>
 
-            <div style="border:1px solid #d6d9df; border-radius:16px; background:#fff; padding:16px; display:grid; gap:10px;">
+            <div style="border:1px solid #d6d9df; border-radius:16px; background:#fff; padding:16px; display:grid; gap:10px; min-width:0; overflow:hidden;">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Output Topology</div>
-                <div style="font-size:13px; color:#1d2433; line-height:1.5;">
-                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
+                <div style="font-size:13px; color:#1d2433; line-height:1.5; min-width:0;">
+                    <code style="display:block; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">{{ export_config.output_root }}/{{ export_config.release_name }}/{{ export_config.release_name }}_initial_history/</code>
                 </div>
                 <div style="color:#5a6477; font-size:13px; line-height:1.5;">
                     If issue injection is enabled, the release family is staged under timestamped clean and tainted folders:
                 </div>
-                <div style="display:grid; gap:6px; font-size:13px; color:#1d2433;">
-                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.clean_subfolder or 'clean' }}/</code>
-                    <code>{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.tainted_subfolder or 'tainted' }}/</code>
+                <div style="display:grid; gap:6px; font-size:13px; color:#1d2433; min-width:0;">
+                    <code style="display:block; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.clean_subfolder or 'clean' }}/</code>
+                    <code style="display:block; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;">{{ export_config.output_root }}/{{ export_config.release_name }}/YYYYMMDD/HHMMSSZ/{{ export_config.tainted_subfolder or 'tainted' }}/</code>
                 </div>
                 <div style="color:#5a6477; font-size:13px; line-height:1.5;">
                     Incremental folders use the release-month suffix pattern <code>_snapshot_YYYY_MM</code>.
