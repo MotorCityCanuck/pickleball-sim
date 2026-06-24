@@ -123,29 +123,29 @@
             </div>
         </div>
 
-        <aside style="display:grid; gap:14px;">
-            <div style="border:1px solid #d6d9df; border-radius:16px; background:radial-gradient(circle at top right, #f2f7ff 0%, #ffffff 62%); padding:16px;">
+        <aside style="display:grid; gap:14px; min-width:0;">
+            <div style="border:1px solid #d6d9df; border-radius:16px; background:radial-gradient(circle at top right, #f2f7ff 0%, #ffffff 62%); padding:16px; min-width:0;">
                 <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Release Architecture</div>
                 <div style="margin-top:10px; display:grid; gap:10px;">
                     <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
                         <div style="width:10px; height:10px; border-radius:999px; background:#1857c2; margin-top:6px;"></div>
-                        <div>
-                            <div style="font-weight:700; color:#172033;">1. Initial snapshot</div>
-                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">Creates the starting warehouse state students load once.</div>
+                        <div style="min-width:0;">
+                            <div style="font-weight:700; color:#172033; overflow-wrap:anywhere;">1. Initial snapshot</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px; overflow-wrap:anywhere;">Creates the starting warehouse state students load once.</div>
                         </div>
                     </div>
                     <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
                         <div style="width:10px; height:10px; border-radius:999px; background:#247a3d; margin-top:6px;"></div>
-                        <div>
-                            <div style="font-weight:700; color:#172033;">2. Monthly incremental packages</div>
-                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">Each later release is keyed to one release month and is designed for append + merge workflows.</div>
+                        <div style="min-width:0;">
+                            <div style="font-weight:700; color:#172033; overflow-wrap:anywhere;">2. Monthly incremental packages</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px; overflow-wrap:anywhere;">Each later release is keyed to one release month and is designed for append + merge workflows.</div>
                         </div>
                     </div>
                     <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start;">
                         <div style="width:10px; height:10px; border-radius:999px; background:#925f00; margin-top:6px;"></div>
-                        <div>
-                            <div style="font-weight:700; color:#172033;">3. Optional tainting layer</div>
-                            <div style="margin-top:4px; color:#5a6477; font-size:13px;">When enabled, clean and tainted copies are emitted in parallel for instructor comparison workflows.</div>
+                        <div style="min-width:0;">
+                            <div style="font-weight:700; color:#172033; overflow-wrap:anywhere;">3. Optional tainting layer</div>
+                            <div style="margin-top:4px; color:#5a6477; font-size:13px; overflow-wrap:anywhere;">When enabled, clean and tainted copies are emitted in parallel for instructor comparison workflows.</div>
                         </div>
                     </div>
                 </div>
