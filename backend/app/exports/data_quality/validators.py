@@ -281,33 +281,39 @@ def _validate_issue_rates(
             },
         )
     )
-    effective_level = summary.effective_level
-    profile = level_profile(effective_level)
-    band_limits = {
-        "field": profile.field_level_issue_rate.max_ratio,
-        "categorical": profile.categorical_variant_rate.max_ratio,
-        "row": profile.duplicate_like_row_rate.max_ratio,
-    }
-    for issue_type, affected_rows in summary.issue_type_affected_rows.items():
-        candidate_total = summary.issue_type_candidate_rows.get(issue_type, 0)
-        actual_ratio = 0.0 if candidate_total == 0 else affected_rows / candidate_total
-        family = _issue_family(issue_type)
-        max_ratio = band_limits[family]
-        checks.append(
-            _check(
-                name=f"limits:issue_rate:{issue_type}",
-                passed=actual_ratio <= max_ratio,
-                passed_message="Issue rate stayed within the configured band.",
-                failed_message="Issue rate exceeded the configured band.",
-                details={
-                    "issue_type": issue_type,
-                    "affected_rows": affected_rows,
-                    "candidate_rows": candidate_total,
-                    "actual_ratio": actual_ratio,
-                    "max_ratio": max_ratio,
-                },
+    for table_name, issue_counts in summary.table_issue_type_affected_rows.items():
+        table_rule = config.table_rules.get(table_name)
+        profile_name = table_rule.issue_profile if table_rule is not None else None
+        profile = level_profile(profile_name or summary.effective_level)
+        band_limits = {
+            "field": profile.field_level_issue_rate.max_ratio,
+            "categorical": profile.categorical_variant_rate.max_ratio,
+            "row": profile.duplicate_like_row_rate.max_ratio,
+        }
+        for issue_type, affected_rows in issue_counts.items():
+            candidate_total = summary.table_issue_type_candidate_rows.get(
+                table_name,
+                {},
+            ).get(issue_type, 0)
+            actual_ratio = 0.0 if candidate_total == 0 else affected_rows / candidate_total
+            family = _issue_family(issue_type)
+            max_ratio = band_limits[family]
+            checks.append(
+                _check(
+                    name=f"limits:issue_rate:{table_name}:{issue_type}",
+                    passed=actual_ratio <= max_ratio,
+                    passed_message="Issue rate stayed within the configured band.",
+                    failed_message="Issue rate exceeded the configured band.",
+                    details={
+                        "table_name": table_name,
+                        "issue_type": issue_type,
+                        "affected_rows": affected_rows,
+                        "candidate_rows": candidate_total,
+                        "actual_ratio": actual_ratio,
+                        "max_ratio": max_ratio,
+                    },
+                )
             )
-        )
     return tuple(checks)
 
 

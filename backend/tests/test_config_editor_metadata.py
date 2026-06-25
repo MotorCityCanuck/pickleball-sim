@@ -17,8 +17,8 @@ from app.core import (  # noqa: E402
 
 
 def test_config_editor_field_paths_are_unique():
-    paths = [field.path for field in CONFIG_EDITOR_FIELDS]
-    assert len(paths) == len(set(paths))
+    scoped_paths = [(field.scope, field.path) for field in CONFIG_EDITOR_FIELDS]
+    assert len(scoped_paths) == len(set(scoped_paths))
 
 
 def test_config_editor_sections_only_reference_declared_fields():
@@ -191,7 +191,7 @@ def test_runtime_instrumentation_fields_are_checkbox_scaffolded():
     instrumentation_section = next(
         section
         for section in sections
-        if section.definition.id == "synthetic_runtime_instrumentation"
+        if section.definition.id == "instrumentation_runtime_generation"
     )
 
     fields = {field.definition.path: field for field in instrumentation_section.fields}
@@ -214,13 +214,32 @@ def test_missing_runtime_instrumentation_checkboxes_display_defaults():
     instrumentation_section = next(
         section
         for section in sections
-        if section.definition.id == "synthetic_runtime_instrumentation"
+        if section.definition.id == "instrumentation_runtime_generation"
     )
 
     for field in instrumentation_section.fields:
         assert field.value is True
         assert field.is_present_in_payload is False
         assert field.is_default_value is True
+
+
+def test_export_instrumentation_fields_are_checkbox_scaffolded():
+    payload = default_config_payload()
+    sections = build_config_editor_sections(payload)
+    export_section = next(
+        section
+        for section in sections
+        if section.definition.id == "instrumentation_student_dataset_exports"
+    )
+
+    fields = {field.definition.path: field for field in export_section.fields}
+    assert set(fields) == {
+        "instrumentation.export_queries_enabled",
+        "instrumentation.export_query_sql_text_enabled",
+    }
+    assert all(field.definition.control_type == "checkbox" for field in fields.values())
+    assert fields["instrumentation.export_queries_enabled"].value is False
+    assert fields["instrumentation.export_query_sql_text_enabled"].value is False
 
 
 def test_hidden_performance_bias_bounded_tuning_fields_render_as_sliders():

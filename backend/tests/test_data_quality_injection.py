@@ -8,9 +8,17 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.exports.data_quality.config import ISSUE_TYPE_MISSING_OPTIONAL_VALUES  # noqa: E402
-from app.exports.data_quality.injector import _InjectionState, _apply_table_rules  # noqa: E402
+from app.exports.data_quality.config import (  # noqa: E402
+    ISSUE_TYPE_MISSING_OPTIONAL_VALUES,
+    ISSUE_TYPE_NAME_CASE_VARIANTS,
+)
+from app.exports.data_quality.injector import (  # noqa: E402
+    DataQualityInjectionSummary,
+    _InjectionState,
+    _apply_table_rules,
+)
 from app.exports.data_quality.rules import eligible_columns  # noqa: E402
+from app.exports.data_quality.validators import _validate_issue_rates  # noqa: E402
 from app.exports.data_quality import build_default_data_quality_config  # noqa: E402
 
 
@@ -74,6 +82,8 @@ def test_issue_type_candidate_rows_accumulate_across_tables():
         affected_rows=set(),
         issue_type_rows={},
         issue_type_candidate_rows={},
+        table_issue_type_rows={},
+        table_issue_type_candidate_rows={},
         issue_type_field_count={},
         table_row_deltas={},
     )
@@ -82,3 +92,51 @@ def test_issue_type_candidate_rows_accumulate_across_tables():
     _apply_table_rules(state, "matches")
 
     assert state.issue_type_candidate_rows[ISSUE_TYPE_MISSING_OPTIONAL_VALUES] == 5
+    assert (
+        state.table_issue_type_candidate_rows[("clubs", ISSUE_TYPE_MISSING_OPTIONAL_VALUES)]
+        == 2
+    )
+    assert (
+        state.table_issue_type_candidate_rows[("matches", ISSUE_TYPE_MISSING_OPTIONAL_VALUES)]
+        == 3
+    )
+
+
+def test_issue_rate_validation_uses_table_issue_profile_over_release_level():
+    config = build_default_data_quality_config(level="medium")
+    summary = DataQualityInjectionSummary(
+        release_name="release",
+        requested_level="medium",
+        effective_level="low",
+        total_affected_rows=2,
+        total_affected_fields=2,
+        issue_type_affected_rows={
+            ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 1,
+            ISSUE_TYPE_NAME_CASE_VARIANTS: 1,
+        },
+        issue_type_candidate_rows={
+            ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 100,
+            ISSUE_TYPE_NAME_CASE_VARIANTS: 100,
+        },
+        table_issue_type_affected_rows={
+            "matches": {ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 1},
+            "players": {ISSUE_TYPE_NAME_CASE_VARIANTS: 1},
+        },
+        table_issue_type_candidate_rows={
+            "matches": {ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 100},
+            "players": {ISSUE_TYPE_NAME_CASE_VARIANTS: 100},
+        },
+        table_row_deltas={},
+    )
+
+    checks = _validate_issue_rates(
+        {
+            "matches": [{} for _ in range(100)],
+            "players": [{} for _ in range(100)],
+        },
+        config,
+        summary,
+    )
+
+    failed_names = {check.name for check in checks if check.status != "passed"}
+    assert failed_names == set()

@@ -67,6 +67,8 @@ class DataQualityInjectionSummary:
     total_affected_fields: int
     issue_type_affected_rows: Mapping[str, int]
     issue_type_candidate_rows: Mapping[str, int]
+    table_issue_type_affected_rows: Mapping[str, Mapping[str, int]]
+    table_issue_type_candidate_rows: Mapping[str, Mapping[str, int]]
     table_row_deltas: Mapping[str, int]
 
 
@@ -111,6 +113,8 @@ def inject_data_quality_issues(
             total_affected_fields=0,
             issue_type_affected_rows={},
             issue_type_candidate_rows={},
+            table_issue_type_affected_rows={},
+            table_issue_type_candidate_rows={},
             table_row_deltas={table_name: 0 for table_name in tables},
         )
         validation_result = validate_injected_tables(
@@ -136,6 +140,8 @@ def inject_data_quality_issues(
         affected_rows=set(),
         issue_type_rows=defaultdict(set),
         issue_type_candidate_rows={},
+        table_issue_type_rows=defaultdict(set),
+        table_issue_type_candidate_rows={},
         issue_type_field_count=defaultdict(int),
         table_row_deltas=defaultdict(int),
     )
@@ -154,6 +160,10 @@ def inject_data_quality_issues(
             for issue_type, keys in state.issue_type_rows.items()
         },
         issue_type_candidate_rows=dict(state.issue_type_candidate_rows),
+        table_issue_type_affected_rows=_nested_issue_counts(state.table_issue_type_rows),
+        table_issue_type_candidate_rows=_nested_issue_totals(
+            state.table_issue_type_candidate_rows
+        ),
         table_row_deltas=dict(state.table_row_deltas),
     )
     validation_result = validate_injected_tables(
@@ -181,6 +191,8 @@ class _InjectionState:
     affected_rows: set[tuple[str, object]]
     issue_type_rows: dict[str, set[tuple[str, object]]]
     issue_type_candidate_rows: dict[str, int]
+    table_issue_type_rows: dict[tuple[str, str], set[tuple[str, object]]]
+    table_issue_type_candidate_rows: dict[tuple[str, str], int]
     issue_type_field_count: dict[str, int]
     table_row_deltas: dict[str, int]
 
@@ -198,9 +210,14 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
         columns = eligible_columns(table_name, issue_type)
         if not rows or not columns:
             state.issue_type_candidate_rows.setdefault(issue_type, 0)
+            state.table_issue_type_candidate_rows.setdefault((table_name, issue_type), 0)
             continue
         state.issue_type_candidate_rows[issue_type] = (
             state.issue_type_candidate_rows.get(issue_type, 0) + len(rows)
+        )
+        state.table_issue_type_candidate_rows[(table_name, issue_type)] = (
+            state.table_issue_type_candidate_rows.get((table_name, issue_type), 0)
+            + len(rows)
         )
         target_count = _target_count(
             issue_type=issue_type,
@@ -247,6 +264,7 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             state.row_field_counts[row_key] += 1
             state.affected_rows.add(row_key)
             state.issue_type_rows[issue_type].add(row_key)
+            state.table_issue_type_rows[(table_name, issue_type)].add(row_key)
             state.issue_type_field_count[issue_type] += 1
             state.manifest_entries.append(
                 DataQualityInjectionManifestEntry.create(
@@ -273,14 +291,26 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
             ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
             len(state.tables.get("matches", ())),
         )
+        state.table_issue_type_candidate_rows.setdefault(
+            ("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS),
+            len(state.tables.get("matches", ())),
+        )
         return
     matches = state.tables.get("matches", [])
     if not matches:
         state.issue_type_candidate_rows.setdefault(ISSUE_TYPE_DUPLICATE_LIKE_ROWS, 0)
+        state.table_issue_type_candidate_rows.setdefault(
+            ("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS),
+            0,
+        )
         return
 
     profile = level_profile(matches_rule.issue_profile or state.effective_level)
     state.issue_type_candidate_rows.setdefault(ISSUE_TYPE_DUPLICATE_LIKE_ROWS, len(matches))
+    state.table_issue_type_candidate_rows.setdefault(
+        ("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS),
+        len(matches),
+    )
     target_count = _target_count(
         issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
         row_count=len(matches),
@@ -371,6 +401,9 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
         row_key = ("matches", source_match_id)
         state.affected_rows.add(row_key)
         state.issue_type_rows[ISSUE_TYPE_DUPLICATE_LIKE_ROWS].add(row_key)
+        state.table_issue_type_rows[("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS)].add(
+            row_key
+        )
 
         for table_name, original_pk, injected_pk in (
             ("matches", source_match_id, new_match["id"]),
@@ -449,3 +482,21 @@ def _target_count(*, issue_type: str, row_count: int, profile) -> int:
     if math.isclose(rate, 0.0):
         return 0
     return math.floor(row_count * rate)
+
+
+def _nested_issue_counts(
+    counts: Mapping[tuple[str, str], set[tuple[str, object]]],
+) -> dict[str, dict[str, int]]:
+    nested: dict[str, dict[str, int]] = {}
+    for (table_name, issue_type), row_keys in counts.items():
+        nested.setdefault(table_name, {})[issue_type] = len(row_keys)
+    return nested
+
+
+def _nested_issue_totals(
+    totals: Mapping[tuple[str, str], int],
+) -> dict[str, dict[str, int]]:
+    nested: dict[str, dict[str, int]] = {}
+    for (table_name, issue_type), candidate_total in totals.items():
+        nested.setdefault(table_name, {})[issue_type] = candidate_total
+    return nested

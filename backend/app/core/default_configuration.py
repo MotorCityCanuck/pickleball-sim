@@ -39,6 +39,8 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "teams_enabled": True,
         "matches_enabled": True,
         "ratings_enabled": True,
+        "export_queries_enabled": False,
+        "export_query_sql_text_enabled": False,
     },
     "raw_seed_data": {
         "raw_data_root": "data/raw",

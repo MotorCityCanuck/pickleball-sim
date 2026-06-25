@@ -542,6 +542,7 @@
                         {% set default_open = (
                             (active_config_scope == "seed" and loop.first)
                             or (active_config_scope == "synthetic" and section.definition.id == "synthetic_simulation_identity")
+                            or (active_config_scope == "instrumentation" and section.definition.id == "instrumentation_runtime_generation")
                             or (active_config_scope == "tournament" and section.definition.id == "tournament_match_structure")
                         ) %}
                         {% set issue_count = section_issue_counts.get(section.definition.id, 0) %}

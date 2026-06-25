@@ -13,8 +13,10 @@ from uuid import uuid4
 import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.generation.runtime_metrics import RuntimeMetricRecorder
 from app.exports.data_quality import (
     INSTRUCTOR_MANIFEST_FILE_NAME,
     DataQualityInjectionManifestEntry,
@@ -24,6 +26,7 @@ from app.exports.data_quality import (
     manifest_table,
     normalize_data_quality_level,
 )
+from app.models import GenerationRun
 
 from .projection import (
     PROJECTION_BY_TABLE,
@@ -128,6 +131,14 @@ class StagedStudentDatasetFamily:
     instructor_manifest_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class ExportInstrumentationSettings:
+    """Resolved config flags controlling export query instrumentation."""
+
+    enabled: bool
+    capture_sql_text: bool
+
+
 def create_staging_root(output_root: Path, release_name: str) -> Path:
     """Create and return a unique staging directory for a release family."""
 
@@ -156,6 +167,15 @@ def write_staged_release_family(
     """Write all release windows under a unique staging root."""
 
     staging_root = create_staging_root(output_root, release_name)
+    instrumentation = _resolve_export_instrumentation_settings(
+        session=session,
+        generation_run_id=build_parameters.generation_run_id,
+    )
+    runtime_recorder = _build_export_runtime_recorder(
+        session=session,
+        build_parameters=build_parameters,
+        instrumentation=instrumentation,
+    )
     total_releases = len(release_windows)
     releases_list: list[StagedStudentDatasetRelease] = []
     for index, release_window in enumerate(release_windows, start=1):
@@ -172,6 +192,8 @@ def write_staged_release_family(
             build_parameters=build_parameters,
             compression=compression,
             activity_callback=activity_callback,
+            runtime_recorder=runtime_recorder,
+            instrumentation=instrumentation,
         )
         releases_list.append(release)
         if progress_callback is not None:
@@ -199,6 +221,8 @@ def write_staged_release(
     build_parameters: StudentDatasetBuildParameters,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
     activity_callback: ReleaseActivityCallback | None = None,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    instrumentation: ExportInstrumentationSettings | None = None,
 ) -> StagedStudentDatasetRelease:
     """Write one release folder and manifest under an existing staging root."""
 
@@ -218,6 +242,8 @@ def write_staged_release(
             context=context,
             release_name=concrete_release_name,
             activity_callback=activity_callback,
+            runtime_recorder=runtime_recorder,
+            instrumentation=instrumentation,
         )
     data_quality_config = build_default_data_quality_config(
         level=build_parameters.data_quality_level,
@@ -245,11 +271,15 @@ def write_staged_release(
             )
         files_list.append(
             _write_table_rows(
-            release_dir=release_dir,
-            table_name=table_name,
-            row_dicts=injection_result.tables[table_name],
-            compression=compression,
-        )
+                release_dir=release_dir,
+                table_name=table_name,
+                row_dicts=injection_result.tables[table_name],
+                compression=compression,
+                release_name=concrete_release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                runtime_recorder=runtime_recorder,
+            )
         )
     files = tuple(files_list)
     manifest_path = release_dir / MANIFEST_FILE_NAME
@@ -261,11 +291,30 @@ def write_staged_release(
         activity_callback(
             f"Running DuckDB validation for {concrete_release_name}."
         )
-    validation_result = validate_staged_release(
-        release_dir=release_dir,
-        release_window=release_window,
-        manifest_row_counts=manifest_row_counts,
-    )
+    if runtime_recorder is None:
+        validation_result = validate_staged_release(
+            release_dir=release_dir,
+            release_window=release_window,
+            manifest_row_counts=manifest_row_counts,
+        )
+    else:
+        validation_metadata = _export_metric_metadata(
+            release_name=concrete_release_name,
+            table_name=None,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+        )
+        with runtime_recorder.measure(
+            "validate_release_folder",
+            output_count=len(manifest_row_counts),
+            metadata=validation_metadata,
+        ):
+            validation_result = validate_staged_release(
+                release_dir=release_dir,
+                release_window=release_window,
+                manifest_row_counts=manifest_row_counts,
+            )
+        runtime_recorder.flush()
     manifest = _release_manifest(
         release_name=concrete_release_name,
         release_window=release_window,
@@ -297,6 +346,8 @@ def _load_table_rows(
     context: StudentDatasetQueryContext,
     release_name: str,
     activity_callback: ReleaseActivityCallback | None = None,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    instrumentation: ExportInstrumentationSettings | None = None,
 ) -> list[dict[str, Any]]:
     projection = PROJECTION_BY_TABLE[table_name]
     if activity_callback is not None:
@@ -304,6 +355,17 @@ def _load_table_rows(
             f"Building source query for {release_name}: {table_name}."
         )
     query = build_student_dataset_query(table_name, context)
+    query_metadata = _export_metric_metadata(
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+    )
+    if runtime_recorder is not None and instrumentation is not None and instrumentation.capture_sql_text:
+        query_metadata["sql_text"] = _compiled_sql_text(
+            query=query,
+            bind=session.get_bind(),
+        )
     if activity_callback is not None:
         activity_callback(
             f"Resolving database bind for {release_name}: {table_name}."
@@ -326,15 +388,37 @@ def _load_table_rows(
         activity_callback(
             f"Executing source query for {release_name}: {table_name}."
         )
-    rows = session.execute(query).mappings().all()
+    if runtime_recorder is None:
+        rows = session.execute(query).mappings().all()
+    else:
+        with runtime_recorder.measure(
+            "execute_source_query",
+            metadata=query_metadata,
+        ) as metric:
+            rows = session.execute(query).mappings().all()
+            metric["output_count"] = len(rows)
+        runtime_recorder.flush()
     if activity_callback is not None:
         activity_callback(
             f"Fetched {len(rows):,} source rows for {release_name}: {table_name}."
         )
-    normalized_rows = [
-        {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
-        for row in rows
-    ]
+    if runtime_recorder is None:
+        normalized_rows = [
+            {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
+            for row in rows
+        ]
+    else:
+        with runtime_recorder.measure(
+            "normalize_source_rows",
+            input_count=len(rows),
+            metadata=query_metadata,
+        ) as metric:
+            normalized_rows = [
+                {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
+                for row in rows
+            ]
+            metric["output_count"] = len(normalized_rows)
+        runtime_recorder.flush()
     if activity_callback is not None:
         activity_callback(
             f"Normalized {len(normalized_rows):,} source rows for {release_name}: {table_name}."
@@ -361,16 +445,50 @@ def _write_table_rows(
     table_name: str,
     row_dicts: list[dict[str, Any]],
     compression: str,
+    release_name: str,
+    release_type: str,
+    snapshot_month: date | None,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
 ) -> StudentDatasetFileManifest:
     projection = PROJECTION_BY_TABLE[table_name]
-    table = pa.table(
-        {
-            column_name: pa.array([row[column_name] for row in row_dicts])
-            for column_name in projection.included_columns
-        }
+    metadata = _export_metric_metadata(
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
     )
-    file_path = release_dir / projection.output_file
-    pq.write_table(table, file_path, compression=compression)
+    if runtime_recorder is None:
+        table = pa.table(
+            {
+                column_name: pa.array([row[column_name] for row in row_dicts])
+                for column_name in projection.included_columns
+            }
+        )
+        file_path = release_dir / projection.output_file
+        pq.write_table(table, file_path, compression=compression)
+    else:
+        with runtime_recorder.measure(
+            "build_parquet_table",
+            input_count=len(row_dicts),
+            metadata=metadata,
+        ) as metric:
+            table = pa.table(
+                {
+                    column_name: pa.array([row[column_name] for row in row_dicts])
+                    for column_name in projection.included_columns
+                }
+            )
+            metric["output_count"] = table.num_rows
+        runtime_recorder.flush()
+        file_path = release_dir / projection.output_file
+        with runtime_recorder.measure(
+            "write_parquet_file",
+            input_count=table.num_rows,
+            output_count=table.num_rows,
+            metadata=metadata,
+        ):
+            pq.write_table(table, file_path, compression=compression)
+        runtime_recorder.flush()
     return StudentDatasetFileManifest(
         table_name=table_name,
         file_name=projection.output_file,
@@ -457,6 +575,89 @@ def _release_manifest(
         "validation_status": validation_result.status,
         "validation_summary": validation_result.manifest_dict(),
     }
+
+
+def _resolve_export_instrumentation_settings(
+    *,
+    session: Session,
+    generation_run_id: int,
+) -> ExportInstrumentationSettings:
+    try:
+        generation_run = session.get(GenerationRun, generation_run_id)
+    except SQLAlchemyError:
+        generation_run = None
+    payload = generation_run.parameter_snapshot if generation_run is not None else None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = None
+    instrumentation = payload.get("instrumentation") if isinstance(payload, dict) else None
+    if not isinstance(instrumentation, dict):
+        return ExportInstrumentationSettings(
+            enabled=False,
+            capture_sql_text=False,
+        )
+    enabled = instrumentation.get("export_queries_enabled", False)
+    capture_sql_text = instrumentation.get("export_query_sql_text_enabled", False)
+    return ExportInstrumentationSettings(
+        enabled=bool(enabled) if isinstance(enabled, bool) else False,
+        capture_sql_text=bool(capture_sql_text)
+        if isinstance(capture_sql_text, bool)
+        else False,
+    )
+
+
+def _build_export_runtime_recorder(
+    *,
+    session: Session,
+    build_parameters: StudentDatasetBuildParameters,
+    instrumentation: ExportInstrumentationSettings,
+) -> RuntimeMetricRecorder | None:
+    if not instrumentation.enabled:
+        return None
+    return RuntimeMetricRecorder(
+        session=session,
+        generation_run_id=build_parameters.generation_run_id,
+        stage_name="student_dataset_export",
+    )
+
+
+def _export_metric_metadata(
+    *,
+    release_name: str,
+    table_name: str | None,
+    release_type: str,
+    snapshot_month: date | None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "release_name": release_name,
+        "release_type": release_type,
+    }
+    if table_name is not None:
+        metadata["table_name"] = table_name
+    if snapshot_month is not None:
+        metadata["snapshot_month"] = snapshot_month.isoformat()
+    return metadata
+
+
+def _compiled_sql_text(
+    *,
+    query: Any,
+    bind: Engine | Connection | Any,
+    max_length: int = 20000,
+) -> str:
+    try:
+        compiled = query.compile(
+            dialect=getattr(bind, "dialect", None),
+            compile_kwargs={"literal_binds": True},
+        )
+        sql_text = str(compiled)
+    except Exception:
+        sql_text = str(query)
+    if len(sql_text) <= max_length:
+        return sql_text
+    return f"{sql_text[:max_length]}... [truncated]"
 
 
 def _write_instructor_manifest(

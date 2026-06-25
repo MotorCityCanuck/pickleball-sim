@@ -74,6 +74,17 @@ def test_validate_live_config_payload_rejects_invalid_instrumentation_flag():
     assert issues[0].message == "must be a boolean."
 
 
+def test_validate_live_config_payload_rejects_invalid_export_instrumentation_flag():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["instrumentation"]["export_queries_enabled"] = "yes"
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "instrumentation.export_queries_enabled"
+    assert issues[0].message == "must be a boolean."
+
+
 def test_validate_live_config_payload_rejects_invalid_hidden_bias_range():
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
     payload["hidden_performance_bias"]["age_advantage"][

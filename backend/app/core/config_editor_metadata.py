@@ -7,7 +7,7 @@ from typing import Any, Literal, Mapping
 from .default_configuration import default_config_payload
 
 
-ConfigEditorScope = Literal["seed", "synthetic", "tournament"]
+ConfigEditorScope = Literal["seed", "synthetic", "instrumentation", "tournament"]
 ConfigEditorControlType = Literal[
     "text",
     "date",
@@ -260,7 +260,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         path="instrumentation.players_enabled",
         label="Player instrumentation",
         control_type="checkbox",
-        scope="synthetic",
+        scope="instrumentation",
         description="Record detailed runtime metrics for player creation.",
         default_value=_path_default("instrumentation.players_enabled"),
         basic_or_advanced="advanced",
@@ -269,7 +269,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         path="instrumentation.club_memberships_enabled",
         label="Club membership instrumentation",
         control_type="checkbox",
-        scope="synthetic",
+        scope="instrumentation",
         description="Record runtime metrics for the club membership generation module.",
         default_value=_path_default("instrumentation.club_memberships_enabled"),
         basic_or_advanced="advanced",
@@ -278,7 +278,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         path="instrumentation.teams_enabled",
         label="Team instrumentation",
         control_type="checkbox",
-        scope="synthetic",
+        scope="instrumentation",
         description="Record runtime metrics for the team generation module.",
         default_value=_path_default("instrumentation.teams_enabled"),
         basic_or_advanced="advanced",
@@ -287,7 +287,7 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         path="instrumentation.matches_enabled",
         label="Match instrumentation",
         control_type="checkbox",
-        scope="synthetic",
+        scope="instrumentation",
         description="Record detailed runtime metrics for match generation.",
         default_value=_path_default("instrumentation.matches_enabled"),
         basic_or_advanced="advanced",
@@ -296,9 +296,27 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         path="instrumentation.ratings_enabled",
         label="Rating instrumentation",
         control_type="checkbox",
-        scope="synthetic",
+        scope="instrumentation",
         description="Record detailed runtime metrics for rating updates.",
         default_value=_path_default("instrumentation.ratings_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.export_queries_enabled",
+        label="Student export query instrumentation",
+        control_type="checkbox",
+        scope="instrumentation",
+        description="Persist per-table timing metrics while building student dataset export release folders.",
+        default_value=_path_default("instrumentation.export_queries_enabled"),
+        basic_or_advanced="advanced",
+    ),
+    ConfigEditorFieldDefinition(
+        path="instrumentation.export_query_sql_text_enabled",
+        label="Capture export SQL text",
+        control_type="checkbox",
+        scope="instrumentation",
+        description="Include compiled SQL text in export query metrics metadata for deeper plan analysis.",
+        default_value=_path_default("instrumentation.export_query_sql_text_enabled"),
         basic_or_advanced="advanced",
     ),
     ConfigEditorFieldDefinition(
@@ -1512,6 +1530,12 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
 CONFIG_EDITOR_FIELDS_BY_PATH: dict[str, ConfigEditorFieldDefinition] = {
     field.path: field for field in CONFIG_EDITOR_FIELDS
 }
+CONFIG_EDITOR_FIELDS_BY_SCOPE_AND_PATH: dict[
+    tuple[ConfigEditorScope, str],
+    ConfigEditorFieldDefinition,
+] = {
+    (field.scope, field.path): field for field in CONFIG_EDITOR_FIELDS
+}
 
 
 CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
@@ -1562,8 +1586,8 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         ),
     ),
     ConfigEditorSectionDefinition(
-        id="synthetic_runtime_instrumentation",
-        scope="synthetic",
+        id="instrumentation_runtime_generation",
+        scope="instrumentation",
         title="Runtime Instrumentation",
         description="Per-module runtime metric switches. Disabled modules still write disabled-marker rows for analysis.",
         field_paths=(
@@ -1572,6 +1596,16 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
             "instrumentation.teams_enabled",
             "instrumentation.matches_enabled",
             "instrumentation.ratings_enabled",
+        ),
+    ),
+    ConfigEditorSectionDefinition(
+        id="instrumentation_student_dataset_exports",
+        scope="instrumentation",
+        title="Student Dataset Export Instrumentation",
+        description="Controls for persisting per-table export timings and optional SQL text during student dataset release builds.",
+        field_paths=(
+            "instrumentation.export_queries_enabled",
+            "instrumentation.export_query_sql_text_enabled",
         ),
     ),
     ConfigEditorSectionDefinition(
@@ -1834,7 +1868,10 @@ def build_config_editor_sections(
     return tuple(
         ConfigEditorSectionState(
             definition=section,
-            fields=tuple(_build_field_state(payload, path) for path in section.field_paths),
+            fields=tuple(
+                _build_field_state(payload, section.scope, path)
+                for path in section.field_paths
+            ),
         )
         for section in CONFIG_EDITOR_SECTIONS
     )
@@ -1842,9 +1879,13 @@ def build_config_editor_sections(
 
 def _build_field_state(
     payload: Mapping[str, Any] | None,
+    scope: ConfigEditorScope,
     path: str,
 ) -> ConfigEditorFieldState:
-    definition = CONFIG_EDITOR_FIELDS_BY_PATH[path]
+    definition = CONFIG_EDITOR_FIELDS_BY_SCOPE_AND_PATH.get(
+        (scope, path),
+        CONFIG_EDITOR_FIELDS_BY_PATH[path],
+    )
     value = get_payload_value(payload, path)
     is_present_in_payload = value is not None
     if (

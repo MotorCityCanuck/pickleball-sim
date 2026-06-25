@@ -87,6 +87,8 @@ def _validate_instrumentation(
         "teams_enabled",
         "matches_enabled",
         "ratings_enabled",
+        "export_queries_enabled",
+        "export_query_sql_text_enabled",
     ):
         issues.extend(
             _validate_bool(

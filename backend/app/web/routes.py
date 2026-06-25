@@ -202,6 +202,20 @@ def build_control_panel_router() -> APIRouter:
             active_config_scope="synthetic",
         )
 
+    @router.get("/control/partials/config/instrumentation", response_class=HTMLResponse)
+    def control_panel_instrumentation_config_partial(
+        request: Request,
+        session: Session = Depends(get_session),
+        queries: ControlPanelQueries = Depends(get_control_panel_queries),
+    ) -> HTMLResponse:
+        return _render_config_tab_response(
+            request,
+            session=session,
+            queries=queries,
+            templates=templates,
+            active_config_scope="instrumentation",
+        )
+
     @router.get("/control/partials/config/tournament", response_class=HTMLResponse)
     def control_panel_tournament_config_partial(
         request: Request,
@@ -2468,6 +2482,8 @@ def _split_editor_payloads(payload: dict[str, object]) -> tuple[str, str]:
 def _normalize_config_scope(scope: str | None) -> str:
     if scope == "tournament":
         return "tournament"
+    if scope == "instrumentation":
+        return "instrumentation"
     if scope == "synthetic":
         return "synthetic"
     return "seed"
@@ -2526,6 +2542,12 @@ def _build_config_template_context(
         tab_description = (
             "Raw datasets, naming, regional distribution, and club baseline configuration."
         )
+    elif normalized_scope == "instrumentation":
+        tab_kicker = "Instrumentation Configuration"
+        tab_title = "Runtime and Export Instrumentation"
+        tab_description = (
+            "Generation-module runtime metrics plus optional student export query timings and SQL capture."
+        )
     elif normalized_scope == "tournament":
         tab_kicker = "Tournament Configuration"
         tab_title = "Tournament Simulation Rules"
@@ -2554,6 +2576,9 @@ def _build_config_template_context(
         ),
         "synthetic_sections": tuple(
             section for section in sections if section.definition.scope == "synthetic"
+        ),
+        "instrumentation_sections": tuple(
+            section for section in sections if section.definition.scope == "instrumentation"
         ),
         "tournament_sections": tuple(
             section for section in sections if section.definition.scope == "tournament"

@@ -1091,6 +1091,7 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "/control/partials/config" in routes
     assert "/control/partials/config/seed" in routes
     assert "/control/partials/config/player-match" in routes
+    assert "/control/partials/config/instrumentation" in routes
     assert "/control/partials/config/tournament" in routes
     assert "/control/partials/tournament" in routes
     assert "/control/partials/tournament/simulation" in routes
@@ -1100,11 +1101,13 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Simulation Control Panel" in body
     assert "Seed Data Config" in body
     assert "Player and Match Config" in body
+    assert "Instrumentation" in body
     assert "Orchestration" in body
     assert "Tournament Config" in body
     assert "Tournament" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
+    assert 'data-tab-url="/control/partials/config/instrumentation"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
     assert 'data-tab-url="/control/partials/config/tournament"' in body
     assert 'data-tab-url="/control/partials/tournament"' in body
@@ -3313,8 +3316,8 @@ def test_control_panel_player_match_config_partial_renders_current_values_in_con
     assert "Initial skill mean" in body
     assert "Games and Score Dynamics" in body
     assert "Games per match" in body
-    assert "Win-by-two extension rate" not in body
-    assert "Upset probability boost" not in body
+    assert "Win-by-two extension rate" in body
+    assert "Upset probability boost" in body
     assert "Rating Initialization and Updates" in body
     assert "New-player K factor" in body
     assert "Confidence increment per match" in body
@@ -3336,6 +3339,32 @@ def test_control_panel_player_match_config_partial_renders_current_values_in_con
     )
     assert "Simulation version" in body
     assert "Supported raw seed datasets" not in body
+
+
+def test_control_panel_instrumentation_config_partial_renders_export_controls(session_factory):
+    _seed_idle_config_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/config/instrumentation"](
+            request=_request("/control/partials/config/instrumentation"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Instrumentation Configuration" in body
+    assert "Runtime and Export Instrumentation" in body
+    assert "Runtime Instrumentation" in body
+    assert "Student Dataset Export Instrumentation" in body
+    assert "Student export query instrumentation" in body
+    assert "Capture export SQL text" in body
+    assert 'data-config-section="instrumentation:instrumentation_runtime_generation"' in body
+    assert "Simulation Scale and Determinism" not in body
 
 
 def test_control_panel_tournament_config_partial_renders_current_values_in_controls(session_factory):

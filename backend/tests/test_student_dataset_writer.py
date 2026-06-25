@@ -28,6 +28,7 @@ from app.exports.student_dataset import (  # noqa: E402
     validate_staged_release,
     write_staged_release_family,
 )
+from app.models import GenerationRuntimeMetric  # noqa: E402
 from test_student_dataset_queries import (  # noqa: E402
     incremental_release_window,
     query_context,
@@ -146,6 +147,138 @@ def test_write_staged_release_preserves_projection_column_order(
         assert table.column_names == list(
             PROJECTION_BY_TABLE[table_name].included_columns
         )
+
+
+def test_write_staged_release_family_records_export_query_metrics_when_enabled(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    session.execute(
+        text(
+            """
+            CREATE TABLE generation_runs (
+                id integer primary key,
+                generation_name varchar(255) not null,
+                seed_value bigint not null,
+                simulation_version varchar(100),
+                parameter_snapshot json,
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version,
+                parameter_snapshot, status
+            ) VALUES (
+                1, 'instrumented export', 1, 'test', :parameter_snapshot, 'succeeded'
+            )
+            """
+        ),
+        {
+            "parameter_snapshot": json.dumps(
+                {
+                    "instrumentation": {
+                        "export_queries_enabled": True,
+                        "export_query_sql_text_enabled": True,
+                    }
+                }
+            )
+        },
+    )
+    session.commit()
+    session.execute(
+        text(
+            """
+            CREATE TABLE generation_runtime_metrics (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                subphase_name varchar(100) not null,
+                event_type varchar(30) not null,
+                started_at datetime not null,
+                completed_at datetime not null,
+                elapsed_ms bigint not null,
+                input_count bigint,
+                output_count bigint,
+                attempt_count bigint,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    )
+    session.commit()
+
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+        overwrite_existing=False,
+    )
+
+    write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    execute_metrics = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "execute_source_query",
+        )
+        .all()
+    )
+
+    assert len(execute_metrics) == len(STUDENT_TABLE_ORDER)
+    players_metric = next(
+        metric
+        for metric in execute_metrics
+        if metric.metadata_json["table_name"] == "players"
+    )
+    assert players_metric.elapsed_ms >= 0
+    assert players_metric.output_count == 1
+    assert players_metric.metadata_json["release_name"] == (
+        "napa_student_release_initial_history"
+    )
+    assert "SELECT" in players_metric.metadata_json["sql_text"].upper()
+
+    assert (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "write_parquet_file",
+        )
+        .count()
+        == len(STUDENT_TABLE_ORDER)
+    )
+    assert (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "validate_release_folder",
+        )
+        .count()
+        == 1
+    )
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(
