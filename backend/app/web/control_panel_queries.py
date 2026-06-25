@@ -563,8 +563,6 @@ class ControlPanelQueries:
                 select(JobStatus)
                 .where(JobStatus.job_type == "student_dataset_export")
                 .order_by(
-                    case((JobStatus.status == "running", 0), else_=1),
-                    case((JobStatus.status == "pending", 1), else_=2),
                     job_sort_timestamp.desc(),
                     JobStatus.id.desc(),
                 )

@@ -770,6 +770,38 @@ def test_student_dataset_export_summary_marks_stale_export_job_clearable(session
     assert summary.clearable_job.job_status_id == 812
 
 
+def test_student_dataset_export_job_prefers_newer_completed_job_over_older_running_job(session):
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, completed_at, created_at, updated_at
+            ) VALUES
+                (
+                    821, 'student_dataset_export', 'student-dataset-export-821', 'running',
+                    'write_validate_parquet', 14.29, 'Older export still marked running.',
+                    '2026-05-20 10:00:00', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                ),
+                (
+                    822, 'student_dataset_export', 'student-dataset-export-822', 'succeeded',
+                    'completed', 100.00, 'Newest export completed successfully.',
+                    '2026-05-20 11:00:00', '2026-05-20 11:30:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+            """
+        )
+    )
+    session.commit()
+
+    job = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 0, 0)
+    ).get_student_dataset_export_job(session)
+
+    assert job is not None
+    assert job.job_status_id == 822
+    assert job.status == "succeeded"
+
+
 def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)
