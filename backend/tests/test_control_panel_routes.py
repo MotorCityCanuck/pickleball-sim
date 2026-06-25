@@ -2332,6 +2332,66 @@ def test_export_progress_renders_refresh_and_clear_stalled_controls(session_fact
     assert "Clear stalled job" in body
 
 
+def test_export_progress_prefers_newer_succeeded_job_over_older_failed_job(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES
+                    (
+                        84, 'student_dataset_export', 'student-dataset-export-84', 'failed', 'failed', 50.00,
+                        'Older export failed at 50%.',
+                        '2026-05-20 10:00:00', '2026-05-20 11:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    ),
+                    (
+                        85, 'student_dataset_export', 'student-dataset-export-85', 'succeeded', 'completed', 100.00,
+                        'Student dataset baseline and incremental export completed successfully.',
+                        '2026-05-20 12:00:00', '2026-05-20 12:25:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Student dataset baseline and incremental export completed successfully." in body
+    assert "Failed at 50.00%" not in body
+
+
+def test_orchestration_partial_polls_even_when_no_jobs_are_active(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'hx-trigger="every 30s"' in body
+
+
 def test_default_export_config_prefers_twelve_month_baseline():
     snapshot = SimpleNamespace(
         generation_run_summary=SimpleNamespace(

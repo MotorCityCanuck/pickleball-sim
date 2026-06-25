@@ -6,18 +6,18 @@
     and snapshot.generation_run_summary.running_batch_count == 0
     and snapshot.generation_run_summary.failed_batch_count == 0
 ) %}
+{% set orchestration_has_active_work = snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
+{% set orchestration_refresh_interval = '10s' if orchestration_has_active_work else '30s' %}
 
 {% set oob_swap = true %}
 {% include "partials/control_warnings.html" %}
 
 <section
     style="display:grid; gap:16px;"
-    {% if snapshot.seed_data_summary.latest_seed_job_is_active or snapshot.student_dataset_export_summary.latest_export_job_is_active or snapshot.realism_audit_summary.latest_incomplete_job_is_active or (snapshot.active_job_summary and snapshot.active_job_summary.status in ('pending', 'running')) %}
-        hx-get="/control/partials/orchestration"
-        hx-trigger="every 10s"
-        hx-swap="outerHTML"
-        hx-target="this"
-    {% endif %}
+    hx-get="/control/partials/orchestration"
+    hx-trigger="every {{ orchestration_refresh_interval }}"
+    hx-swap="outerHTML"
+    hx-target="this"
 >
     {% if status_recovery_message %}
         <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
