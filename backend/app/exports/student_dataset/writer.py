@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from app.exports.data_quality import (
@@ -211,14 +212,12 @@ def write_staged_release(
     )
     clean_tables: dict[str, list[dict[str, Any]]] = {}
     for table_name in STUDENT_TABLE_ORDER:
-        if activity_callback is not None:
-            activity_callback(
-                f"Loading source rows for {concrete_release_name}: {table_name}."
-            )
         clean_tables[table_name] = _load_table_rows(
             session=session,
             table_name=table_name,
             context=context,
+            release_name=concrete_release_name,
+            activity_callback=activity_callback,
         )
     data_quality_config = build_default_data_quality_config(
         level=build_parameters.data_quality_level,
@@ -296,14 +295,64 @@ def _load_table_rows(
     session: Session,
     table_name: str,
     context: StudentDatasetQueryContext,
+    release_name: str,
+    activity_callback: ReleaseActivityCallback | None = None,
 ) -> list[dict[str, Any]]:
     projection = PROJECTION_BY_TABLE[table_name]
+    if activity_callback is not None:
+        activity_callback(
+            f"Building source query for {release_name}: {table_name}."
+        )
     query = build_student_dataset_query(table_name, context)
+    if activity_callback is not None:
+        activity_callback(
+            f"Resolving database bind for {release_name}: {table_name}."
+        )
+    bind = session.get_bind()
+    if activity_callback is not None:
+        activity_callback(
+            f"Resolved database bind for {release_name}: {table_name}. "
+            f"{_pool_status(bind)}"
+        )
+        activity_callback(
+            f"Acquiring database connection for {release_name}: {table_name}."
+        )
+    connection = session.connection()
+    if activity_callback is not None:
+        activity_callback(
+            f"Connection acquired for {release_name}: {table_name}. "
+            f"{_pool_status(connection)}"
+        )
+        activity_callback(
+            f"Executing source query for {release_name}: {table_name}."
+        )
     rows = session.execute(query).mappings().all()
-    return [
+    if activity_callback is not None:
+        activity_callback(
+            f"Fetched {len(rows):,} source rows for {release_name}: {table_name}."
+        )
+    normalized_rows = [
         {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
         for row in rows
     ]
+    if activity_callback is not None:
+        activity_callback(
+            f"Normalized {len(normalized_rows):,} source rows for {release_name}: {table_name}."
+        )
+    return normalized_rows
+
+
+def _pool_status(bind: Engine | Connection | Any) -> str:
+    pool = getattr(bind, "pool", None)
+    if pool is None:
+        engine = getattr(bind, "engine", None)
+        pool = getattr(engine, "pool", None)
+    if pool is None or not hasattr(pool, "status"):
+        return "Pool status unavailable."
+    try:
+        return pool.status()
+    except Exception:
+        return "Pool status unavailable."
 
 
 def _write_table_rows(

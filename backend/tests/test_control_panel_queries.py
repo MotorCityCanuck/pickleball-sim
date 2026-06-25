@@ -702,6 +702,74 @@ def test_get_control_panel_snapshot_reports_missing_valid_config(session):
     assert snapshot.allowed_actions.can_generate_student_dataset is True
 
 
+def test_student_dataset_export_summary_marks_stale_export_job_clearable(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, completed_at, created_at, updated_at
+            ) VALUES (
+                12, 'Export run', 42, 'v1', 'succeeded', '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, completed_at, created_at, updated_at
+            ) VALUES (
+                120, 12, '2026-03-01', 1, 'historical_initial', 'succeeded',
+                '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                started_at, created_at, updated_at
+            ) VALUES (
+                812, 'student_dataset_export', 'student-dataset-export-812', 'running',
+                'write_validate_parquet', 33.33, 'Executing source query for release: clubs.',
+                '2026-05-20 10:00:00', '2026-05-20 10:00:00', '2026-05-20 10:00:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_stage_progress (
+                job_status_id, generation_run_id, batch_id, stage_name, stage_sequence,
+                status, progress_current, progress_total, progress_unit, progress_percent,
+                progress_message, last_heartbeat_at, started_at, created_at, updated_at
+            ) VALUES (
+                812, 12, NULL, 'write_validate_parquet', 2,
+                'running', 1, 7, 'release_family', 14.29,
+                'Executing source query for release: clubs.',
+                '2026-05-20 10:10:00', '2026-05-20 10:00:05', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 11, 0, 0)
+    ).get_student_dataset_export_summary(session)
+
+    assert summary.latest_export_job is not None
+    assert summary.latest_export_job_is_active is False
+    assert summary.clearable_job is not None
+    assert summary.clearable_job.job_status_id == 812
+
+
 def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)

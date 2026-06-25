@@ -236,6 +236,7 @@ class StudentDatasetExportSummary:
 
     latest_export_job: JobSummary | None
     latest_export_job_is_active: bool
+    clearable_job: JobSummary | None
     latest_export_stage_progress: tuple[StageProgressSummary, ...]
     latest_releases: tuple[StudentDatasetReleaseSummary, ...]
     comparison_history: tuple[StudentDatasetComparisonSummary, ...]
@@ -741,6 +742,13 @@ class ControlPanelQueries:
             latest_job,
             stage_progress=stage_progress,
         )
+        clearable_job = (
+            latest_job
+            if latest_job is not None
+            and latest_job.status in {"pending", "running"}
+            and not latest_job_is_active
+            else None
+        )
         release_rows = list(
             session.scalars(
                 select(StudentDatasetRelease)
@@ -767,6 +775,7 @@ class ControlPanelQueries:
         return StudentDatasetExportSummary(
             latest_export_job=latest_job,
             latest_export_job_is_active=latest_job_is_active,
+            clearable_job=clearable_job,
             latest_export_stage_progress=stage_progress,
             latest_releases=tuple(
                 StudentDatasetReleaseSummary(

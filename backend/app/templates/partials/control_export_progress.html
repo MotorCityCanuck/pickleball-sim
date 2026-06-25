@@ -66,6 +66,36 @@
                             ></div>
                         </div>
                     </div>
+                    <div style="display:grid; gap:8px;">
+                        <button
+                            type="button"
+                            hx-get="/control/partials/orchestration"
+                            hx-target="#control-tab-content"
+                            hx-swap="innerHTML"
+                            style="border:1px solid #d6d9df; background:#f4f6fa; color:#1d2433; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:700;"
+                        >
+                            Refresh export status
+                        </button>
+                        {% if snapshot.student_dataset_export_summary.clearable_job %}
+                            <form
+                                hx-post="/control/jobs/clear-stalled"
+                                hx-target="#control-tab-content"
+                                hx-swap="innerHTML"
+                            >
+                                <input
+                                    type="hidden"
+                                    name="job_status_id"
+                                    value="{{ snapshot.student_dataset_export_summary.clearable_job.job_status_id }}"
+                                >
+                                <button
+                                    type="submit"
+                                    style="width:100%; border:1px solid #b42318; background:#fef3f2; color:#8f1d18; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:700;"
+                                >
+                                    Clear stalled job
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
 

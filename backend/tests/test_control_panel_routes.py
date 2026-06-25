@@ -2276,6 +2276,59 @@ def test_export_progress_renders_release_actions(session_factory):
     assert "Copy Path" in body
 
 
+def test_export_progress_renders_refresh_and_clear_stalled_controls(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, created_at, updated_at
+                ) VALUES (
+                    83, 'student_dataset_export', 'student-dataset-export-83', 'running', 'write_validate_parquet', 14.29,
+                    'Executing source query for student_release_snapshot_2026_05: clubs.',
+                    '2026-05-20 10:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO job_stage_progress (
+                    job_status_id, generation_run_id, batch_id, stage_name, stage_sequence,
+                    status, progress_current, progress_total, progress_unit, progress_percent,
+                    progress_message, last_heartbeat_at, started_at, created_at, updated_at
+                ) VALUES (
+                    83, 2, NULL, 'write_validate_parquet', 2,
+                    'running', 1, 7, 'release_family', 14.29,
+                    'Executing source query for student_release_snapshot_2026_05: clubs.',
+                    '2026-05-20 10:10:00', '2026-05-20 10:00:05', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(
+                now_fn=lambda: datetime(2026, 5, 20, 11, 0, 0)
+            ),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Refresh export status" in body
+    assert "Clear stalled job" in body
+
+
 def test_default_export_config_prefers_twelve_month_baseline():
     snapshot = SimpleNamespace(
         generation_run_summary=SimpleNamespace(
