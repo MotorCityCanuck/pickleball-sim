@@ -155,7 +155,7 @@ def _player_registrations_query(context: StudentDatasetQueryContext) -> Select:
     )
 
 
-def _players_snapshot_query(context: StudentDatasetQueryContext) -> Select:
+def _player_master_snapshot_query(context: StudentDatasetQueryContext) -> Select:
     latest_ratings = (
         select(
             PlayerRatingHistory.player_id.label("player_id"),
@@ -218,8 +218,8 @@ def _players_snapshot_query(context: StudentDatasetQueryContext) -> Select:
     return query
 
 
-def _players_query(context: StudentDatasetQueryContext) -> Select:
-    query = _players_snapshot_query(context)
+def _player_master_query(context: StudentDatasetQueryContext) -> Select:
+    query = _player_master_snapshot_query(context)
     if context.is_incremental and context.has_prior_snapshot:
         query = query.where(Player.id.in_(_incremental_player_ids(context)))
     return query
@@ -524,7 +524,7 @@ def _referenced_region_ids(context: StudentDatasetQueryContext) -> Select:
 
 
 def _incremental_player_ids(context: StudentDatasetQueryContext) -> Select:
-    changed_player_ids = _delta_primary_keys("players", context)
+    changed_player_ids = _delta_primary_keys("player_master", context)
     registration_players = select(PlayerRegistration.player_id).where(
         PlayerRegistration.batch_id.in_(context.fact_batch_ids),
         PlayerRegistration.player_id.in_(_included_player_ids(context)),
@@ -601,7 +601,7 @@ def _delta_primary_keys(table_name: str, context: StudentDatasetQueryContext) ->
 
 
 def _export_primary_key_column(table_name: str) -> str:
-    return "player_id" if table_name == "players" else "id"
+    return "player_id" if table_name == "player_master" else "id"
 
 
 _INCREMENTAL_DELTA_TABLES = frozenset(
@@ -612,7 +612,7 @@ _INCREMENTAL_DELTA_TABLES = frozenset(
 )
 
 _DELTA_COMPARISON_IGNORED_COLUMNS = {
-    "players": ("snapshot_month",),
+    "player_master": ("snapshot_month",),
 }
 
 
@@ -625,7 +625,7 @@ _QUERY_BUILDERS = {
     "matches": _matches_query,
     "monthly_batches": _monthly_batches_query,
     "player_assessment_history": _player_assessment_history_query,
-    "players": _players_query,
+    "player_master": _player_master_query,
     "player_registrations": _player_registrations_query,
     "regions": _regions_query,
     "team_memberships": _team_memberships_query,
@@ -635,6 +635,6 @@ _QUERY_BUILDERS = {
 _SNAPSHOT_QUERY_BUILDERS = {
     **_QUERY_BUILDERS,
     "clubs": _clubs_snapshot_query,
-    "players": _players_snapshot_query,
+    "player_master": _player_master_snapshot_query,
     "teams": _teams_snapshot_query,
 }

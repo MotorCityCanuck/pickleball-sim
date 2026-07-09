@@ -252,7 +252,7 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
     players_metric = next(
         metric
         for metric in execute_metrics
-        if metric.metadata_json["table_name"] == "players"
+        if metric.metadata_json["table_name"] == "player_master"
     )
     assert players_metric.elapsed_ms >= 0
     assert players_metric.output_count == 1
@@ -328,10 +328,10 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["validation_summary"]["status"] == "passed"
     assert manifest["validation_summary"]["failed_check_count"] == 0
 
-    assert manifest["row_counts"]["players"] == 1
+    assert manifest["row_counts"]["player_master"] == 1
     assert manifest["row_counts"]["matches"] == 1
-    assert manifest["ordered_columns"]["players"] == list(
-        PROJECTION_BY_TABLE["players"].included_columns
+    assert manifest["ordered_columns"]["player_master"] == list(
+        PROJECTION_BY_TABLE["player_master"].included_columns
     )
     assert set(manifest["schema_hashes"]) == set(STUDENT_TABLE_ORDER)
     assert set(manifest["file_checksums"]) == set(STUDENT_TABLE_ORDER)
@@ -458,7 +458,7 @@ def test_write_staged_incremental_release_uses_snapshot_dimensions_and_fact_batc
     assert [row["id"] for row in pq.read_table(release_dir / "matches.parquet").to_pylist()] == [2]
     assert [row["id"] for row in pq.read_table(release_dir / "player_registrations.parquet").to_pylist()] == [2]
     assert [row["id"] for row in pq.read_table(release_dir / "player_assessment_history.parquet").to_pylist()] == [2]
-    assert [row["player_id"] for row in pq.read_table(release_dir / "players.parquet").to_pylist()] == [1, 2]
+    assert [row["player_id"] for row in pq.read_table(release_dir / "player_master.parquet").to_pylist()] == [1, 2]
 
 
 def test_validate_staged_release_fails_referential_integrity(
@@ -484,9 +484,9 @@ def test_validate_staged_release_fails_referential_integrity(
     )
     release = result.releases[0]
     row_counts = {file.table_name: file.row_count for file in release.files}
-    players_file = release.release_dir / "players.parquet"
-    pq.write_table(pq.read_table(players_file).slice(0, 0), players_file)
-    row_counts["players"] = 0
+    player_master_file = release.release_dir / "player_master.parquet"
+    pq.write_table(pq.read_table(player_master_file).slice(0, 0), player_master_file)
+    row_counts["player_master"] = 0
 
     try:
         validate_staged_release(
@@ -499,10 +499,10 @@ def test_validate_staged_release_fails_referential_integrity(
     else:
         raise AssertionError("Expected staged release validation to fail.")
 
-    assert "required_non_empty:players" in failed_names
+    assert "required_non_empty:player_master" in failed_names
     assert (
-        "relationship:club_memberships.player_id->players.player_id" in failed_names
-        or "relationship:match_team_players.player_id->players.player_id" in failed_names
+        "relationship:club_memberships.player_id->player_master.player_id" in failed_names
+        or "relationship:match_team_players.player_id->player_master.player_id" in failed_names
     )
 
 
@@ -529,14 +529,14 @@ def test_validate_staged_release_rejects_duplicate_players_rows(
     )
     release = result.releases[0]
     row_counts = {file.table_name: file.row_count for file in release.files}
-    players_file = release.release_dir / "players.parquet"
-    players_table = pq.read_table(players_file)
-    duplicate_row = players_table.slice(0, 1)
+    player_master_file = release.release_dir / "player_master.parquet"
+    player_master_table = pq.read_table(player_master_file)
+    duplicate_row = player_master_table.slice(0, 1)
     pq.write_table(
-        pa.concat_tables([players_table, duplicate_row]),
-        players_file,
+        pa.concat_tables([player_master_table, duplicate_row]),
+        player_master_file,
     )
-    row_counts["players"] += 1
+    row_counts["player_master"] += 1
 
     with pytest.raises(StudentDatasetValidationError) as exc_info:
         validate_staged_release(
@@ -546,7 +546,7 @@ def test_validate_staged_release_rejects_duplicate_players_rows(
         )
 
     failed_names = {check.name for check in exc_info.value.result.failed_checks}
-    assert "players:one_row_per_player" in failed_names
+    assert "player_master:one_row_per_player" in failed_names
 
 
 def test_validate_staged_incremental_release_allows_empty_clubs_and_memberships(
@@ -616,17 +616,17 @@ def test_validate_staged_release_rejects_players_snapshot_month_mismatch(
     )
     release = result.releases[0]
     row_counts = {file.table_name: file.row_count for file in release.files}
-    players_file = release.release_dir / "players.parquet"
-    players_table = pq.read_table(players_file)
-    snapshot_month_index = players_table.column_names.index("snapshot_month")
-    updated_columns = list(players_table.itercolumns())
+    player_master_file = release.release_dir / "player_master.parquet"
+    player_master_table = pq.read_table(player_master_file)
+    snapshot_month_index = player_master_table.column_names.index("snapshot_month")
+    updated_columns = list(player_master_table.itercolumns())
     updated_columns[snapshot_month_index] = pa.array(
         ["2025-03-01"],
-        type=players_table.schema.field("snapshot_month").type,
+        type=player_master_table.schema.field("snapshot_month").type,
     )
     pq.write_table(
-        pa.table(updated_columns, names=players_table.column_names),
-        players_file,
+        pa.table(updated_columns, names=player_master_table.column_names),
+        player_master_file,
     )
 
     with pytest.raises(StudentDatasetValidationError) as exc_info:
@@ -637,7 +637,7 @@ def test_validate_staged_release_rejects_players_snapshot_month_mismatch(
         )
 
     failed_names = {check.name for check in exc_info.value.result.failed_checks}
-    assert "players:snapshot_month_consistent" in failed_names
+    assert "player_master:snapshot_month_consistent" in failed_names
 
 
 def test_promote_staged_release_family_moves_files_and_persists_metadata(
@@ -707,15 +707,15 @@ def test_promote_staged_release_family_moves_files_and_persists_metadata(
     ).mappings().all()
     assert len(file_rows) == len(STUDENT_TABLE_ORDER)
     assert {row["table_name"] for row in file_rows} == set(STUDENT_TABLE_ORDER)
-    players_file = next(
-        row for row in file_rows if row["table_name"] == "players"
+    player_master_file = next(
+        row for row in file_rows if row["table_name"] == "player_master"
     )
-    assert players_file["file_path"] == str(
-        release.release_dir / "players.parquet"
+    assert player_master_file["file_path"] == str(
+        release.release_dir / "player_master.parquet"
     )
-    assert players_file["row_count"] == 1
-    assert players_file["schema_hash"]
-    assert players_file["checksum"]
+    assert player_master_file["row_count"] == 1
+    assert player_master_file["schema_hash"]
+    assert player_master_file["checksum"]
 
 
 def test_promote_staged_release_family_blocks_existing_final_folder(

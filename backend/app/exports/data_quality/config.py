@@ -252,7 +252,7 @@ DEFAULT_TABLE_RULES: Mapping[str, DataQualityTableRule] = {
             ISSUE_TYPE_TIMESTAMP_JITTER,
         ),
     ),
-    "players": DataQualityTableRule(
+    "player_master": DataQualityTableRule(
         issue_profile="medium",
         allowed_issue_types=(
             ISSUE_TYPE_NAME_CASE_VARIANTS,

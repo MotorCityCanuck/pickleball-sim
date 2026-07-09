@@ -284,20 +284,20 @@ def test_registered_export_updates_stage_progress_per_release_folder(
     def fake_write_staged_release_family(**kwargs):
         progress_callback = kwargs["progress_callback"]
         activity_callback = kwargs["activity_callback"]
-        activity_callback("Building source query for napa_student_release_initial_history: players.")
-        activity_callback("Resolving database bind for napa_student_release_initial_history: players.")
+        activity_callback("Building source query for napa_student_release_initial_history: player_master.")
+        activity_callback("Resolving database bind for napa_student_release_initial_history: player_master.")
         activity_callback(
-            "Resolved database bind for napa_student_release_initial_history: players. "
+            "Resolved database bind for napa_student_release_initial_history: player_master. "
             "Pool size: 5  Connections in pool: 1 Current Overflow: -4 Current Checked out connections: 0"
         )
-        activity_callback("Acquiring database connection for napa_student_release_initial_history: players.")
+        activity_callback("Acquiring database connection for napa_student_release_initial_history: player_master.")
         activity_callback(
-            "Connection acquired for napa_student_release_initial_history: players. "
+            "Connection acquired for napa_student_release_initial_history: player_master. "
             "Pool size: 5  Connections in pool: 0 Current Overflow: -4 Current Checked out connections: 1"
         )
-        activity_callback("Executing source query for napa_student_release_initial_history: players.")
-        activity_callback("Fetched 1,024 source rows for napa_student_release_initial_history: players.")
-        activity_callback("Normalized 1,024 source rows for napa_student_release_initial_history: players.")
+        activity_callback("Executing source query for napa_student_release_initial_history: player_master.")
+        activity_callback("Fetched 1,024 source rows for napa_student_release_initial_history: player_master.")
+        activity_callback("Normalized 1,024 source rows for napa_student_release_initial_history: player_master.")
         write_stage_before = session.execute(
             text(
                 """
@@ -387,7 +387,7 @@ def test_registered_export_updates_stage_progress_per_release_folder(
 
     assert result is not None
     assert heartbeat_messages == [
-        "Normalized 1,024 source rows for napa_student_release_initial_history: players."
+        "Normalized 1,024 source rows for napa_student_release_initial_history: player_master."
     ]
     assert observed == [
         ("write", 1, 2, "running"),
@@ -416,7 +416,7 @@ def test_published_family_assertion_requires_parquet_files(tmp_path):
     with pytest.raises(StudentDatasetExportPreflightError, match="no Parquet files"):
         StudentDatasetExportService._assert_published_family_has_files(published)
 
-    (release_dir / "players.parquet").write_bytes(b"parquet")
+    (release_dir / "player_master.parquet").write_bytes(b"parquet")
 
     StudentDatasetExportService._assert_published_family_has_files(published)
 

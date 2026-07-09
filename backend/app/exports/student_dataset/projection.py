@@ -40,7 +40,7 @@ STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "matches",
     "monthly_batches",
     "player_assessment_history",
-    "players",
+    "player_master",
     "player_registrations",
     "regions",
     "team_memberships",
@@ -266,7 +266,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "club_memberships",
                 "player_id",
-                "players",
+                "player_master",
                 parent_column="player_id",
             ),
             RelationshipValidation("club_memberships", "club_id", "clubs"),
@@ -352,7 +352,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         source_filter_key="match_team_players_for_included_match_teams",
         source_filter_description=(
             "Match-team player rows whose match_team_id belongs to included "
-            "match teams; player references are validated against players."
+            "match teams; player references are validated against player_master."
         ),
         relationship_validations=(
             RelationshipValidation(
@@ -363,7 +363,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "match_team_players",
                 "player_id",
-                "players",
+                "player_master",
                 parent_column="player_id",
             ),
         ),
@@ -539,7 +539,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "player_assessment_history",
                 "player_id",
-                "players",
+                "player_master",
                 parent_column="player_id",
             ),
             RelationshipValidation(
@@ -552,7 +552,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
     _projection(
         model=Player,
         source_table="players",
-        output_table="players",
+        output_table="player_master",
         source_columns=(
             "id",
             "external_player_key",
@@ -603,7 +603,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
         relationship_validations=(
             RelationshipValidation(
-                "players",
+                "player_master",
                 "home_region_id",
                 "regions",
                 nullable=True,
@@ -611,12 +611,12 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         ),
         temporal_validations=(
             TemporalValidation(
-                "players",
+                "player_master",
                 "registration_date < snapshot_end_exclusive",
                 "Player rows must be registered before the release snapshot end.",
             ),
             TemporalValidation(
-                "players",
+                "player_master",
                 "rating_date IS NULL OR rating_date < snapshot_end_exclusive",
                 "Player ratings must not be newer than the release snapshot month.",
             ),
@@ -655,7 +655,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "player_registrations",
                 "player_id",
-                "players",
+                "player_master",
                 parent_column="player_id",
             ),
             RelationshipValidation(
@@ -741,7 +741,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "team_memberships",
                 "player_id",
-                "players",
+                "player_master",
                 parent_column="player_id",
             ),
         ),

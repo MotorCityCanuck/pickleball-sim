@@ -1032,26 +1032,31 @@ must not generate instructor-prebuilt dimensional models, fact tables, or
 derived summary tables for students. Students are expected to construct those
 structures themselves as part of the assignment.
 
-Student-facing table files should use operational-style names that mirror the
-approved source tables unless a safe rename is required for clarity.
+Student-facing table files should use the approved export contract names. Most
+files mirror operational source tables, while the player dimension is safely
+renamed to `player_master` because it is a derived snapshot projection rather
+than a direct raw-table dump.
 
 ```text
-players.parquet
+player_master.parquet
 clubs.parquet
+club_memberships.parquet
 regions.parquet
 teams.parquet
 team_memberships.parquet
 matches.parquet
-games.parquet
-rating_history.parquet
+match_teams.parquet
+match_team_players.parquet
+match_games.parquet
+monthly_batches.parquet
+player_registrations.parquet
+player_assessment_history.parquet
 ```
 
 Metadata:
 
 ```text
-release_manifest.parquet
-data_dictionary.parquet
-table_relationships.parquet
+manifest.json
 ```
 
 The release must not include files such as:
@@ -1063,6 +1068,8 @@ dim_regions.parquet
 fact_matches.parquet
 fact_games.parquet
 fact_rating_history.parquet
+players.parquet
+player_rating_history.parquet
 monthly_player_summary.parquet
 monthly_region_summary.parquet
 ```

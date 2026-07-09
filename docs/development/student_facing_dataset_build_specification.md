@@ -5,6 +5,13 @@
 Current implementation specification for the baseline-plus-incremental student
 dataset export.
 
+Canonical student-facing shape is aligned to the checked-in reference release
+family rooted at:
+
+```text
+scripts/data/student_dataset_exports/napa_olympic_analytics_v1_test
+```
+
 Canonical document path:
 
 ```text
@@ -26,6 +33,29 @@ The release format is a family of Parquet folders:
 The export is intentionally stricter than the source database. Operational
 tracking, raw seed inputs, hidden generator variables, privileged scoring
 mechanics, and tournament internals are excluded.
+
+## Legacy Checked-In Release Families
+
+The repository also contains older checked-in release artifacts, notably:
+
+```text
+scripts/data/student_dataset_exports/napa_olympic_analytics_v1_run
+```
+
+Those legacy folders still publish `players.parquet` and
+`player_rating_history.parquet` instead of `player_master.parquet`.
+
+Treat those older folders as historical reference only. This specification is
+for the current student-facing contract used by the newer
+`napa_olympic_analytics_v1_test` sample and summarized in
+`docs/development/napa_parquet_inventory.md`.
+
+Important compatibility note:
+
+- schema version `1.3` appears in both the legacy and current checked-in
+  sample families,
+- file inventory and manifest shape, not schema version alone, determine which
+  contract a checked-in sample follows.
 
 ## Release Family Model
 
@@ -233,8 +263,8 @@ fields:
 | `release_name` | Concrete release folder name. |
 | `release_mode` | `baseline` or `monthly_incremental`. |
 | `release_type` | `historical_baseline` or `monthly_incremental`. |
+| `build_timestamp` | UTC timestamp when the release folder was written. |
 | `student_dataset_schema_version` | Student export schema version. |
-| `source_generation_run_id` | Source generation run identifier. |
 | `included_batch_sequences` | Compatibility alias for `fact_batch_sequences`. |
 | `included_batch_months` | Compatibility alias for fact-batch months. |
 | `snapshot_batch_sequences` | Snapshot batch scope. |
@@ -243,7 +273,6 @@ fields:
 | `fact_batch_months` | Fact batch months. |
 | `snapshot_month` | Newest month in snapshot scope. |
 | `snapshot_end_exclusive` | First day after `snapshot_month`. |
-| `build_parameters` | Export request parameters. |
 | `output_files` | Per-file path, row count, columns, schema hash, and checksum. |
 | `row_counts` | Per-table row counts. |
 | `ordered_columns` | Per-table ordered column list. |
@@ -251,6 +280,18 @@ fields:
 | `file_checksums` | Per-table file checksums. |
 | `validation_status` | Validation result summary status. |
 | `validation_summary` | Detailed validation checks. |
+
+Observed optional or legacy manifest fields:
+
+- `release_month`
+- `release_sequence_number`
+- `load_strategy`
+- `build_parameters`
+- `data_quality_level`
+- `source_generation_run_id`
+
+The checked-in `napa_olympic_analytics_v1_test` manifest does not rely on
+those fields. Older checked-in manifests may still include some of them.
 
 ## Validation Requirements
 

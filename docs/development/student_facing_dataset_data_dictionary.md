@@ -5,6 +5,17 @@
 Current companion document for
 `docs/development/student_facing_dataset_build_specification.md`.
 
+This dictionary is aligned to the current checked-in `player_master` release
+artifact under:
+
+```text
+scripts/data/student_dataset_exports/napa_olympic_analytics_v1_test
+```
+
+Older checked-in release folders that still publish `players.parquet` and
+`player_rating_history.parquet` are legacy artifacts and are not the contract
+documented here.
+
 ## Scope
 
 This data dictionary defines the released analytical Parquet schema for the

@@ -27,7 +27,7 @@ BASELINE_REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
         "match_teams",
         "matches",
         "monthly_batches",
-        "players",
+        "player_master",
         "player_registrations",
         "regions",
         "team_memberships",
@@ -42,7 +42,7 @@ INCREMENTAL_REQUIRED_NON_EMPTY_TABLES: frozenset[str] = frozenset(
         "match_teams",
         "matches",
         "monthly_batches",
-        "players",
+        "player_master",
         "player_registrations",
         "regions",
         "team_memberships",
@@ -127,7 +127,7 @@ def validate_staged_release(
         checks.extend(_validate_row_counts(connection, manifest_row_counts))
         checks.extend(_validate_required_non_empty_tables(connection, release_window))
         checks.extend(_validate_relationships(connection))
-        checks.extend(_validate_players(connection, release_window))
+        checks.extend(_validate_player_master(connection, release_window))
         checks.extend(_validate_match_shape(connection))
         checks.extend(_validate_temporal_rules(connection, release_window))
         checks.extend(_validate_batch_tied_facts(connection))
@@ -373,7 +373,7 @@ def _validate_relationships(
     return tuple(checks)
 
 
-def _validate_players(
+def _validate_player_master(
     connection: duckdb.DuckDBPyConnection,
     release_window: StudentDatasetReleaseWindow,
 ) -> tuple[StudentDatasetValidationCheck, ...]:
@@ -383,7 +383,7 @@ def _validate_players(
         SELECT COUNT(*)
         FROM (
             SELECT player_id
-            FROM "players"
+            FROM "player_master"
             GROUP BY player_id
             HAVING player_id IS NULL OR COUNT(*) <> 1
         ) failures
@@ -393,7 +393,7 @@ def _validate_players(
         connection,
         f"""
         SELECT COUNT(*)
-        FROM "players"
+        FROM "player_master"
         WHERE snapshot_month <> {_duckdb_string(release_window.snapshot_month.isoformat())}
         """,
     )
@@ -401,7 +401,7 @@ def _validate_players(
         connection,
         """
         SELECT COUNT(*)
-        FROM "players"
+        FROM "player_master"
         WHERE
             (
                 rating_date IS NULL
@@ -425,27 +425,27 @@ def _validate_players(
     )
     return (
         _check(
-            name="players:one_row_per_player",
+            name="player_master:one_row_per_player",
             passed=duplicate_player_count == 0,
-            passed_message="players contains exactly one row per player_id.",
-            failed_message="players contains duplicate or null player_id rows.",
+            passed_message="player_master contains exactly one row per player_id.",
+            failed_message="player_master contains duplicate or null player_id rows.",
             details={"failure_count": duplicate_player_count},
         ),
         _check(
-            name="players:snapshot_month_consistent",
+            name="player_master:snapshot_month_consistent",
             passed=snapshot_month_mismatch_count == 0,
-            passed_message="players snapshot_month matches the release snapshot month.",
-            failed_message="players snapshot_month does not match the release snapshot month.",
+            passed_message="player_master snapshot_month matches the release snapshot month.",
+            failed_message="player_master snapshot_month does not match the release snapshot month.",
             details={
                 "expected_snapshot_month": release_window.snapshot_month.isoformat(),
                 "failure_count": snapshot_month_mismatch_count,
             },
         ),
         _check(
-            name="players:rating_state_coherent",
+            name="player_master:rating_state_coherent",
             passed=incoherent_rating_state_count == 0,
-            passed_message="players rating fields are internally coherent.",
-            failed_message="players rating fields are internally inconsistent.",
+            passed_message="player_master rating fields are internally coherent.",
+            failed_message="player_master rating fields are internally inconsistent.",
             details={"failure_count": incoherent_rating_state_count},
         ),
     )

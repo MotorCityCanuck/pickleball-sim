@@ -2256,7 +2256,7 @@ def test_export_progress_renders_release_actions(session_factory):
                 INSERT INTO student_dataset_release_files (
                     release_id, table_name, file_path, row_count, schema_hash, checksum, created_at
                 ) VALUES
-                    (61, 'players', 'data/student_dataset_exports/student_release/student_release_initial_history/players.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
+                    (61, 'player_master', 'data/student_dataset_exports/student_release/student_release_initial_history/player_master.parquet', 1000, 'abc', 'def', CURRENT_TIMESTAMP)
                 """
             )
         )
@@ -2505,7 +2505,7 @@ def test_student_dataset_compare_route_renders_comparison_summary(session_factor
                         issue_count=3,
                         tables=(
                             SimpleNamespace(
-                                table_name="players",
+                                table_name="player_master",
                                 clean_row_count=10,
                                 tainted_row_count=10,
                                 row_delta=0,
@@ -2613,8 +2613,8 @@ def test_comparison_readiness_requires_clean_and_tainted_data(tmp_path):
     export_root = tmp_path / "student_export" / "20260617" / "183022Z"
     (export_root / "clean" / "release").mkdir(parents=True)
     (export_root / "tainted" / "release").mkdir(parents=True)
-    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
-    (export_root / "tainted" / "release" / "players.parquet").write_bytes(b"tainted")
+    (export_root / "clean" / "release" / "player_master.parquet").write_bytes(b"clean")
+    (export_root / "tainted" / "release" / "player_master.parquet").write_bytes(b"tainted")
     snapshot = SimpleNamespace(
         student_dataset_export_summary=SimpleNamespace(
             latest_export_job_is_active=False,
@@ -2638,7 +2638,7 @@ def test_comparison_readiness_blocks_missing_tainted_data(tmp_path):
     export_root = tmp_path / "student_export" / "20260617" / "183022Z"
     (export_root / "clean" / "release").mkdir(parents=True)
     (export_root / "tainted").mkdir(parents=True)
-    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
+    (export_root / "clean" / "release" / "player_master.parquet").write_bytes(b"clean")
     snapshot = SimpleNamespace(
         student_dataset_export_summary=SimpleNamespace(
             latest_export_job_is_active=False,
@@ -2662,8 +2662,8 @@ def test_comparison_readiness_blocks_active_export_job(tmp_path):
     export_root = tmp_path / "student_export" / "20260617" / "183022Z"
     (export_root / "clean" / "release").mkdir(parents=True)
     (export_root / "tainted" / "release").mkdir(parents=True)
-    (export_root / "clean" / "release" / "players.parquet").write_bytes(b"clean")
-    (export_root / "tainted" / "release" / "players.parquet").write_bytes(b"tainted")
+    (export_root / "clean" / "release" / "player_master.parquet").write_bytes(b"clean")
+    (export_root / "tainted" / "release" / "player_master.parquet").write_bytes(b"tainted")
     snapshot = SimpleNamespace(
         student_dataset_export_summary=SimpleNamespace(
             latest_export_job_is_active=True,
@@ -2798,7 +2798,7 @@ def test_run_qc_route_returns_422_for_failed_qc(monkeypatch):
             "check_count": 88,
             "failed_check_count": 2,
             "failed_checks": [
-                {"check_name": "row_count:players", "details": "manifest=10 actual=9"},
+                {"check_name": "row_count:player_master", "details": "manifest=10 actual=9"},
             ],
         },
     )

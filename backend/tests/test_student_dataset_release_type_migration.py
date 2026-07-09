@@ -85,7 +85,7 @@ def test_migrate_engine_rewrites_legacy_release_types_for_sqlite():
                     INSERT INTO student_dataset_release_files (
                         id, release_id, table_name, file_path
                     ) VALUES
-                        (1, 1, 'players', '/tmp/baseline/players.parquet')
+                        (1, 1, 'player_master', '/tmp/baseline/player_master.parquet')
                     """
                 )
             )

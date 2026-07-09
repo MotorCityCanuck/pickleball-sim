@@ -37,7 +37,7 @@ def test_projection_table_order_matches_documented_release_files():
         "matches",
         "monthly_batches",
         "player_assessment_history",
-        "players",
+        "player_master",
         "player_registrations",
         "regions",
         "team_memberships",
@@ -94,7 +94,7 @@ def test_get_projection_rejects_unknown_tables():
 
 def test_validate_projection_contract_detects_missing_projection():
     broken = dict(PROJECTION_BY_TABLE)
-    broken.pop("players")
+    broken.pop("player_master")
 
     original = __import__(
         "app.exports.student_dataset.projection",
