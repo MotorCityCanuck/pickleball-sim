@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
+import logging
 from typing import Any, Mapping
 import copy
 import math
@@ -43,6 +44,9 @@ from .rules import (
     timestamp_jitter,
 )
 from .validators import DataQualityInjectionValidationResult, validate_injected_tables
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -145,6 +149,13 @@ def inject_data_quality_issues(
         issue_type_field_count=defaultdict(int),
         table_row_deltas=defaultdict(int),
     )
+    logger.info(
+        "Student dataset data quality injection start release_name=%s release_type=%s effective_level=%s table_count=%s",
+        release_context.release_name,
+        release_context.release_type,
+        effective_level,
+        len(injected_tables),
+    )
     for table_name in injected_tables:
         _apply_table_rules(state, table_name)
     _apply_duplicate_like_rows(state)
@@ -203,14 +214,23 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
         return
 
     profile = level_profile(rule.issue_profile or state.effective_level)
+    rows = state.tables[table_name]
     for issue_type in rule.allowed_issue_types:
         if issue_type not in SUPPORTED_ISSUE_TYPES or issue_type in ROW_RATE_ISSUES:
             continue
-        rows = state.tables[table_name]
         columns = eligible_columns(table_name, issue_type)
         if not rows or not columns:
             state.issue_type_candidate_rows.setdefault(issue_type, 0)
             state.table_issue_type_candidate_rows.setdefault((table_name, issue_type), 0)
+            logger.info(
+                "Student dataset data quality issue_skipped table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s reason=%s",
+                table_name,
+                issue_type,
+                len(rows),
+                0,
+                0,
+                "no_rows_or_columns",
+            )
             continue
         state.issue_type_candidate_rows[issue_type] = (
             state.issue_type_candidate_rows.get(issue_type, 0) + len(rows)
@@ -239,6 +259,14 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             for column_name in columns
             if row.get(column_name) is not None
         ]
+        logger.info(
+            "Student dataset data quality issue_start table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s",
+            table_name,
+            issue_type,
+            len(rows),
+            len(candidates),
+            target_count,
+        )
         rng.shuffle(candidates)
         applied = 0
         for row_index, column_name in candidates:
@@ -282,6 +310,15 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
                 )
             )
             applied += 1
+        logger.info(
+            "Student dataset data quality issue_end table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s applied_count=%s",
+            table_name,
+            issue_type,
+            len(rows),
+            len(candidates),
+            target_count,
+            applied,
+        )
 
 
 def _apply_duplicate_like_rows(state: _InjectionState) -> None:
@@ -315,6 +352,11 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
         issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
         row_count=len(matches),
         profile=profile,
+    )
+    logger.info(
+        "Student dataset data quality duplicate_like_rows_plan match_row_count=%s target_count=%s",
+        len(matches),
+        target_count,
     )
     if target_count <= 0:
         return
@@ -436,6 +478,14 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
                 )
             )
         applied += 1
+    logger.info(
+        "Student dataset data quality duplicate_like_rows_end applied_count=%s match_row_delta=%s match_team_row_delta=%s match_team_player_row_delta=%s match_game_row_delta=%s",
+        applied,
+        state.table_row_deltas["matches"],
+        state.table_row_deltas["match_teams"],
+        state.table_row_deltas["match_team_players"],
+        state.table_row_deltas["match_games"],
+    )
 
 
 def _mutated_value(

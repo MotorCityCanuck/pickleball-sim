@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import resource
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
@@ -42,6 +46,7 @@ MANIFEST_FILE_NAME = "manifest.json"
 DEFAULT_PARQUET_COMPRESSION = "snappy"
 ReleaseProgressCallback = Callable[[str, int, int], None]
 ReleaseActivityCallback = Callable[[str], None]
+logger = logging.getLogger("uvicorn.error")
 
 
 class StudentDatasetWriteError(RuntimeError):
@@ -229,6 +234,13 @@ def write_staged_release(
     concrete_release_name = f"{release_name}{release_window.folder_suffix}"
     release_dir = staging_root / concrete_release_name
     release_dir.mkdir(parents=True, exist_ok=False)
+    _log_export_observation(
+        "release_folder_start",
+        release_name=concrete_release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        release_dir=str(release_dir),
+    )
 
     context = StudentDatasetQueryContext(
         generation_run_id=build_parameters.generation_run_id,
@@ -252,6 +264,13 @@ def write_staged_release(
         activity_callback(
             f"Applying data quality rules for {concrete_release_name}."
         )
+    _log_export_observation(
+        "data_quality_injection_start",
+        release_name=concrete_release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        table_count=len(clean_tables),
+    )
     injection_result = inject_data_quality_issues(
         tables=clean_tables,
         config=data_quality_config,
@@ -262,6 +281,15 @@ def write_staged_release(
             generation_run_id=build_parameters.generation_run_id,
             snapshot_month=release_window.snapshot_month,
         ),
+    )
+    _log_export_observation(
+        "data_quality_injection_end",
+        release_name=concrete_release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        affected_rows=injection_result.summary.total_affected_rows,
+        affected_fields=injection_result.summary.total_affected_fields,
+        manifest_entry_count=len(injection_result.manifest_entries),
     )
     files_list: list[StudentDatasetFileManifest] = []
     for table_name in STUDENT_TABLE_ORDER:
@@ -329,6 +357,14 @@ def write_staged_release(
             f"Writing manifest for {concrete_release_name}."
         )
     _write_json(manifest_path, manifest)
+    _log_export_observation(
+        "release_folder_complete",
+        release_name=concrete_release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        release_dir=str(release_dir),
+        file_count=len(files),
+    )
     return StagedStudentDatasetRelease(
         release_name=concrete_release_name,
         release_type=release_window.release_type,
@@ -388,6 +424,14 @@ def _load_table_rows(
         activity_callback(
             f"Executing source query for {release_name}: {table_name}."
         )
+    query_started = perf_counter()
+    _log_export_observation(
+        "source_query_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+    )
     if runtime_recorder is None:
         rows = session.execute(query).mappings().all()
     else:
@@ -398,10 +442,28 @@ def _load_table_rows(
             rows = session.execute(query).mappings().all()
             metric["output_count"] = len(rows)
         runtime_recorder.flush()
+    _log_export_observation(
+        "source_query_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=len(rows),
+        elapsed_ms=int((perf_counter() - query_started) * 1000),
+    )
     if activity_callback is not None:
         activity_callback(
             f"Fetched {len(rows):,} source rows for {release_name}: {table_name}."
         )
+    normalize_started = perf_counter()
+    _log_export_observation(
+        "normalize_source_rows_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=len(rows),
+    )
     if runtime_recorder is None:
         normalized_rows = [
             {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
@@ -419,6 +481,15 @@ def _load_table_rows(
             ]
             metric["output_count"] = len(normalized_rows)
         runtime_recorder.flush()
+    _log_export_observation(
+        "normalize_source_rows_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=len(normalized_rows),
+        elapsed_ms=int((perf_counter() - normalize_started) * 1000),
+    )
     if activity_callback is not None:
         activity_callback(
             f"Normalized {len(normalized_rows):,} source rows for {release_name}: {table_name}."
@@ -457,6 +528,15 @@ def _write_table_rows(
         release_type=release_type,
         snapshot_month=snapshot_month,
     )
+    build_started = perf_counter()
+    _log_export_observation(
+        "build_parquet_table_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        row_count=len(row_dicts),
+    )
     if runtime_recorder is None:
         table = pa.table(
             {
@@ -464,8 +544,6 @@ def _write_table_rows(
                 for column_name in projection.included_columns
             }
         )
-        file_path = release_dir / projection.output_file
-        pq.write_table(table, file_path, compression=compression)
     else:
         with runtime_recorder.measure(
             "build_parquet_table",
@@ -480,7 +558,29 @@ def _write_table_rows(
             )
             metric["output_count"] = table.num_rows
         runtime_recorder.flush()
-        file_path = release_dir / projection.output_file
+    _log_export_observation(
+        "build_parquet_table_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        row_count=table.num_rows,
+        elapsed_ms=int((perf_counter() - build_started) * 1000),
+    )
+    file_path = release_dir / projection.output_file
+    write_started = perf_counter()
+    _log_export_observation(
+        "write_parquet_file_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        row_count=table.num_rows,
+        file_path=str(file_path),
+    )
+    if runtime_recorder is None:
+        pq.write_table(table, file_path, compression=compression)
+    else:
         with runtime_recorder.measure(
             "write_parquet_file",
             input_count=table.num_rows,
@@ -489,6 +589,17 @@ def _write_table_rows(
         ):
             pq.write_table(table, file_path, compression=compression)
         runtime_recorder.flush()
+    _log_export_observation(
+        "write_parquet_file_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        row_count=table.num_rows,
+        elapsed_ms=int((perf_counter() - write_started) * 1000),
+        file_path=str(file_path),
+        file_size_bytes=file_path.stat().st_size if file_path.exists() else None,
+    )
     return StudentDatasetFileManifest(
         table_name=table_name,
         file_name=projection.output_file,
@@ -710,3 +821,33 @@ def _normalize_value(value):
     if isinstance(value, (date, datetime)):
         return value.isoformat()
     return value
+
+
+def _log_export_observation(event_name: str, **fields: Any) -> None:
+    details = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(
+            {**fields, "rss_mb": _current_rss_megabytes()}.items()
+        )
+        if value is not None
+    )
+    logger.info("Student dataset export %s %s", event_name, details)
+
+
+def _current_rss_megabytes() -> float | None:
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return round(int(parts[1]) / 1024, 2)
+    except OSError:
+        pass
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except OSError:
+        return None
+    if os.name == "posix":
+        return round(usage / 1024, 2)
+    return round(usage / (1024 * 1024), 2)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 from pathlib import Path
 import shutil
 from uuid import uuid4
@@ -25,6 +26,9 @@ from .writer import (
     StudentDatasetBuildParameters,
     write_staged_release_family,
 )
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -276,6 +280,12 @@ class StudentDatasetExportService:
             clean_staged_family = None
             clean_published_family = None
             if normalized_level == "none":
+                logger.info(
+                    "Student dataset export phase_start phase=clean_only_write_validate generation_run_id=%s release_name=%s data_quality_level=%s",
+                    generation_run_id,
+                    release_name,
+                    normalized_level,
+                )
                 staged_family = write_staged_release_family(
                     session=session,
                     output_root=output_root,
@@ -299,6 +309,13 @@ class StudentDatasetExportService:
                         message=message,
                     ),
                 )
+                logger.info(
+                    "Student dataset export phase_end phase=clean_only_write_validate generation_run_id=%s release_name=%s staged_root=%s release_count=%s",
+                    generation_run_id,
+                    release_name,
+                    staged_family.staging_root,
+                    len(staged_family.releases),
+                )
             else:
                 assert paired_output_root is not None
                 clean_build_parameters = StudentDatasetBuildParameters(
@@ -320,6 +337,13 @@ class StudentDatasetExportService:
                     data_quality_level=normalized_level,
                     overwrite_existing=overwrite_existing,
                     final_root=paired_output_root / tainted_subfolder,
+                )
+                logger.info(
+                    "Student dataset export phase_start phase=clean_write_validate generation_run_id=%s release_name=%s data_quality_level=%s output_root=%s",
+                    generation_run_id,
+                    release_name,
+                    clean_build_parameters.data_quality_level,
+                    clean_build_parameters.output_root,
                 )
                 clean_staged_family = write_staged_release_family(
                     session=session,
@@ -344,6 +368,20 @@ class StudentDatasetExportService:
                         message=message,
                     ),
                 )
+                logger.info(
+                    "Student dataset export phase_end phase=clean_write_validate generation_run_id=%s release_name=%s staged_root=%s release_count=%s",
+                    generation_run_id,
+                    release_name,
+                    clean_staged_family.staging_root,
+                    len(clean_staged_family.releases),
+                )
+                logger.info(
+                    "Student dataset export phase_start phase=tainted_write_validate generation_run_id=%s release_name=%s data_quality_level=%s output_root=%s",
+                    generation_run_id,
+                    release_name,
+                    build_parameters.data_quality_level,
+                    build_parameters.output_root,
+                )
                 staged_family = write_staged_release_family(
                     session=session,
                     output_root=paired_output_root,
@@ -366,6 +404,13 @@ class StudentDatasetExportService:
                         stage_name="write_validate_parquet",
                         message=message,
                     ),
+                )
+                logger.info(
+                    "Student dataset export phase_end phase=tainted_write_validate generation_run_id=%s release_name=%s staged_root=%s release_count=%s",
+                    generation_run_id,
+                    release_name,
+                    staged_family.staging_root,
+                    len(staged_family.releases),
                 )
             self._mark_stage(
                 session,
@@ -403,6 +448,12 @@ class StudentDatasetExportService:
             self._checkpoint(session, checkpoint)
 
             if clean_staged_family is not None:
+                logger.info(
+                    "Student dataset export phase_start phase=clean_promote generation_run_id=%s release_name=%s final_root=%s",
+                    generation_run_id,
+                    release_name,
+                    clean_build_parameters.final_root,
+                )
                 clean_published_family = promote_staged_release_family(
                     session=session,
                     staged_family=clean_staged_family,
@@ -417,6 +468,19 @@ class StudentDatasetExportService:
                         message=f"Promoted clean release folder {current} of {total * 2}: {release_id}.",
                     ),
                 )
+                logger.info(
+                    "Student dataset export phase_end phase=clean_promote generation_run_id=%s release_name=%s final_root=%s release_count=%s",
+                    generation_run_id,
+                    release_name,
+                    clean_published_family.final_root,
+                    len(clean_published_family.releases),
+                )
+            logger.info(
+                "Student dataset export phase_start phase=tainted_promote generation_run_id=%s release_name=%s final_root=%s",
+                generation_run_id,
+                release_name,
+                build_parameters.final_root,
+            )
             published_family = promote_staged_release_family(
                 session=session,
                 staged_family=staged_family,
@@ -434,6 +498,13 @@ class StudentDatasetExportService:
                         else f"Promoted release folder {current} of {total}: {release_id}."
                     ),
                 ),
+            )
+            logger.info(
+                "Student dataset export phase_end phase=tainted_promote generation_run_id=%s release_name=%s final_root=%s release_count=%s",
+                generation_run_id,
+                release_name,
+                published_family.final_root,
+                len(published_family.releases),
             )
             if clean_published_family is not None:
                 self._assert_published_family_has_files(clean_published_family)
