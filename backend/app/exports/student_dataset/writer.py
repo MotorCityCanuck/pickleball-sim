@@ -246,69 +246,144 @@ def write_staged_release(
         generation_run_id=build_parameters.generation_run_id,
         release_window=release_window,
     )
-    clean_tables: dict[str, list[dict[str, Any]]] = {}
-    for table_name in STUDENT_TABLE_ORDER:
-        clean_tables[table_name] = _load_table_rows(
-            session=session,
-            table_name=table_name,
-            context=context,
-            release_name=concrete_release_name,
-            activity_callback=activity_callback,
-            runtime_recorder=runtime_recorder,
-            instrumentation=instrumentation,
-        )
     data_quality_config = build_default_data_quality_config(
         level=build_parameters.data_quality_level,
     )
-    if activity_callback is not None:
-        activity_callback(
-            f"Applying data quality rules for {concrete_release_name}."
-        )
-    _log_export_observation(
-        "data_quality_injection_start",
+    release_context = DataQualityReleaseContext(
+        release_id=concrete_release_name,
         release_name=concrete_release_name,
         release_type=release_window.release_type,
-        snapshot_month=release_window.snapshot_month.isoformat(),
-        table_count=len(clean_tables),
-    )
-    injection_result = inject_data_quality_issues(
-        tables=clean_tables,
-        config=data_quality_config,
-        release_context=DataQualityReleaseContext(
-            release_id=concrete_release_name,
-            release_name=concrete_release_name,
-            release_type=release_window.release_type,
-            generation_run_id=build_parameters.generation_run_id,
-            snapshot_month=release_window.snapshot_month,
-        ),
-    )
-    _log_export_observation(
-        "data_quality_injection_end",
-        release_name=concrete_release_name,
-        release_type=release_window.release_type,
-        snapshot_month=release_window.snapshot_month.isoformat(),
-        affected_rows=injection_result.summary.total_affected_rows,
-        affected_fields=injection_result.summary.total_affected_fields,
-        manifest_entry_count=len(injection_result.manifest_entries),
+        generation_run_id=build_parameters.generation_run_id,
+        snapshot_month=release_window.snapshot_month,
     )
     files_list: list[StudentDatasetFileManifest] = []
-    for table_name in STUDENT_TABLE_ORDER:
+    data_quality_manifest_entries: tuple[DataQualityInjectionManifestEntry, ...] = ()
+    if _data_quality_injection_is_active(
+        config=data_quality_config,
+        release_type=release_window.release_type,
+    ):
+        clean_tables: dict[str, list[dict[str, Any]]] = {}
+        for table_name in STUDENT_TABLE_ORDER:
+            clean_tables[table_name] = _load_table_rows(
+                session=session,
+                table_name=table_name,
+                context=context,
+                release_name=concrete_release_name,
+                activity_callback=activity_callback,
+                runtime_recorder=runtime_recorder,
+                instrumentation=instrumentation,
+            )
         if activity_callback is not None:
             activity_callback(
-                f"Writing parquet for {concrete_release_name}: {table_name}."
+                f"Applying data quality rules for {concrete_release_name}."
             )
-        files_list.append(
-            _write_table_rows(
-                release_dir=release_dir,
-                table_name=table_name,
-                row_dicts=injection_result.tables[table_name],
-                compression=compression,
-                release_name=concrete_release_name,
-                release_type=release_window.release_type,
-                snapshot_month=release_window.snapshot_month,
-                runtime_recorder=runtime_recorder,
-            )
+        _log_export_observation(
+            "data_quality_injection_start",
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month.isoformat(),
+            table_count=len(clean_tables),
+            row_count=_table_row_count(clean_tables),
         )
+        injection_metadata = _export_metric_metadata(
+            release_name=concrete_release_name,
+            table_name=None,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+        )
+        injection_observer = _build_data_quality_injection_observer(
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+            runtime_recorder=runtime_recorder,
+            activity_callback=activity_callback,
+        )
+        if runtime_recorder is None:
+            injection_result = inject_data_quality_issues(
+                tables=clean_tables,
+                config=data_quality_config,
+                release_context=release_context,
+                instrumentation_callback=injection_observer,
+            )
+        else:
+            with runtime_recorder.measure(
+                "inject_data_quality_issues",
+                input_count=_table_row_count(clean_tables),
+                metadata=injection_metadata,
+            ) as metric:
+                injection_result = inject_data_quality_issues(
+                    tables=clean_tables,
+                    config=data_quality_config,
+                    release_context=release_context,
+                    instrumentation_callback=injection_observer,
+                )
+                metric["output_count"] = _table_row_count(injection_result.tables)
+            runtime_recorder.flush()
+        data_quality_manifest_entries = injection_result.manifest_entries
+        _log_export_observation(
+            "data_quality_injection_end",
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month.isoformat(),
+            affected_rows=injection_result.summary.total_affected_rows,
+            affected_fields=injection_result.summary.total_affected_fields,
+            manifest_entry_count=len(injection_result.manifest_entries),
+            row_count=_table_row_count(injection_result.tables),
+        )
+        for table_name in STUDENT_TABLE_ORDER:
+            if activity_callback is not None:
+                activity_callback(
+                    f"Writing parquet for {concrete_release_name}: {table_name}."
+                )
+            files_list.append(
+                _write_table_rows(
+                    release_dir=release_dir,
+                    table_name=table_name,
+                    row_dicts=injection_result.tables[table_name],
+                    compression=compression,
+                    release_name=concrete_release_name,
+                    release_type=release_window.release_type,
+                    snapshot_month=release_window.snapshot_month,
+                    runtime_recorder=runtime_recorder,
+                )
+            )
+    else:
+        _log_export_observation(
+            "data_quality_injection_skipped",
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month.isoformat(),
+            effective_level=data_quality_config.effective_level_for_release(
+                release_window.release_type
+            ),
+        )
+        for table_name in STUDENT_TABLE_ORDER:
+            row_dicts = _load_table_rows(
+                session=session,
+                table_name=table_name,
+                context=context,
+                release_name=concrete_release_name,
+                activity_callback=activity_callback,
+                runtime_recorder=runtime_recorder,
+                instrumentation=instrumentation,
+            )
+            if activity_callback is not None:
+                activity_callback(
+                    f"Writing parquet for {concrete_release_name}: {table_name}."
+                )
+            files_list.append(
+                _write_table_rows(
+                    release_dir=release_dir,
+                    table_name=table_name,
+                    row_dicts=row_dicts,
+                    compression=compression,
+                    release_name=concrete_release_name,
+                    release_type=release_window.release_type,
+                    snapshot_month=release_window.snapshot_month,
+                    runtime_recorder=runtime_recorder,
+                )
+            )
+            del row_dicts
     files = tuple(files_list)
     manifest_path = release_dir / MANIFEST_FILE_NAME
     manifest_row_counts = {
@@ -371,7 +446,7 @@ def write_staged_release(
         release_dir=release_dir,
         manifest_path=manifest_path,
         files=files,
-        data_quality_manifest_entries=injection_result.manifest_entries,
+        data_quality_manifest_entries=data_quality_manifest_entries,
     )
 
 
@@ -734,6 +809,111 @@ def _build_export_runtime_recorder(
     )
 
 
+def _build_data_quality_injection_observer(
+    *,
+    release_name: str,
+    release_type: str,
+    snapshot_month: date | None,
+    runtime_recorder: RuntimeMetricRecorder | None,
+    activity_callback: ReleaseActivityCallback | None,
+) -> Callable[[str, Mapping[str, Any]], None]:
+    def observe(event_name: str, fields: Mapping[str, Any]) -> None:
+        event_fields = dict(fields)
+        phase_name = str(event_fields.get("phase_name") or event_name)
+        table_name = event_fields.get("table_name")
+        issue_type = event_fields.get("issue_type")
+        rss_mb = _current_rss_megabytes()
+        _log_export_observation(
+            f"data_quality_{event_name}",
+            release_name=release_name,
+            release_type=release_type,
+            snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+            rss_mb=rss_mb,
+            **event_fields,
+        )
+        if runtime_recorder is not None and (
+            event_name.endswith("_end") or event_name.endswith("_failed")
+        ):
+            elapsed_ms = event_fields.get("elapsed_ms")
+            if elapsed_ms is not None:
+                metadata = _export_metric_metadata(
+                    release_name=release_name,
+                    table_name=str(table_name) if table_name is not None else None,
+                    release_type=release_type,
+                    snapshot_month=snapshot_month,
+                )
+                metadata.update(
+                    {
+                        "event_name": event_name,
+                        "phase_name": phase_name,
+                        "issue_type": issue_type,
+                        "rss_mb": rss_mb,
+                        "row_count": event_fields.get("row_count"),
+                        "table_count": event_fields.get("table_count"),
+                        "target_count": event_fields.get("target_count"),
+                        "error": event_fields.get("error"),
+                    }
+                )
+                runtime_recorder.record_completed(
+                    f"data_quality_{phase_name}",
+                    elapsed_ms=int(elapsed_ms),
+                    input_count=_optional_metric_count(
+                        event_fields.get("input_count", event_fields.get("row_count"))
+                    ),
+                    output_count=_optional_metric_count(event_fields.get("output_count")),
+                    metadata=metadata,
+                )
+                runtime_recorder.flush()
+        if activity_callback is not None:
+            activity_callback(
+                _data_quality_activity_message(
+                    release_name=release_name,
+                    event_name=event_name,
+                    phase_name=phase_name,
+                    table_name=table_name,
+                    issue_type=issue_type,
+                    rss_mb=rss_mb,
+                )
+            )
+
+    return observe
+
+
+def _data_quality_activity_message(
+    *,
+    release_name: str,
+    event_name: str,
+    phase_name: str,
+    table_name: object,
+    issue_type: object,
+    rss_mb: float | None,
+) -> str:
+    parts = [
+        f"Data quality injection {event_name.replace('_', ' ')}",
+        f"phase={phase_name}",
+    ]
+    if table_name is not None:
+        parts.append(f"table={table_name}")
+    if issue_type is not None:
+        parts.append(f"issue={issue_type}")
+    if rss_mb is not None:
+        parts.append(f"rss_mb={rss_mb}")
+    parts.append(f"release={release_name}")
+    return ". ".join(parts) + "."
+
+
+def _data_quality_injection_is_active(
+    *,
+    config,
+    release_type: str,
+) -> bool:
+    return (
+        config.enabled
+        and config.effective_level_for_release(release_type) != "none"
+        and config.applies_to_release_type(release_type)
+    )
+
+
 def _export_metric_metadata(
     *,
     release_name: str,
@@ -750,6 +930,16 @@ def _export_metric_metadata(
     if snapshot_month is not None:
         metadata["snapshot_month"] = snapshot_month.isoformat()
     return metadata
+
+
+def _table_row_count(tables: Mapping[str, list[dict[str, Any]]]) -> int:
+    return sum(len(rows) for rows in tables.values())
+
+
+def _optional_metric_count(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _compiled_sql_text(

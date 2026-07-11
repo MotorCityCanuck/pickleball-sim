@@ -65,6 +65,73 @@ def _seed_incremental_match_shape(session) -> None:
     session.commit()
 
 
+def _enable_export_runtime_metrics(session) -> None:
+    session.execute(
+        text(
+            """
+            CREATE TABLE generation_runs (
+                id integer primary key,
+                generation_name varchar(255) not null,
+                seed_value bigint not null,
+                simulation_version varchar(100),
+                parameter_snapshot json,
+                started_at datetime,
+                completed_at datetime,
+                status varchar(30) not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version,
+                parameter_snapshot, status
+            ) VALUES (
+                1, 'instrumented export', 1, 'test', :parameter_snapshot, 'succeeded'
+            )
+            """
+        ),
+        {
+            "parameter_snapshot": json.dumps(
+                {
+                    "instrumentation": {
+                        "export_queries_enabled": True,
+                        "export_query_sql_text_enabled": True,
+                    }
+                }
+            )
+        },
+    )
+    session.execute(
+        text(
+            """
+            CREATE TABLE generation_runtime_metrics (
+                id integer primary key autoincrement,
+                generation_run_id bigint not null,
+                batch_id bigint,
+                stage_name varchar(100) not null,
+                subphase_name varchar(100) not null,
+                event_type varchar(30) not null,
+                started_at datetime not null,
+                completed_at datetime not null,
+                elapsed_ms bigint not null,
+                input_count bigint,
+                output_count bigint,
+                attempt_count bigint,
+                metadata_json json,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+    )
+    session.commit()
+
+
 def test_write_staged_release_family_emits_parquet_files_and_manifest(
     session,
     release_window,
@@ -104,6 +171,43 @@ def test_write_staged_release_family_emits_parquet_files_and_manifest(
     parquet_files = sorted(path.name for path in release.release_dir.glob("*.parquet"))
     assert parquet_files == sorted(f"{table_name}.parquet" for table_name in STUDENT_TABLE_ORDER)
     assert len(release.files) == len(STUDENT_TABLE_ORDER)
+
+
+def test_clean_write_staged_release_family_skips_data_quality_injection(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("clean exports should stream directly to parquet")
+
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer.inject_data_quality_issues",
+        fail_if_called,
+    )
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+        overwrite_existing=False,
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    assert len(result.releases) == 1
+    assert result.releases[0].data_quality_manifest_entries == ()
 
 
 def test_build_parameters_normalize_legacy_clean_alias(tmp_path):
@@ -155,71 +259,7 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
     tmp_path,
 ):
     seed_snapshot_query_data(session)
-    session.execute(
-        text(
-            """
-            CREATE TABLE generation_runs (
-                id integer primary key,
-                generation_name varchar(255) not null,
-                seed_value bigint not null,
-                simulation_version varchar(100),
-                parameter_snapshot json,
-                started_at datetime,
-                completed_at datetime,
-                status varchar(30) not null,
-                created_at datetime default current_timestamp not null,
-                updated_at datetime default current_timestamp not null
-            )
-            """
-        )
-    )
-    session.execute(
-        text(
-            """
-            INSERT INTO generation_runs (
-                id, generation_name, seed_value, simulation_version,
-                parameter_snapshot, status
-            ) VALUES (
-                1, 'instrumented export', 1, 'test', :parameter_snapshot, 'succeeded'
-            )
-            """
-        ),
-        {
-            "parameter_snapshot": json.dumps(
-                {
-                    "instrumentation": {
-                        "export_queries_enabled": True,
-                        "export_query_sql_text_enabled": True,
-                    }
-                }
-            )
-        },
-    )
-    session.commit()
-    session.execute(
-        text(
-            """
-            CREATE TABLE generation_runtime_metrics (
-                id integer primary key autoincrement,
-                generation_run_id bigint not null,
-                batch_id bigint,
-                stage_name varchar(100) not null,
-                subphase_name varchar(100) not null,
-                event_type varchar(30) not null,
-                started_at datetime not null,
-                completed_at datetime not null,
-                elapsed_ms bigint not null,
-                input_count bigint,
-                output_count bigint,
-                attempt_count bigint,
-                metadata_json json,
-                created_at datetime default current_timestamp not null,
-                updated_at datetime default current_timestamp not null
-            )
-            """
-        )
-    )
-    session.commit()
+    _enable_export_runtime_metrics(session)
 
     build_parameters = StudentDatasetBuildParameters(
         generation_run_id=1,
@@ -279,6 +319,61 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
         .count()
         == 1
     )
+
+
+def test_write_staged_release_family_records_data_quality_injection_metrics_when_enabled(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    _enable_export_runtime_metrics(session)
+    activity_messages: list[str] = []
+
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+        activity_callback=activity_messages.append,
+    )
+
+    subphase_names = {
+        metric.subphase_name
+        for metric in session.query(GenerationRuntimeMetric)
+        .filter(GenerationRuntimeMetric.stage_name == "student_dataset_export")
+        .all()
+    }
+
+    assert "inject_data_quality_issues" in subphase_names
+    assert "data_quality_copy_original_tables" in subphase_names
+    assert "data_quality_copy_injected_tables" in subphase_names
+    assert "data_quality_validate_injected_tables" in subphase_names
+    assert any(
+        message.startswith("Data quality injection copy original tables start")
+        for message in activity_messages
+    )
+    copy_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "data_quality_copy_original_tables",
+        )
+        .one()
+    )
+    assert copy_metric.input_count is not None
+    assert "rss_mb" in copy_metric.metadata_json
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(

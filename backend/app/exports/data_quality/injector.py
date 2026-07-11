@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 import logging
-from typing import Any, Mapping
-import copy
+from time import perf_counter
+from typing import Any, Callable, Iterator, Mapping
 import math
 import random
 
@@ -47,6 +48,7 @@ from .validators import DataQualityInjectionValidationResult, validate_injected_
 
 
 logger = logging.getLogger("uvicorn.error")
+InjectionInstrumentationCallback = Callable[[str, Mapping[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -91,19 +93,12 @@ def inject_data_quality_issues(
     tables: Mapping[str, list[dict[str, Any]]],
     config: DataQualityInjectionConfig,
     release_context: DataQualityReleaseContext,
+    instrumentation_callback: InjectionInstrumentationCallback | None = None,
 ) -> DataQualityInjectionResult:
     """Inject bounded, deterministic quality issues into exported table rows."""
 
     requested_level = normalize_data_quality_level(config.level)
     effective_level = config.effective_level_for_release(release_context.release_type)
-    original_tables = {
-        table_name: [copy.deepcopy(row) for row in rows]
-        for table_name, rows in tables.items()
-    }
-    injected_tables = {
-        table_name: [copy.deepcopy(row) for row in rows]
-        for table_name, rows in tables.items()
-    }
     if (
         not config.enabled
         or effective_level == "none"
@@ -121,18 +116,37 @@ def inject_data_quality_issues(
             table_issue_type_candidate_rows={},
             table_row_deltas={table_name: 0 for table_name in tables},
         )
-        validation_result = validate_injected_tables(
-            original_tables=original_tables,
-            injected_tables=injected_tables,
-            config=config,
-            summary=summary,
-        )
         return DataQualityInjectionResult(
-            tables=injected_tables,
+            tables=tables,
             manifest_entries=(),
             summary=summary,
-            validation_result=validation_result,
+            validation_result=DataQualityInjectionValidationResult(
+                status="passed",
+                checks=(),
+            ),
         )
+    with _measure_injection_phase(
+        instrumentation_callback,
+        "copy_original_tables",
+        table_count=len(tables),
+        input_count=_total_row_count(tables),
+    ) as metric:
+        original_tables = {
+            table_name: [dict(row) for row in rows]
+            for table_name, rows in tables.items()
+        }
+        metric["output_count"] = _total_row_count(original_tables)
+    with _measure_injection_phase(
+        instrumentation_callback,
+        "copy_injected_tables",
+        table_count=len(tables),
+        input_count=_total_row_count(tables),
+    ) as metric:
+        injected_tables = {
+            table_name: [dict(row) for row in rows]
+            for table_name, rows in tables.items()
+        }
+        metric["output_count"] = _total_row_count(injected_tables)
 
     state = _InjectionState(
         config=config,
@@ -148,6 +162,7 @@ def inject_data_quality_issues(
         table_issue_type_candidate_rows={},
         issue_type_field_count=defaultdict(int),
         table_row_deltas=defaultdict(int),
+        instrumentation_callback=instrumentation_callback,
     )
     logger.info(
         "Student dataset data quality injection start release_name=%s release_type=%s effective_level=%s table_count=%s",
@@ -177,12 +192,18 @@ def inject_data_quality_issues(
         ),
         table_row_deltas=dict(state.table_row_deltas),
     )
-    validation_result = validate_injected_tables(
-        original_tables=original_tables,
-        injected_tables=injected_tables,
-        config=config,
-        summary=summary,
-    )
+    with _measure_injection_phase(
+        instrumentation_callback,
+        "validate_injected_tables",
+        table_count=len(injected_tables),
+        input_count=_total_row_count(injected_tables),
+    ):
+        validation_result = validate_injected_tables(
+            original_tables=original_tables,
+            injected_tables=injected_tables,
+            config=config,
+            summary=summary,
+        )
     return DataQualityInjectionResult(
         tables=injected_tables,
         manifest_entries=tuple(state.manifest_entries),
@@ -206,6 +227,7 @@ class _InjectionState:
     table_issue_type_candidate_rows: dict[tuple[str, str], int]
     issue_type_field_count: dict[str, int]
     table_row_deltas: dict[str, int]
+    instrumentation_callback: InjectionInstrumentationCallback | None = None
 
 
 def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
@@ -253,12 +275,21 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
                 issue_type,
             )
         )
-        candidates = [
-            (row_index, column_name)
-            for row_index, row in enumerate(rows)
-            for column_name in columns
-            if row.get(column_name) is not None
-        ]
+        with _measure_injection_phase(
+            state.instrumentation_callback,
+            "issue_candidate_build",
+            table_name=table_name,
+            issue_type=issue_type,
+            row_count=len(rows),
+            target_count=target_count,
+        ) as metric:
+            candidates = [
+                (row_index, column_name)
+                for row_index, row in enumerate(rows)
+                for column_name in columns
+                if row.get(column_name) is not None
+            ]
+            metric["output_count"] = len(candidates)
         logger.info(
             "Student dataset data quality issue_start table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s",
             table_name,
@@ -267,49 +298,66 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             len(candidates),
             target_count,
         )
-        rng.shuffle(candidates)
+        with _measure_injection_phase(
+            state.instrumentation_callback,
+            "issue_candidate_shuffle",
+            table_name=table_name,
+            issue_type=issue_type,
+            input_count=len(candidates),
+            target_count=target_count,
+        ):
+            rng.shuffle(candidates)
         applied = 0
-        for row_index, column_name in candidates:
-            if applied >= target_count:
-                break
-            row = rows[row_index]
-            pk_value = row[primary_key_column(table_name)]
-            row_key = (table_name, pk_value)
-            if state.row_field_counts[row_key] >= state.config.global_limits.max_affected_fields_per_row:
-                continue
-            original_value = row.get(column_name)
-            injected_value = _mutated_value(
-                issue_type=issue_type,
-                table_name=table_name,
-                column_name=column_name,
-                row=row,
-                original_value=original_value,
-                rng=rng,
-            )
-            if injected_value == original_value:
-                continue
-            row[column_name] = injected_value
-            state.row_field_counts[row_key] += 1
-            state.affected_rows.add(row_key)
-            state.issue_type_rows[issue_type].add(row_key)
-            state.table_issue_type_rows[(table_name, issue_type)].add(row_key)
-            state.issue_type_field_count[issue_type] += 1
-            state.manifest_entries.append(
-                DataQualityInjectionManifestEntry.create(
-                    release_id=state.release_context.release_id,
-                    release_name=state.release_context.release_name,
-                    table_name=table_name,
-                    record_primary_key=pk_value,
-                    column_name=column_name,
+        with _measure_injection_phase(
+            state.instrumentation_callback,
+            "issue_apply",
+            table_name=table_name,
+            issue_type=issue_type,
+            input_count=len(candidates),
+            target_count=target_count,
+        ) as metric:
+            for row_index, column_name in candidates:
+                if applied >= target_count:
+                    break
+                row = rows[row_index]
+                pk_value = row[primary_key_column(table_name)]
+                row_key = (table_name, pk_value)
+                if state.row_field_counts[row_key] >= state.config.global_limits.max_affected_fields_per_row:
+                    continue
+                original_value = row.get(column_name)
+                injected_value = _mutated_value(
                     issue_type=issue_type,
+                    table_name=table_name,
+                    column_name=column_name,
+                    row=row,
                     original_value=original_value,
-                    injected_value=injected_value,
-                    injection_level=state.effective_level,
-                    random_seed=state.config.random_seed,
-                    rule_id=f"{table_name}.{issue_type}",
+                    rng=rng,
                 )
-            )
-            applied += 1
+                if injected_value == original_value:
+                    continue
+                row[column_name] = injected_value
+                state.row_field_counts[row_key] += 1
+                state.affected_rows.add(row_key)
+                state.issue_type_rows[issue_type].add(row_key)
+                state.table_issue_type_rows[(table_name, issue_type)].add(row_key)
+                state.issue_type_field_count[issue_type] += 1
+                state.manifest_entries.append(
+                    DataQualityInjectionManifestEntry.create(
+                        release_id=state.release_context.release_id,
+                        release_name=state.release_context.release_name,
+                        table_name=table_name,
+                        record_primary_key=pk_value,
+                        column_name=column_name,
+                        issue_type=issue_type,
+                        original_value=original_value,
+                        injected_value=injected_value,
+                        injection_level=state.effective_level,
+                        random_seed=state.config.random_seed,
+                        rule_id=f"{table_name}.{issue_type}",
+                    )
+                )
+                applied += 1
+            metric["output_count"] = applied
         logger.info(
             "Student dataset data quality issue_end table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s applied_count=%s",
             table_name,
@@ -368,116 +416,153 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
             ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
         )
     )
-    match_rows = list(matches)
-    rng.shuffle(match_rows)
+    with _measure_injection_phase(
+        state.instrumentation_callback,
+        "duplicate_like_match_copy_shuffle",
+        table_name="matches",
+        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        input_count=len(matches),
+        target_count=target_count,
+    ) as metric:
+        match_rows = list(matches)
+        rng.shuffle(match_rows)
+        metric["output_count"] = len(match_rows)
 
     match_teams = state.tables["match_teams"]
     match_team_players = state.tables["match_team_players"]
     match_games = state.tables["match_games"]
+    with _measure_injection_phase(
+        state.instrumentation_callback,
+        "duplicate_like_lookup_build",
+        table_name="matches",
+        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        input_count=len(match_teams) + len(match_team_players) + len(match_games),
+        target_count=target_count,
+    ) as metric:
+        match_teams_by_match_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
+        for row in match_teams:
+            match_teams_by_match_id[row["match_id"]].append(row)
+        players_by_match_team_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
+        for row in match_team_players:
+            players_by_match_team_id[row["match_team_id"]].append(row)
+        games_by_match_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
+        for row in match_games:
+            games_by_match_id[row["match_id"]].append(row)
+        metric["output_count"] = (
+            len(match_teams_by_match_id)
+            + len(players_by_match_team_id)
+            + len(games_by_match_id)
+        )
     next_match_id = next_primary_key(matches, "matches")
     next_match_team_id = next_primary_key(match_teams, "match_teams")
     next_match_team_player_id = next_primary_key(match_team_players, "match_team_players")
     next_match_game_id = next_primary_key(match_games, "match_games")
 
     applied = 0
-    for source_match in match_rows:
-        if applied >= target_count:
-            break
-        source_match_id = source_match["id"]
-        source_match_teams = [
-            row for row in match_teams if row["match_id"] == source_match_id
-        ]
-        if len(source_match_teams) != 2:
-            continue
-        source_match_team_ids = {row["id"] for row in source_match_teams}
-        source_players = [
-            row for row in match_team_players if row["match_team_id"] in source_match_team_ids
-        ]
-        source_games = [
-            row for row in match_games if row["match_id"] == source_match_id
-        ]
+    with _measure_injection_phase(
+        state.instrumentation_callback,
+        "duplicate_like_apply",
+        table_name="matches",
+        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        input_count=len(match_rows),
+        target_count=target_count,
+    ) as metric:
+        for source_match in match_rows:
+            if applied >= target_count:
+                break
+            source_match_id = source_match["id"]
+            source_match_teams = match_teams_by_match_id.get(source_match_id, [])
+            if len(source_match_teams) != 2:
+                continue
+            source_players = [
+                row
+                for team_row in source_match_teams
+                for row in players_by_match_team_id.get(team_row["id"], [])
+            ]
+            source_games = games_by_match_id.get(source_match_id, [])
 
-        team_id_map: dict[int, int] = {}
-        new_match = copy.deepcopy(source_match)
-        new_match["id"] = next_match_id
-        next_match_id += 1
+            team_id_map: dict[int, int] = {}
+            new_match = dict(source_match)
+            new_match["id"] = next_match_id
+            next_match_id += 1
 
-        new_match_teams: list[dict[str, Any]] = []
-        for team_row in source_match_teams:
-            cloned_team = copy.deepcopy(team_row)
-            source_team_id = int(team_row["id"])
-            cloned_team["id"] = next_match_team_id
-            team_id_map[source_team_id] = next_match_team_id
-            next_match_team_id += 1
-            cloned_team["match_id"] = new_match["id"]
-            new_match_teams.append(cloned_team)
-        winning_team_id = source_match.get("winning_team_id")
-        if winning_team_id is not None:
-            new_match["winning_team_id"] = team_id_map.get(int(winning_team_id))
+            new_match_teams: list[dict[str, Any]] = []
+            for team_row in source_match_teams:
+                cloned_team = dict(team_row)
+                source_team_id = int(team_row["id"])
+                cloned_team["id"] = next_match_team_id
+                team_id_map[source_team_id] = next_match_team_id
+                next_match_team_id += 1
+                cloned_team["match_id"] = new_match["id"]
+                new_match_teams.append(cloned_team)
+            winning_team_id = source_match.get("winning_team_id")
+            if winning_team_id is not None:
+                new_match["winning_team_id"] = team_id_map.get(int(winning_team_id))
 
-        new_match_team_players: list[dict[str, Any]] = []
-        for player_row in source_players:
-            cloned_player = copy.deepcopy(player_row)
-            cloned_player["id"] = next_match_team_player_id
-            next_match_team_player_id += 1
-            cloned_player["match_team_id"] = team_id_map[int(player_row["match_team_id"])]
-            new_match_team_players.append(cloned_player)
+            new_match_team_players: list[dict[str, Any]] = []
+            for player_row in source_players:
+                cloned_player = dict(player_row)
+                cloned_player["id"] = next_match_team_player_id
+                next_match_team_player_id += 1
+                cloned_player["match_team_id"] = team_id_map[int(player_row["match_team_id"])]
+                new_match_team_players.append(cloned_player)
 
-        new_match_games: list[dict[str, Any]] = []
-        for game_row in source_games:
-            cloned_game = copy.deepcopy(game_row)
-            cloned_game["id"] = next_match_game_id
-            next_match_game_id += 1
-            cloned_game["match_id"] = new_match["id"]
-            new_match_games.append(cloned_game)
+            new_match_games: list[dict[str, Any]] = []
+            for game_row in source_games:
+                cloned_game = dict(game_row)
+                cloned_game["id"] = next_match_game_id
+                next_match_game_id += 1
+                cloned_game["match_id"] = new_match["id"]
+                new_match_games.append(cloned_game)
 
-        matches.append(new_match)
-        match_teams.extend(new_match_teams)
-        match_team_players.extend(new_match_team_players)
-        match_games.extend(new_match_games)
+            matches.append(new_match)
+            match_teams.extend(new_match_teams)
+            match_team_players.extend(new_match_team_players)
+            match_games.extend(new_match_games)
 
-        state.table_row_deltas["matches"] += 1
-        state.table_row_deltas["match_teams"] += len(new_match_teams)
-        state.table_row_deltas["match_team_players"] += len(new_match_team_players)
-        state.table_row_deltas["match_games"] += len(new_match_games)
-        row_key = ("matches", source_match_id)
-        state.affected_rows.add(row_key)
-        state.issue_type_rows[ISSUE_TYPE_DUPLICATE_LIKE_ROWS].add(row_key)
-        state.table_issue_type_rows[("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS)].add(
-            row_key
-        )
-
-        for table_name, original_pk, injected_pk in (
-            ("matches", source_match_id, new_match["id"]),
-            *(
-                ("match_teams", original_team["id"], cloned_team["id"])
-                for original_team, cloned_team in zip(source_match_teams, new_match_teams, strict=False)
-            ),
-            *(
-                ("match_team_players", original_player["id"], cloned_player["id"])
-                for original_player, cloned_player in zip(source_players, new_match_team_players, strict=False)
-            ),
-            *(
-                ("match_games", original_game["id"], cloned_game["id"])
-                for original_game, cloned_game in zip(source_games, new_match_games, strict=False)
-            ),
-        ):
-            state.manifest_entries.append(
-                DataQualityInjectionManifestEntry.create(
-                    release_id=state.release_context.release_id,
-                    release_name=state.release_context.release_name,
-                    table_name=table_name,
-                    record_primary_key=injected_pk,
-                    column_name="__row__",
-                    issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
-                    original_value={"source_primary_key": original_pk},
-                    injected_value={"duplicated_primary_key": injected_pk},
-                    injection_level=state.effective_level,
-                    random_seed=state.config.random_seed,
-                    rule_id=f"{table_name}.{ISSUE_TYPE_DUPLICATE_LIKE_ROWS}",
-                )
+            state.table_row_deltas["matches"] += 1
+            state.table_row_deltas["match_teams"] += len(new_match_teams)
+            state.table_row_deltas["match_team_players"] += len(new_match_team_players)
+            state.table_row_deltas["match_games"] += len(new_match_games)
+            row_key = ("matches", source_match_id)
+            state.affected_rows.add(row_key)
+            state.issue_type_rows[ISSUE_TYPE_DUPLICATE_LIKE_ROWS].add(row_key)
+            state.table_issue_type_rows[("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS)].add(
+                row_key
             )
-        applied += 1
+
+            for table_name, original_pk, injected_pk in (
+                ("matches", source_match_id, new_match["id"]),
+                *(
+                    ("match_teams", original_team["id"], cloned_team["id"])
+                    for original_team, cloned_team in zip(source_match_teams, new_match_teams, strict=False)
+                ),
+                *(
+                    ("match_team_players", original_player["id"], cloned_player["id"])
+                    for original_player, cloned_player in zip(source_players, new_match_team_players, strict=False)
+                ),
+                *(
+                    ("match_games", original_game["id"], cloned_game["id"])
+                    for original_game, cloned_game in zip(source_games, new_match_games, strict=False)
+                ),
+            ):
+                state.manifest_entries.append(
+                    DataQualityInjectionManifestEntry.create(
+                        release_id=state.release_context.release_id,
+                        release_name=state.release_context.release_name,
+                        table_name=table_name,
+                        record_primary_key=injected_pk,
+                        column_name="__row__",
+                        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+                        original_value={"source_primary_key": original_pk},
+                        injected_value={"duplicated_primary_key": injected_pk},
+                        injection_level=state.effective_level,
+                        random_seed=state.config.random_seed,
+                        rule_id=f"{table_name}.{ISSUE_TYPE_DUPLICATE_LIKE_ROWS}",
+                    )
+                )
+            applied += 1
+        metric["output_count"] = applied
     logger.info(
         "Student dataset data quality duplicate_like_rows_end applied_count=%s match_row_delta=%s match_team_row_delta=%s match_team_player_row_delta=%s match_game_row_delta=%s",
         applied,
@@ -550,3 +635,50 @@ def _nested_issue_totals(
     for (table_name, issue_type), candidate_total in totals.items():
         nested.setdefault(table_name, {})[issue_type] = candidate_total
     return nested
+
+
+@contextmanager
+def _measure_injection_phase(
+    callback: InjectionInstrumentationCallback | None,
+    phase_name: str,
+    **fields: Any,
+) -> Iterator[dict[str, Any]]:
+    metric = dict(fields)
+    _emit_injection_event(callback, f"{phase_name}_start", phase_name=phase_name, **metric)
+    started = perf_counter()
+    try:
+        yield metric
+    except Exception as exc:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        _emit_injection_event(
+            callback,
+            f"{phase_name}_failed",
+            phase_name=phase_name,
+            elapsed_ms=max(elapsed_ms, 0),
+            error=str(exc),
+            **metric,
+        )
+        raise
+    else:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        _emit_injection_event(
+            callback,
+            f"{phase_name}_end",
+            phase_name=phase_name,
+            elapsed_ms=max(elapsed_ms, 0),
+            **metric,
+        )
+
+
+def _emit_injection_event(
+    callback: InjectionInstrumentationCallback | None,
+    event_name: str,
+    **fields: Any,
+) -> None:
+    if callback is None:
+        return
+    callback(event_name, fields)
+
+
+def _total_row_count(tables: Mapping[str, list[dict[str, Any]]]) -> int:
+    return sum(len(rows) for rows in tables.values())

@@ -120,11 +120,11 @@ def test_issue_rate_validation_uses_table_issue_profile_over_release_level():
         },
         table_issue_type_affected_rows={
             "matches": {ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 1},
-            "players": {ISSUE_TYPE_NAME_CASE_VARIANTS: 1},
+            "player_master": {ISSUE_TYPE_NAME_CASE_VARIANTS: 1},
         },
         table_issue_type_candidate_rows={
             "matches": {ISSUE_TYPE_MISSING_OPTIONAL_VALUES: 100},
-            "players": {ISSUE_TYPE_NAME_CASE_VARIANTS: 100},
+            "player_master": {ISSUE_TYPE_NAME_CASE_VARIANTS: 100},
         },
         table_row_deltas={},
     )
@@ -132,7 +132,7 @@ def test_issue_rate_validation_uses_table_issue_profile_over_release_level():
     checks = _validate_issue_rates(
         {
             "matches": [{} for _ in range(100)],
-            "players": [{} for _ in range(100)],
+            "player_master": [{} for _ in range(100)],
         },
         config,
         summary,
