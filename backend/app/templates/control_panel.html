@@ -238,9 +238,22 @@
                 return `student-dataset-export-complete:v3:${completionKey}`;
             }
 
+            function markStudentExportCompletionSeen(modal) {
+                if (!modal || !modal.isConnected) {
+                    return;
+                }
+                studentExportCompletionStorageSet(
+                    studentExportCompletionStorageKey(modal),
+                    "shown",
+                );
+            }
+
             window.closeStudentExportCompletionModal = function closeStudentExportCompletionModal() {
                 const modal = document.getElementById("student-export-completion-modal");
                 if (modal) {
+                    if (modal.style.display !== "none") {
+                        markStudentExportCompletionSeen(modal);
+                    }
                     modal.style.display = "none";
                     modal.setAttribute("aria-hidden", "true");
                 }
@@ -278,7 +291,6 @@
                     modal.removeAttribute("aria-hidden");
                     document.body.dataset.studentExportCompletionModalOpen = "true";
                     document.body.style.overflow = "hidden";
-                    studentExportCompletionStorageSet(storageKey, "shown");
                 }, 80);
             };
 

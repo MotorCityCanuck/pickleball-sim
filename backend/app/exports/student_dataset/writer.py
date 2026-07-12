@@ -49,6 +49,7 @@ from app.exports.data_quality.config import (
 )
 from app.exports.data_quality.injector import (
     ROW_RATE_ISSUES,
+    _count_candidate_locations,
     _candidate_sample_limit,
     _measure_injection_phase,
     _mutated_value,
