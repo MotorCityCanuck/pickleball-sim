@@ -1,5 +1,6 @@
 """Tests for clean-vs-tainted student export comparison."""
 
+from decimal import Decimal
 from pathlib import Path
 import shutil
 import sys
@@ -13,6 +14,10 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.exports.data_quality import compare_export_locations  # noqa: E402
+from app.exports.data_quality.comparison import (  # noqa: E402
+    _looks_like_numeric_outlier_change,
+    _looks_like_rounding_variant,
+)
 from app.exports.student_dataset import (  # noqa: E402
     StudentDatasetBuildParameters,
     write_staged_release_family,
@@ -123,6 +128,17 @@ def test_compare_export_locations_detects_missingness_variants_and_duplicates(
     matches_table = next(table for table in release.tables if table.table_name == "matches")
     assert matches_table.row_delta == 1
     assert matches_table.duplicate_like_extra_row_count == 1
+
+
+def test_decimal_numeric_comparison_classifiers_detect_expected_changes():
+    assert _looks_like_rounding_variant(
+        Decimal("1500.12345"),
+        Decimal("1500.12"),
+    )
+    assert _looks_like_numeric_outlier_change(
+        Decimal("1500.000"),
+        Decimal("1800.000"),
+    )
 
 
 def _write_rows(path: Path, rows: list[dict], column_names: list[str]) -> None:

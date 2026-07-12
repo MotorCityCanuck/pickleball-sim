@@ -44,6 +44,7 @@ from .validation import StudentDatasetValidationResult, validate_staged_release
 
 MANIFEST_FILE_NAME = "manifest.json"
 DEFAULT_PARQUET_COMPRESSION = "snappy"
+EXPORT_RSS_GUARD_ENV_VAR = "STUDENT_DATASET_EXPORT_RSS_GUARD_MB"
 ReleaseProgressCallback = Callable[[str, int, int], None]
 ReleaseActivityCallback = Callable[[str], None]
 logger = logging.getLogger("uvicorn.error")
@@ -51,6 +52,10 @@ logger = logging.getLogger("uvicorn.error")
 
 class StudentDatasetWriteError(RuntimeError):
     """Raised when staged student dataset files cannot be written."""
+
+
+class StudentDatasetExportMemoryLimitError(StudentDatasetWriteError):
+    """Raised when the export exceeds its configured RSS guard."""
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,7 @@ class ExportInstrumentationSettings:
 
     enabled: bool
     capture_sql_text: bool
+    rss_guard_mb: float | None = None
 
 
 def create_staging_root(output_root: Path, release_name: str) -> Path:
@@ -232,6 +238,7 @@ def write_staged_release(
     """Write one release folder and manifest under an existing staging root."""
 
     concrete_release_name = f"{release_name}{release_window.folder_suffix}"
+    rss_guard_mb = instrumentation.rss_guard_mb if instrumentation is not None else None
     release_dir = staging_root / concrete_release_name
     release_dir.mkdir(parents=True, exist_ok=False)
     _log_export_observation(
@@ -272,11 +279,20 @@ def write_staged_release(
                 activity_callback=activity_callback,
                 runtime_recorder=runtime_recorder,
                 instrumentation=instrumentation,
+                rss_guard_mb=rss_guard_mb,
             )
         if activity_callback is not None:
             activity_callback(
                 f"Applying data quality rules for {concrete_release_name}."
             )
+        _check_export_rss_guard(
+            rss_guard_mb=rss_guard_mb,
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+            phase_name="before_data_quality_injection",
+            activity_callback=activity_callback,
+        )
         _log_export_observation(
             "data_quality_injection_start",
             release_name=concrete_release_name,
@@ -297,6 +313,7 @@ def write_staged_release(
             snapshot_month=release_window.snapshot_month,
             runtime_recorder=runtime_recorder,
             activity_callback=activity_callback,
+            rss_guard_mb=rss_guard_mb,
         )
         if runtime_recorder is None:
             injection_result = inject_data_quality_issues(
@@ -304,6 +321,7 @@ def write_staged_release(
                 config=data_quality_config,
                 release_context=release_context,
                 instrumentation_callback=injection_observer,
+                copy_tables=False,
             )
         else:
             with runtime_recorder.measure(
@@ -316,8 +334,10 @@ def write_staged_release(
                     config=data_quality_config,
                     release_context=release_context,
                     instrumentation_callback=injection_observer,
+                    copy_tables=False,
                 )
                 metric["output_count"] = _table_row_count(injection_result.tables)
+                _record_metric_rss(metric)
             runtime_recorder.flush()
         data_quality_manifest_entries = injection_result.manifest_entries
         _log_export_observation(
@@ -345,6 +365,8 @@ def write_staged_release(
                     release_type=release_window.release_type,
                     snapshot_month=release_window.snapshot_month,
                     runtime_recorder=runtime_recorder,
+                    activity_callback=activity_callback,
+                    rss_guard_mb=rss_guard_mb,
                 )
             )
     else:
@@ -366,6 +388,7 @@ def write_staged_release(
                 activity_callback=activity_callback,
                 runtime_recorder=runtime_recorder,
                 instrumentation=instrumentation,
+                rss_guard_mb=rss_guard_mb,
             )
             if activity_callback is not None:
                 activity_callback(
@@ -381,6 +404,8 @@ def write_staged_release(
                     release_type=release_window.release_type,
                     snapshot_month=release_window.snapshot_month,
                     runtime_recorder=runtime_recorder,
+                    activity_callback=activity_callback,
+                    rss_guard_mb=rss_guard_mb,
                 )
             )
             del row_dicts
@@ -411,13 +436,22 @@ def write_staged_release(
             "validate_release_folder",
             output_count=len(manifest_row_counts),
             metadata=validation_metadata,
-        ):
+        ) as metric:
             validation_result = validate_staged_release(
                 release_dir=release_dir,
                 release_window=release_window,
                 manifest_row_counts=manifest_row_counts,
             )
+            _record_metric_rss(metric)
         runtime_recorder.flush()
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=concrete_release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month,
+        phase_name="after_validate_release_folder",
+        activity_callback=activity_callback,
+    )
     manifest = _release_manifest(
         release_name=concrete_release_name,
         release_window=release_window,
@@ -459,6 +493,7 @@ def _load_table_rows(
     activity_callback: ReleaseActivityCallback | None = None,
     runtime_recorder: RuntimeMetricRecorder | None = None,
     instrumentation: ExportInstrumentationSettings | None = None,
+    rss_guard_mb: float | None = None,
 ) -> list[dict[str, Any]]:
     projection = PROJECTION_BY_TABLE[table_name]
     if activity_callback is not None:
@@ -516,6 +551,7 @@ def _load_table_rows(
         ) as metric:
             rows = session.execute(query).mappings().all()
             metric["output_count"] = len(rows)
+            _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
         "source_query_end",
@@ -525,6 +561,15 @@ def _load_table_rows(
         snapshot_month=context.release_window.snapshot_month.isoformat(),
         row_count=len(rows),
         elapsed_ms=int((perf_counter() - query_started) * 1000),
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+        phase_name="after_source_query",
+        table_name=table_name,
+        activity_callback=activity_callback,
     )
     if activity_callback is not None:
         activity_callback(
@@ -555,6 +600,7 @@ def _load_table_rows(
                 for row in rows
             ]
             metric["output_count"] = len(normalized_rows)
+            _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
         "normalize_source_rows_end",
@@ -564,6 +610,15 @@ def _load_table_rows(
         snapshot_month=context.release_window.snapshot_month.isoformat(),
         row_count=len(normalized_rows),
         elapsed_ms=int((perf_counter() - normalize_started) * 1000),
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+        phase_name="after_normalize_source_rows",
+        table_name=table_name,
+        activity_callback=activity_callback,
     )
     if activity_callback is not None:
         activity_callback(
@@ -595,6 +650,8 @@ def _write_table_rows(
     release_type: str,
     snapshot_month: date | None,
     runtime_recorder: RuntimeMetricRecorder | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+    rss_guard_mb: float | None = None,
 ) -> StudentDatasetFileManifest:
     projection = PROJECTION_BY_TABLE[table_name]
     metadata = _export_metric_metadata(
@@ -632,6 +689,7 @@ def _write_table_rows(
                 }
             )
             metric["output_count"] = table.num_rows
+            _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
         "build_parquet_table_end",
@@ -641,6 +699,15 @@ def _write_table_rows(
         snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
         row_count=table.num_rows,
         elapsed_ms=int((perf_counter() - build_started) * 1000),
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
+        phase_name="after_build_parquet_table",
+        table_name=table_name,
+        activity_callback=activity_callback,
     )
     file_path = release_dir / projection.output_file
     write_started = perf_counter()
@@ -661,8 +728,9 @@ def _write_table_rows(
             input_count=table.num_rows,
             output_count=table.num_rows,
             metadata=metadata,
-        ):
+        ) as metric:
             pq.write_table(table, file_path, compression=compression)
+            _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
         "write_parquet_file_end",
@@ -674,6 +742,15 @@ def _write_table_rows(
         elapsed_ms=int((perf_counter() - write_started) * 1000),
         file_path=str(file_path),
         file_size_bytes=file_path.stat().st_size if file_path.exists() else None,
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
+        phase_name="after_write_parquet_file",
+        table_name=table_name,
+        activity_callback=activity_callback,
     )
     return StudentDatasetFileManifest(
         table_name=table_name,
@@ -768,6 +845,7 @@ def _resolve_export_instrumentation_settings(
     session: Session,
     generation_run_id: int,
 ) -> ExportInstrumentationSettings:
+    env_rss_guard_mb = _optional_positive_float(os.getenv(EXPORT_RSS_GUARD_ENV_VAR))
     try:
         generation_run = session.get(GenerationRun, generation_run_id)
     except SQLAlchemyError:
@@ -783,14 +861,19 @@ def _resolve_export_instrumentation_settings(
         return ExportInstrumentationSettings(
             enabled=False,
             capture_sql_text=False,
+            rss_guard_mb=env_rss_guard_mb,
         )
     enabled = instrumentation.get("export_queries_enabled", False)
     capture_sql_text = instrumentation.get("export_query_sql_text_enabled", False)
+    rss_guard_mb = _optional_positive_float(
+        instrumentation.get("export_rss_guard_mb")
+    )
     return ExportInstrumentationSettings(
         enabled=bool(enabled) if isinstance(enabled, bool) else False,
         capture_sql_text=bool(capture_sql_text)
         if isinstance(capture_sql_text, bool)
         else False,
+        rss_guard_mb=rss_guard_mb if rss_guard_mb is not None else env_rss_guard_mb,
     )
 
 
@@ -816,6 +899,7 @@ def _build_data_quality_injection_observer(
     snapshot_month: date | None,
     runtime_recorder: RuntimeMetricRecorder | None,
     activity_callback: ReleaseActivityCallback | None,
+    rss_guard_mb: float | None,
 ) -> Callable[[str, Mapping[str, Any]], None]:
     def observe(event_name: str, fields: Mapping[str, Any]) -> None:
         event_fields = dict(fields)
@@ -850,7 +934,20 @@ def _build_data_quality_injection_observer(
                         "rss_mb": rss_mb,
                         "row_count": event_fields.get("row_count"),
                         "table_count": event_fields.get("table_count"),
+                        "copy_mode": event_fields.get("copy_mode"),
                         "target_count": event_fields.get("target_count"),
+                        "candidate_count": event_fields.get("candidate_count"),
+                        "sampled_count": event_fields.get("sampled_count"),
+                        "source_match_count": event_fields.get("source_match_count"),
+                        "source_match_team_count": event_fields.get(
+                            "source_match_team_count"
+                        ),
+                        "applied_count": event_fields.get("applied_count"),
+                        "noop_count": event_fields.get("noop_count"),
+                        "skipped_row_limit_count": event_fields.get(
+                            "skipped_row_limit_count"
+                        ),
+                        "selection_strategy": event_fields.get("selection_strategy"),
                         "error": event_fields.get("error"),
                     }
                 )
@@ -875,6 +972,15 @@ def _build_data_quality_injection_observer(
                     rss_mb=rss_mb,
                 )
             )
+        _check_export_rss_guard(
+            rss_guard_mb=rss_guard_mb,
+            release_name=release_name,
+            release_type=release_type,
+            snapshot_month=snapshot_month,
+            phase_name=phase_name,
+            table_name=str(table_name) if table_name is not None else None,
+            activity_callback=activity_callback,
+        )
 
     return observe
 
@@ -932,6 +1038,12 @@ def _export_metric_metadata(
     return metadata
 
 
+def _record_metric_rss(metric: dict[str, Any]) -> None:
+    metadata = metric.setdefault("metadata", {})
+    if isinstance(metadata, dict):
+        metadata["rss_mb"] = _current_rss_megabytes()
+
+
 def _table_row_count(tables: Mapping[str, list[dict[str, Any]]]) -> int:
     return sum(len(rows) for rows in tables.values())
 
@@ -940,6 +1052,63 @@ def _optional_metric_count(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _optional_positive_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = float(stripped)
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _check_export_rss_guard(
+    *,
+    rss_guard_mb: float | None,
+    release_name: str,
+    release_type: str,
+    snapshot_month: date | None,
+    phase_name: str,
+    table_name: str | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+) -> None:
+    if rss_guard_mb is None:
+        return
+    rss_mb = _current_rss_megabytes()
+    if rss_mb is None or rss_mb < rss_guard_mb:
+        return
+
+    message_parts = [
+        f"Student dataset export RSS guard exceeded for {release_name}",
+        f"phase={phase_name}",
+        f"rss_mb={rss_mb}",
+        f"limit_mb={rss_guard_mb}",
+    ]
+    if table_name is not None:
+        message_parts.append(f"table={table_name}")
+    message = ". ".join(message_parts) + "."
+    _log_export_observation(
+        "rss_guard_exceeded",
+        release_name=release_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        phase_name=phase_name,
+        table_name=table_name,
+        rss_guard_mb=rss_guard_mb,
+    )
+    if activity_callback is not None:
+        activity_callback(message)
+    raise StudentDatasetExportMemoryLimitError(message)
 
 
 def _compiled_sql_text(

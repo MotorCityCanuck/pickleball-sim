@@ -52,20 +52,23 @@ class DataQualityInjectionValidationResult:
 
 def validate_injected_tables(
     *,
-    original_tables: Mapping[str, list[dict[str, Any]]],
+    original_table_row_counts: Mapping[str, int],
     injected_tables: Mapping[str, list[dict[str, Any]]],
     config: DataQualityInjectionConfig,
     summary,
+    manifest_entries: Iterable[Any] = (),
 ) -> DataQualityInjectionValidationResult:
     """Validate that injected tables remain safe and bounded."""
 
     checks: list[DataQualityValidationCheck] = []
-    checks.extend(_validate_column_shapes(original_tables, injected_tables))
+    manifest_entries_tuple = tuple(manifest_entries)
+    checks.extend(_validate_column_shapes(original_table_row_counts, injected_tables))
+    checks.extend(_validate_row_counts(original_table_row_counts, injected_tables, summary))
     checks.extend(_validate_primary_key_uniqueness(injected_tables))
-    checks.extend(_validate_required_fields(original_tables, injected_tables))
-    checks.extend(_validate_protected_fields(original_tables, injected_tables))
+    checks.extend(_validate_required_fields(manifest_entries_tuple))
+    checks.extend(_validate_protected_fields(manifest_entries_tuple))
     checks.extend(_validate_relationships(injected_tables))
-    checks.extend(_validate_issue_rates(original_tables, config, summary))
+    checks.extend(_validate_issue_rates(original_table_row_counts, config, summary))
 
     failed = [check for check in checks if check.status != "passed"]
     if failed:
@@ -84,11 +87,11 @@ def validate_injected_tables(
 
 
 def _validate_column_shapes(
-    original_tables: Mapping[str, list[dict[str, Any]]],
+    original_table_row_counts: Mapping[str, int],
     injected_tables: Mapping[str, list[dict[str, Any]]],
 ) -> tuple[DataQualityValidationCheck, ...]:
     checks: list[DataQualityValidationCheck] = []
-    for table_name, original_rows in original_tables.items():
+    for table_name, original_row_count in original_table_row_counts.items():
         expected_columns = set(_projection_by_table()[table_name].included_columns)
         injected_rows = injected_tables[table_name]
         actual_columns = set(injected_rows[0].keys()) if injected_rows else expected_columns
@@ -102,8 +105,36 @@ def _validate_column_shapes(
                     "table": table_name,
                     "expected_columns": sorted(expected_columns),
                     "actual_columns": sorted(actual_columns),
-                    "original_row_count": len(original_rows),
+                    "original_row_count": original_row_count,
                     "injected_row_count": len(injected_rows),
+                },
+            )
+        )
+    return tuple(checks)
+
+
+def _validate_row_counts(
+    original_table_row_counts: Mapping[str, int],
+    injected_tables: Mapping[str, list[dict[str, Any]]],
+    summary,
+) -> tuple[DataQualityValidationCheck, ...]:
+    checks: list[DataQualityValidationCheck] = []
+    for table_name, original_row_count in original_table_row_counts.items():
+        row_delta = summary.table_row_deltas.get(table_name, 0)
+        expected_row_count = original_row_count + row_delta
+        injected_row_count = len(injected_tables[table_name])
+        checks.append(
+            _check(
+                name=f"rows:{table_name}",
+                passed=injected_row_count == expected_row_count,
+                passed_message="Injected row count matches the expected table delta.",
+                failed_message="Injected row count does not match the expected table delta.",
+                details={
+                    "table": table_name,
+                    "original_row_count": original_row_count,
+                    "expected_row_count": expected_row_count,
+                    "injected_row_count": injected_row_count,
+                    "row_delta": row_delta,
                 },
             )
         )
@@ -137,37 +168,33 @@ def _validate_primary_key_uniqueness(
 
 
 def _validate_required_fields(
-    original_tables: Mapping[str, list[dict[str, Any]]],
-    injected_tables: Mapping[str, list[dict[str, Any]]],
+    manifest_entries: Iterable[Any],
 ) -> tuple[DataQualityValidationCheck, ...]:
     checks: list[DataQualityValidationCheck] = []
-    for table_name, original_rows in original_tables.items():
-        pk_column = primary_key_column(table_name)
-        injected_by_pk = {
-            row[pk_column]: row
-            for row in injected_tables[table_name]
-            if row.get(pk_column) is not None
-        }
+    null_counts: dict[tuple[str, str], int] = {}
+    for entry in manifest_entries:
+        table_name = getattr(entry, "table_name", None)
+        column_name = getattr(entry, "column_name", None)
+        injected_value = getattr(entry, "injected_value", None)
+        if table_name is None or column_name is None:
+            continue
+        if column_name in required_columns(table_name) and injected_value is None:
+            key = (table_name, column_name)
+            null_counts[key] = null_counts.get(key, 0) + 1
+
+    for table_name in _projection_by_table():
         for column_name in required_columns(table_name):
-            introduced_null_count = 0
-            for original_row in original_rows:
-                if original_row.get(column_name) is None:
-                    continue
-                injected_row = injected_by_pk.get(original_row.get(pk_column))
-                if injected_row is None:
-                    continue
-                if injected_row.get(column_name) is None:
-                    introduced_null_count += 1
+            null_count = null_counts.get((table_name, column_name), 0)
             checks.append(
                 _check(
                     name=f"required:{table_name}.{column_name}",
-                    passed=introduced_null_count == 0,
-                    passed_message="Required field remains populated.",
-                    failed_message="Required field contains injected null values.",
+                    passed=null_count == 0,
+                    passed_message="Required field was not targeted with injected null values.",
+                    failed_message="Required field was targeted with injected null values.",
                     details={
                         "table": table_name,
                         "column": column_name,
-                        "introduced_null_count": introduced_null_count,
+                        "injected_null_count": null_count,
                     },
                 )
             )
@@ -175,39 +202,32 @@ def _validate_required_fields(
 
 
 def _validate_protected_fields(
-    original_tables: Mapping[str, list[dict[str, Any]]],
-    injected_tables: Mapping[str, list[dict[str, Any]]],
+    manifest_entries: Iterable[Any],
 ) -> tuple[DataQualityValidationCheck, ...]:
     checks: list[DataQualityValidationCheck] = []
-    for table_name, original_rows in original_tables.items():
-        pk_column = primary_key_column(table_name)
-        injected_by_pk = {
-            row[pk_column]: row
-            for row in injected_tables[table_name]
-            if row.get(pk_column) is not None
-        }
+    mutated_counts: dict[tuple[str, str], int] = {}
+    for entry in manifest_entries:
+        table_name = getattr(entry, "table_name", None)
+        column_name = getattr(entry, "column_name", None)
+        if table_name is None or column_name is None:
+            continue
+        if column_name in protected_columns(table_name):
+            key = (table_name, column_name)
+            mutated_counts[key] = mutated_counts.get(key, 0) + 1
+
+    for table_name in _projection_by_table():
         for column_name in sorted(protected_columns(table_name)):
-            mutated_count = 0
-            missing_count = 0
-            for original_row in original_rows:
-                pk_value = original_row.get(pk_column)
-                injected_row = injected_by_pk.get(pk_value)
-                if injected_row is None:
-                    missing_count += 1
-                    continue
-                if injected_row.get(column_name) != original_row.get(column_name):
-                    mutated_count += 1
+            mutated_count = mutated_counts.get((table_name, column_name), 0)
             checks.append(
                 _check(
                     name=f"protected:{table_name}.{column_name}",
-                    passed=mutated_count == 0 and missing_count == 0,
-                    passed_message="Protected field remained unchanged.",
-                    failed_message="Protected field was mutated or removed.",
+                    passed=mutated_count == 0,
+                    passed_message="Protected field was not targeted by injection.",
+                    failed_message="Protected field was targeted by injection.",
                     details={
                         "table": table_name,
                         "column": column_name,
                         "mutated_count": mutated_count,
-                        "missing_count": missing_count,
                     },
                 )
             )
@@ -258,12 +278,12 @@ def _validate_relationships(
 
 
 def _validate_issue_rates(
-    original_tables: Mapping[str, list[dict[str, Any]]],
+    original_table_row_counts: Mapping[str, int],
     config: DataQualityInjectionConfig,
     summary,
 ) -> tuple[DataQualityValidationCheck, ...]:
     checks: list[DataQualityValidationCheck] = []
-    total_original_rows = sum(len(rows) for rows in original_tables.values())
+    total_original_rows = sum(original_table_row_counts.values())
     overall_ratio = (
         0.0 if total_original_rows == 0 else summary.total_affected_rows / total_original_rows
     )

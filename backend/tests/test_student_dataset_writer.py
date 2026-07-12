@@ -22,6 +22,7 @@ from app.exports.student_dataset import (  # noqa: E402
     PublishedStudentDatasetFamily,
     StagedStudentDatasetFamily,
     StudentDatasetBuildParameters,
+    StudentDatasetExportMemoryLimitError,
     StudentDatasetPublishError,
     StudentDatasetValidationError,
     promote_staged_release_family,
@@ -65,7 +66,13 @@ def _seed_incremental_match_shape(session) -> None:
     session.commit()
 
 
-def _enable_export_runtime_metrics(session) -> None:
+def _enable_export_runtime_metrics(session, instrumentation_overrides=None) -> None:
+    instrumentation = {
+        "export_queries_enabled": True,
+        "export_query_sql_text_enabled": True,
+    }
+    if instrumentation_overrides is not None:
+        instrumentation.update(instrumentation_overrides)
     session.execute(
         text(
             """
@@ -97,12 +104,7 @@ def _enable_export_runtime_metrics(session) -> None:
         ),
         {
             "parameter_snapshot": json.dumps(
-                {
-                    "instrumentation": {
-                        "export_queries_enabled": True,
-                        "export_query_sql_text_enabled": True,
-                    }
-                }
+                {"instrumentation": instrumentation}
             )
         },
     )
@@ -299,6 +301,7 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
     assert players_metric.metadata_json["release_name"] == (
         "napa_student_release_initial_history"
     )
+    assert "rss_mb" in players_metric.metadata_json
     assert "SELECT" in players_metric.metadata_json["sql_text"].upper()
 
     assert (
@@ -319,6 +322,52 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
         .count()
         == 1
     )
+
+
+def test_write_staged_release_family_stops_when_rss_guard_is_exceeded(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    _enable_export_runtime_metrics(
+        session,
+        {
+            "export_queries_enabled": False,
+            "export_query_sql_text_enabled": False,
+            "export_rss_guard_mb": 1,
+        },
+    )
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._current_rss_megabytes",
+        lambda: 2.0,
+    )
+    activity_messages: list[str] = []
+
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+        overwrite_existing=False,
+    )
+
+    with pytest.raises(StudentDatasetExportMemoryLimitError) as exc_info:
+        write_staged_release_family(
+            session=session,
+            output_root=tmp_path,
+            release_name="napa_student_release",
+            release_windows=(release_window,),
+            build_parameters=build_parameters,
+            activity_callback=activity_messages.append,
+        )
+
+    assert "after_source_query" in str(exc_info.value)
+    assert "limit_mb=1.0" in str(exc_info.value)
+    assert any("RSS guard exceeded" in message for message in activity_messages)
 
 
 def test_write_staged_release_family_records_data_quality_injection_metrics_when_enabled(
@@ -357,23 +406,41 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
     }
 
     assert "inject_data_quality_issues" in subphase_names
-    assert "data_quality_copy_original_tables" in subphase_names
-    assert "data_quality_copy_injected_tables" in subphase_names
+    assert "data_quality_capture_original_table_stats" in subphase_names
+    assert "data_quality_prepare_injected_tables" in subphase_names
     assert "data_quality_validate_injected_tables" in subphase_names
     assert any(
-        message.startswith("Data quality injection copy original tables start")
+        message.startswith("Data quality injection capture original table stats start")
         for message in activity_messages
     )
-    copy_metric = (
+    stats_metric = (
         session.query(GenerationRuntimeMetric)
         .filter(
             GenerationRuntimeMetric.stage_name == "student_dataset_export",
-            GenerationRuntimeMetric.subphase_name == "data_quality_copy_original_tables",
+            GenerationRuntimeMetric.subphase_name == "data_quality_capture_original_table_stats",
         )
         .one()
     )
-    assert copy_metric.input_count is not None
-    assert "rss_mb" in copy_metric.metadata_json
+    assert stats_metric.input_count is not None
+    assert "rss_mb" in stats_metric.metadata_json
+    prepare_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "data_quality_prepare_injected_tables",
+        )
+        .one()
+    )
+    assert prepare_metric.metadata_json["copy_mode"] == "in_place"
+    injection_metric = (
+        session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "inject_data_quality_issues",
+        )
+        .one()
+    )
+    assert "rss_mb" in injection_metric.metadata_json
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(

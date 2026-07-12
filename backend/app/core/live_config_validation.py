@@ -97,6 +97,13 @@ def _validate_instrumentation(
                 f"instrumentation.{key}",
             )
         )
+    issues.extend(
+        _validate_optional_nonnegative_number(
+            instrumentation,
+            "export_rss_guard_mb",
+            "instrumentation.export_rss_guard_mb",
+        )
+    )
     return issues
 
 
@@ -545,6 +552,16 @@ def _validate_nonnegative_number(
     if mapping[key] < 0:
         return [ConfigValidationIssue(path=path, message="must be non-negative.")]
     return []
+
+
+def _validate_optional_nonnegative_number(
+    mapping: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> list[ConfigValidationIssue]:
+    if key in mapping and mapping[key] is None:
+        return []
+    return _validate_nonnegative_number(mapping, key, path)
 
 
 def _validate_nonnegative_integer(

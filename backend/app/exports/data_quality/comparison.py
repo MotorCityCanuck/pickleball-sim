@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 import re
@@ -413,7 +414,7 @@ def _looks_like_rounding_variant(clean_value: Any, tainted_value: Any) -> bool:
         return False
     if clean_value == tainted_value:
         return False
-    if not isinstance(clean_value, (int, float)) or not isinstance(tainted_value, (int, float)):
+    if not _is_numeric_value(clean_value) or not _is_numeric_value(tainted_value):
         return False
     clean_float = float(clean_value)
     tainted_float = float(tainted_value)
@@ -429,7 +430,7 @@ def _looks_like_numeric_outlier_change(clean_value: Any, tainted_value: Any) -> 
         return False
     if clean_value == tainted_value:
         return False
-    if not isinstance(clean_value, (int, float)) or not isinstance(tainted_value, (int, float)):
+    if not _is_numeric_value(clean_value) or not _is_numeric_value(tainted_value):
         return False
     if _looks_like_rounding_variant(clean_value, tainted_value):
         return False
@@ -437,6 +438,10 @@ def _looks_like_numeric_outlier_change(clean_value: Any, tainted_value: Any) -> 
     tainted_float = float(tainted_value)
     threshold = max(1.0, abs(clean_float) * 0.10)
     return abs(tainted_float - clean_float) >= threshold
+
+
+def _is_numeric_value(value: Any) -> bool:
+    return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
 
 
 def _looks_like_timestamp_jitter(clean_value: Any, tainted_value: Any) -> bool:

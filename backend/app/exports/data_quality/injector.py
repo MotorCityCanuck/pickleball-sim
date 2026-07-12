@@ -49,6 +49,10 @@ from .validators import DataQualityInjectionValidationResult, validate_injected_
 
 logger = logging.getLogger("uvicorn.error")
 InjectionInstrumentationCallback = Callable[[str, Mapping[str, Any]], None]
+_CANDIDATE_SAMPLE_MULTIPLIER = 4
+_CANDIDATE_SAMPLE_MIN_EXTRA = 1024
+_DUPLICATE_LIKE_SAMPLE_MULTIPLIER = 8
+_DUPLICATE_LIKE_SAMPLE_MIN_EXTRA = 4096
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,7 @@ def inject_data_quality_issues(
     config: DataQualityInjectionConfig,
     release_context: DataQualityReleaseContext,
     instrumentation_callback: InjectionInstrumentationCallback | None = None,
+    copy_tables: bool = True,
 ) -> DataQualityInjectionResult:
     """Inject bounded, deterministic quality issues into exported table rows."""
 
@@ -127,25 +132,30 @@ def inject_data_quality_issues(
         )
     with _measure_injection_phase(
         instrumentation_callback,
-        "copy_original_tables",
+        "capture_original_table_stats",
         table_count=len(tables),
         input_count=_total_row_count(tables),
     ) as metric:
-        original_tables = {
-            table_name: [dict(row) for row in rows]
+        original_table_row_counts = {
+            table_name: len(rows)
             for table_name, rows in tables.items()
         }
-        metric["output_count"] = _total_row_count(original_tables)
+        metric["output_count"] = sum(original_table_row_counts.values())
     with _measure_injection_phase(
         instrumentation_callback,
-        "copy_injected_tables",
+        "copy_injected_tables" if copy_tables else "prepare_injected_tables",
         table_count=len(tables),
         input_count=_total_row_count(tables),
     ) as metric:
-        injected_tables = {
-            table_name: [dict(row) for row in rows]
-            for table_name, rows in tables.items()
-        }
+        if copy_tables:
+            injected_tables = {
+                table_name: [dict(row) for row in rows]
+                for table_name, rows in tables.items()
+            }
+            metric["copy_mode"] = "copy"
+        else:
+            injected_tables = dict(tables)
+            metric["copy_mode"] = "in_place"
         metric["output_count"] = _total_row_count(injected_tables)
 
     state = _InjectionState(
@@ -199,10 +209,11 @@ def inject_data_quality_issues(
         input_count=_total_row_count(injected_tables),
     ):
         validation_result = validate_injected_tables(
-            original_tables=original_tables,
+            original_table_row_counts=original_table_row_counts,
             injected_tables=injected_tables,
             config=config,
             summary=summary,
+            manifest_entries=state.manifest_entries,
         )
     return DataQualityInjectionResult(
         tables=injected_tables,
@@ -283,19 +294,26 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             row_count=len(rows),
             target_count=target_count,
         ) as metric:
-            candidates = [
-                (row_index, column_name)
-                for row_index, row in enumerate(rows)
-                for column_name in columns
-                if row.get(column_name) is not None
-            ]
-            metric["output_count"] = len(candidates)
+            candidate_count = _count_candidate_locations(rows, columns)
+            metric["output_count"] = candidate_count
+            metric["candidate_count"] = candidate_count
+        if candidate_count <= 0:
+            logger.info(
+                "Student dataset data quality issue_skipped table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s reason=%s",
+                table_name,
+                issue_type,
+                len(rows),
+                0,
+                target_count,
+                "no_candidate_values",
+            )
+            continue
         logger.info(
             "Student dataset data quality issue_start table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s",
             table_name,
             issue_type,
             len(rows),
-            len(candidates),
+            candidate_count,
             target_count,
         )
         with _measure_injection_phase(
@@ -303,10 +321,25 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             "issue_candidate_shuffle",
             table_name=table_name,
             issue_type=issue_type,
-            input_count=len(candidates),
+            input_count=candidate_count,
             target_count=target_count,
-        ):
+        ) as metric:
+            sample_limit = _candidate_sample_limit(
+                candidate_count=candidate_count,
+                target_count=target_count,
+            )
+            candidates = _sample_candidate_locations(
+                rows=rows,
+                columns=columns,
+                candidate_count=candidate_count,
+                sample_limit=sample_limit,
+                rng=rng,
+            )
             rng.shuffle(candidates)
+            metric["output_count"] = len(candidates)
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
+            metric["selection_strategy"] = "deterministic_bounded_sample"
         applied = 0
         with _measure_injection_phase(
             state.instrumentation_callback,
@@ -316,6 +349,10 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
             input_count=len(candidates),
             target_count=target_count,
         ) as metric:
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
+            noop_count = 0
+            skipped_row_limit_count = 0
             for row_index, column_name in candidates:
                 if applied >= target_count:
                     break
@@ -323,6 +360,7 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
                 pk_value = row[primary_key_column(table_name)]
                 row_key = (table_name, pk_value)
                 if state.row_field_counts[row_key] >= state.config.global_limits.max_affected_fields_per_row:
+                    skipped_row_limit_count += 1
                     continue
                 original_value = row.get(column_name)
                 injected_value = _mutated_value(
@@ -334,6 +372,7 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
                     rng=rng,
                 )
                 if injected_value == original_value:
+                    noop_count += 1
                     continue
                 row[column_name] = injected_value
                 state.row_field_counts[row_key] += 1
@@ -358,12 +397,17 @@ def _apply_table_rules(state: _InjectionState, table_name: str) -> None:
                 )
                 applied += 1
             metric["output_count"] = applied
+            metric["applied_count"] = applied
+            metric["noop_count"] = noop_count
+            metric["skipped_row_limit_count"] = skipped_row_limit_count
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
         logger.info(
             "Student dataset data quality issue_end table_name=%s issue_type=%s row_count=%s candidate_count=%s target_count=%s applied_count=%s",
             table_name,
             issue_type,
             len(rows),
-            len(candidates),
+            candidate_count,
             target_count,
             applied,
         )
@@ -424,13 +468,27 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
         input_count=len(matches),
         target_count=target_count,
     ) as metric:
-        match_rows = list(matches)
+        source_match_sample_limit = _candidate_sample_limit(
+            candidate_count=len(matches),
+            target_count=target_count,
+            multiplier=_DUPLICATE_LIKE_SAMPLE_MULTIPLIER,
+            min_extra=_DUPLICATE_LIKE_SAMPLE_MIN_EXTRA,
+        )
+        match_rows = _sample_rows(
+            rows=matches,
+            sample_limit=source_match_sample_limit,
+            rng=rng,
+        )
         rng.shuffle(match_rows)
         metric["output_count"] = len(match_rows)
+        metric["candidate_count"] = len(matches)
+        metric["sampled_count"] = len(match_rows)
+        metric["selection_strategy"] = "deterministic_bounded_sample"
 
     match_teams = state.tables["match_teams"]
     match_team_players = state.tables["match_team_players"]
     match_games = state.tables["match_games"]
+    source_match_ids = {row["id"] for row in match_rows}
     with _measure_injection_phase(
         state.instrumentation_callback,
         "duplicate_like_lookup_build",
@@ -441,18 +499,28 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
     ) as metric:
         match_teams_by_match_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
         for row in match_teams:
-            match_teams_by_match_id[row["match_id"]].append(row)
+            if row["match_id"] in source_match_ids:
+                match_teams_by_match_id[row["match_id"]].append(row)
+        source_match_team_ids = {
+            row["id"]
+            for rows_for_match in match_teams_by_match_id.values()
+            for row in rows_for_match
+        }
         players_by_match_team_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
         for row in match_team_players:
-            players_by_match_team_id[row["match_team_id"]].append(row)
+            if row["match_team_id"] in source_match_team_ids:
+                players_by_match_team_id[row["match_team_id"]].append(row)
         games_by_match_id: dict[object, list[dict[str, Any]]] = defaultdict(list)
         for row in match_games:
-            games_by_match_id[row["match_id"]].append(row)
+            if row["match_id"] in source_match_ids:
+                games_by_match_id[row["match_id"]].append(row)
         metric["output_count"] = (
-            len(match_teams_by_match_id)
-            + len(players_by_match_team_id)
-            + len(games_by_match_id)
+            sum(len(rows_for_match) for rows_for_match in match_teams_by_match_id.values())
+            + sum(len(rows_for_team) for rows_for_team in players_by_match_team_id.values())
+            + sum(len(rows_for_match) for rows_for_match in games_by_match_id.values())
         )
+        metric["source_match_count"] = len(source_match_ids)
+        metric["source_match_team_count"] = len(source_match_team_ids)
     next_match_id = next_primary_key(matches, "matches")
     next_match_team_id = next_primary_key(match_teams, "match_teams")
     next_match_team_player_id = next_primary_key(match_team_players, "match_team_players")
@@ -560,9 +628,11 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
                         random_seed=state.config.random_seed,
                         rule_id=f"{table_name}.{ISSUE_TYPE_DUPLICATE_LIKE_ROWS}",
                     )
-                )
+            )
             applied += 1
         metric["output_count"] = applied
+        metric["applied_count"] = applied
+        metric["noop_count"] = 0
     logger.info(
         "Student dataset data quality duplicate_like_rows_end applied_count=%s match_row_delta=%s match_team_row_delta=%s match_team_player_row_delta=%s match_game_row_delta=%s",
         applied,
@@ -635,6 +705,107 @@ def _nested_issue_totals(
     for (table_name, issue_type), candidate_total in totals.items():
         nested.setdefault(table_name, {})[issue_type] = candidate_total
     return nested
+
+
+def _count_candidate_locations(
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+) -> int:
+    return sum(
+        1
+        for row in rows
+        for column_name in columns
+        if row.get(column_name) is not None
+    )
+
+
+def _candidate_sample_limit(
+    *,
+    candidate_count: int,
+    target_count: int,
+    multiplier: int = _CANDIDATE_SAMPLE_MULTIPLIER,
+    min_extra: int = _CANDIDATE_SAMPLE_MIN_EXTRA,
+) -> int:
+    if candidate_count <= 0 or target_count <= 0:
+        return 0
+    return min(
+        candidate_count,
+        max(
+            target_count * multiplier,
+            target_count + min_extra,
+        ),
+    )
+
+
+def _sample_candidate_locations(
+    *,
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    candidate_count: int,
+    sample_limit: int,
+    rng: random.Random,
+) -> list[tuple[int, str]]:
+    selected_ordinals = _sample_candidate_ordinals(
+        candidate_count=candidate_count,
+        sample_limit=sample_limit,
+        rng=rng,
+    )
+    if not selected_ordinals:
+        return []
+
+    candidates: list[tuple[int, str]] = []
+    ordinal = 0
+    for row_index, row in enumerate(rows):
+        for column_name in columns:
+            if row.get(column_name) is None:
+                continue
+            if ordinal in selected_ordinals:
+                candidates.append((row_index, column_name))
+                if len(candidates) >= sample_limit:
+                    return candidates
+            ordinal += 1
+    return candidates
+
+
+def _sample_rows(
+    *,
+    rows: list[dict[str, Any]],
+    sample_limit: int,
+    rng: random.Random,
+) -> list[dict[str, Any]]:
+    selected_ordinals = _sample_candidate_ordinals(
+        candidate_count=len(rows),
+        sample_limit=sample_limit,
+        rng=rng,
+    )
+    if not selected_ordinals:
+        return []
+    return [
+        row
+        for row_index, row in enumerate(rows)
+        if row_index in selected_ordinals
+    ]
+
+
+def _sample_candidate_ordinals(
+    *,
+    candidate_count: int,
+    sample_limit: int,
+    rng: random.Random,
+) -> set[int]:
+    if sample_limit <= 0 or candidate_count <= 0:
+        return set()
+    if sample_limit >= candidate_count:
+        return set(range(candidate_count))
+
+    selected: set[int] = set()
+    for ordinal in range(candidate_count - sample_limit, candidate_count):
+        replacement = rng.randrange(ordinal + 1)
+        if replacement in selected:
+            selected.add(ordinal)
+        else:
+            selected.add(replacement)
+    return selected
 
 
 @contextmanager

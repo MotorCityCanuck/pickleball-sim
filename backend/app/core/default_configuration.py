@@ -41,6 +41,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "ratings_enabled": True,
         "export_queries_enabled": False,
         "export_query_sql_text_enabled": False,
+        "export_rss_guard_mb": None,
     },
     "raw_seed_data": {
         "raw_data_root": "data/raw",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 import math
 import random
 from typing import Any, Mapping
@@ -335,14 +336,17 @@ def name_case_variant(value: Any, rng: random.Random) -> str | None:
     return _sample_variant(sorted(candidates), rng)
 
 
-def rounding_variant(value: Any, rng: random.Random) -> float | int | None:
+def rounding_variant(value: Any, rng: random.Random) -> float | int | Decimal | None:
     """Return a float rounded to an inconsistent precision."""
 
     if value is None or isinstance(value, bool):
         return value
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, (int, float, Decimal)):
         return value
     decimals = rng.choice((1, 2, 3))
+    if isinstance(value, Decimal):
+        rounded = round(value, decimals)
+        return rounded if rounded != value else round(value, max(decimals - 1, 0))
     rounded = round(float(value), decimals)
     if isinstance(value, int):
         return int(round(rounded))
@@ -354,16 +358,21 @@ def numeric_outlier(
     column_name: str,
     value: Any,
     rng: random.Random,
-) -> float | int | None:
+) -> float | int | Decimal | None:
     """Return a bounded but suspicious numeric variant."""
 
     if value is None or isinstance(value, bool):
         return value
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, (int, float, Decimal)):
         return value
     lower, upper = NUMERIC_OUTLIER_BOUNDS[table_name][column_name]
     if math.isclose(lower, upper):
         return value
+    if isinstance(value, Decimal):
+        scale = Decimal(str(rng.uniform(1.15, 1.65)))
+        candidate = value * scale
+        candidate = min(max(candidate, Decimal(str(lower))), Decimal(str(upper)))
+        return candidate.quantize(Decimal("0.001"))
     scale = rng.uniform(1.15, 1.65)
     candidate = float(value) * scale
     candidate = min(max(candidate, lower), upper)

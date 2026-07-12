@@ -236,10 +236,14 @@ def test_export_instrumentation_fields_are_checkbox_scaffolded():
     assert set(fields) == {
         "instrumentation.export_queries_enabled",
         "instrumentation.export_query_sql_text_enabled",
+        "instrumentation.export_rss_guard_mb",
     }
-    assert all(field.definition.control_type == "checkbox" for field in fields.values())
+    assert fields["instrumentation.export_queries_enabled"].definition.control_type == "checkbox"
+    assert fields["instrumentation.export_query_sql_text_enabled"].definition.control_type == "checkbox"
+    assert fields["instrumentation.export_rss_guard_mb"].definition.control_type == "integer"
     assert fields["instrumentation.export_queries_enabled"].value is False
     assert fields["instrumentation.export_query_sql_text_enabled"].value is False
+    assert fields["instrumentation.export_rss_guard_mb"].value is None
 
 
 def test_hidden_performance_bias_bounded_tuning_fields_render_as_sliders():

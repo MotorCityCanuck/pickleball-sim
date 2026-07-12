@@ -85,6 +85,28 @@ def test_validate_live_config_payload_rejects_invalid_export_instrumentation_fla
     assert issues[0].message == "must be a boolean."
 
 
+def test_validate_live_config_payload_rejects_invalid_export_rss_guard():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["instrumentation"]["export_rss_guard_mb"] = "1024"
+
+    issues = validate_live_config_payload(payload)
+
+    assert len(issues) == 1
+    assert issues[0].path == "instrumentation.export_rss_guard_mb"
+    assert issues[0].message == "must be a number."
+
+
+def test_validate_live_config_payload_allows_null_export_rss_guard():
+    payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
+    payload["instrumentation"]["export_rss_guard_mb"] = None
+
+    issues = validate_live_config_payload(payload)
+
+    assert [
+        issue for issue in issues if issue.path == "instrumentation.export_rss_guard_mb"
+    ] == []
+
+
 def test_validate_live_config_payload_rejects_invalid_hidden_bias_range():
     payload = deepcopy(DEFAULT_CONFIG_PAYLOAD)
     payload["hidden_performance_bias"]["age_advantage"][

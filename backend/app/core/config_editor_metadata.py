@@ -320,6 +320,17 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         basic_or_advanced="advanced",
     ),
     ConfigEditorFieldDefinition(
+        path="instrumentation.export_rss_guard_mb",
+        label="Export RSS guard MB",
+        control_type="integer",
+        scope="instrumentation",
+        description="Optional fail-fast memory guard for student dataset exports. Leave blank to disable.",
+        default_value=_path_default("instrumentation.export_rss_guard_mb"),
+        basic_or_advanced="advanced",
+        min_value=0,
+        step=256,
+    ),
+    ConfigEditorFieldDefinition(
         path="player_generation.player_count",
         label="Initial player count",
         control_type="integer",
@@ -1606,6 +1617,7 @@ CONFIG_EDITOR_SECTIONS: tuple[ConfigEditorSectionDefinition, ...] = (
         field_paths=(
             "instrumentation.export_queries_enabled",
             "instrumentation.export_query_sql_text_enabled",
+            "instrumentation.export_rss_guard_mb",
         ),
     ),
     ConfigEditorSectionDefinition(
