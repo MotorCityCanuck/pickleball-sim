@@ -1,6 +1,7 @@
 """Tests for staged student dataset Parquet writing."""
 
 import json
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -18,6 +19,7 @@ from app.exports.data_quality import (  # noqa: E402
     INSTRUCTOR_MANIFEST_FILE_NAME,
     DataQualityReleaseContext,
     build_default_data_quality_config,
+    create_injection_state,
     inject_data_quality_issues,
 )
 from app.exports.student_dataset import (  # noqa: E402
@@ -747,6 +749,52 @@ def test_tainted_write_streams_duplicate_family_without_row_buffering(
         release_windows=(release_window,),
         build_parameters=build_parameters,
     )
+
+
+def test_duplicate_like_match_planning_executes_streamed_path(tmp_path, monkeypatch):
+    file_path = tmp_path / "matches.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {"id": 1, "match_date": "2025-01-01"},
+                {"id": 2, "match_date": "2025-01-02"},
+                {"id": 3, "match_date": "2025-01-03"},
+            ]
+        ),
+        file_path,
+    )
+
+    monkeypatch.setattr(
+        student_dataset_writer,
+        "_target_count",
+        lambda **kwargs: 1,
+    )
+    state = create_injection_state(
+        config=build_default_data_quality_config(level="medium"),
+        release_context=DataQualityReleaseContext(
+            release_id="release-1",
+            release_name="napa_student_release",
+            release_type="initial_snapshot",
+            generation_run_id=1,
+            snapshot_month=date(2025, 1, 1),
+        ),
+        effective_level="medium",
+    )
+
+    plan, captures, next_match_id = (
+        student_dataset_writer._plan_and_capture_duplicate_source_matches(
+            state=state,
+            file_path=file_path,
+            release_name="napa_student_release",
+            injection_observer=lambda *_args, **_kwargs: None,
+        )
+    )
+
+    assert plan.target_count == 1
+    assert len(plan.source_match_ids) >= plan.target_count
+    assert plan.sampled_count == len(plan.source_match_ids)
+    assert captures[plan.source_match_ids[0]]["id"] == plan.source_match_ids[0]
+    assert next_match_id == 4
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(
