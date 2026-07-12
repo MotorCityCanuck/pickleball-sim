@@ -226,6 +226,7 @@ def session_factory():
             CREATE TABLE generation_runtime_metrics (
                 id integer primary key autoincrement,
                 generation_run_id bigint not null,
+                job_status_id bigint,
                 batch_id bigint,
                 stage_name varchar(100) not null,
                 subphase_name varchar(100) not null,

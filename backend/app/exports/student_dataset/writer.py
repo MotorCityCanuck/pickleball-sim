@@ -27,6 +27,7 @@ from app.generation.runtime_metrics import RuntimeMetricRecorder
 from app.exports.data_quality import (
     INSTRUCTOR_MANIFEST_FILE_NAME,
     DataQualityDuplicateLikeCaptures,
+    DataQualityDuplicateLikePlan,
     DataQualityDuplicateLikeNextIds,
     DataQualityInjectionManifestEntry,
     DataQualityReleaseContext,
@@ -40,7 +41,20 @@ from app.exports.data_quality import (
     plan_duplicate_like_rows,
     validate_streamed_injected_tables,
 )
-from app.exports.data_quality.rules import next_primary_key
+from app.exports.data_quality.config import (
+    ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+    SUPPORTED_ISSUE_TYPES,
+    level_profile,
+)
+from app.exports.data_quality.injector import (
+    ROW_RATE_ISSUES,
+    _candidate_sample_limit,
+    _measure_injection_phase,
+    _mutated_value,
+    _sample_candidate_ordinals,
+    _target_count,
+)
+from app.exports.data_quality.rules import eligible_columns, next_primary_key, primary_key_column
 from app.models import GenerationRun
 
 from .projection import (
@@ -199,6 +213,7 @@ def write_staged_release_family(
     release_name: str,
     release_windows: tuple[StudentDatasetReleaseWindow, ...],
     build_parameters: StudentDatasetBuildParameters,
+    job_status_id: int | None = None,
     compression: str = DEFAULT_PARQUET_COMPRESSION,
     progress_callback: ReleaseProgressCallback | None = None,
     activity_callback: ReleaseActivityCallback | None = None,
@@ -214,6 +229,7 @@ def write_staged_release_family(
         session=session,
         build_parameters=build_parameters,
         instrumentation=instrumentation,
+        job_status_id=job_status_id,
     )
     total_releases = len(release_windows)
     releases_list: list[StagedStudentDatasetRelease] = []
@@ -534,8 +550,143 @@ def _write_data_quality_tainted_release_streaming(
 
     duplicate_plan = None
 
+    def table_can_stream_direct(table_name: str) -> bool:
+        if table_name in DUPLICATE_LIKE_TABLES:
+            return False
+        table_rule = config.table_rules.get(table_name)
+        if table_rule is None or not table_rule.enabled:
+            return True
+        return len(table_rule.allowed_issue_types) == 0
+
+    def table_can_stream_with_chunk_local_mutation(table_name: str) -> bool:
+        table_rule = config.table_rules.get(table_name)
+        if table_rule is None or not table_rule.enabled:
+            return False
+        return any(
+            issue_type in SUPPORTED_ISSUE_TYPES and issue_type not in ROW_RATE_ISSUES
+            for issue_type in table_rule.allowed_issue_types
+        )
+
     def process_table(table_name: str) -> None:
         nonlocal duplicate_plan, source_match_ids, source_match_team_ids
+        nonlocal matches_by_id, match_teams_by_match_id
+        nonlocal players_by_match_team_id, games_by_match_id
+        if table_can_stream_direct(table_name):
+            if activity_callback is not None:
+                activity_callback(f"Writing parquet for {release_name}: {table_name}.")
+            file_manifest = _write_table_from_source_stream(
+                session=session,
+                release_dir=release_dir,
+                table_name=table_name,
+                context=context,
+                release_name=release_name,
+                compression=compression,
+                runtime_recorder=runtime_recorder,
+                instrumentation=instrumentation,
+                activity_callback=activity_callback,
+                rss_guard_mb=rss_guard_mb,
+            )
+            original_table_row_counts[table_name] = file_manifest.row_count
+            injected_table_row_counts[table_name] = file_manifest.row_count
+            files_by_table[table_name] = file_manifest
+            processed_tables.add(table_name)
+            _check_export_rss_guard(
+                rss_guard_mb=rss_guard_mb,
+                release_name=release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                phase_name="after_streamed_data_quality_table",
+                table_name=table_name,
+                activity_callback=activity_callback,
+            )
+            return
+        if table_can_stream_with_chunk_local_mutation(table_name):
+            if activity_callback is not None:
+                activity_callback(f"Writing parquet for {release_name}: {table_name}.")
+            final_file_path = None
+            if table_name in DUPLICATE_LIKE_TABLES:
+                final_file_path = release_dir / f".{table_name}.base.parquet"
+            file_manifest = _write_chunk_locally_mutated_table_from_source_stream(
+                session=session,
+                release_dir=release_dir,
+                table_name=table_name,
+                context=context,
+                release_name=release_name,
+                compression=compression,
+                runtime_recorder=runtime_recorder,
+                instrumentation=instrumentation,
+                activity_callback=activity_callback,
+                rss_guard_mb=rss_guard_mb,
+                state=state,
+                injection_observer=injection_observer,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                final_file_path=final_file_path,
+            )
+            original_table_row_counts[table_name] = file_manifest.row_count
+            if table_name == "matches":
+                (
+                    duplicate_plan,
+                    matches_by_id,
+                    next_ids[table_name],
+                ) = _plan_and_capture_duplicate_source_matches(
+                    state=state,
+                    file_path=file_manifest.file_path,
+                    release_name=release_name,
+                    injection_observer=injection_observer,
+                )
+                source_match_ids = set(duplicate_plan.source_match_ids)
+            elif table_name == "match_teams":
+                (
+                    captured_match_teams,
+                    source_match_team_ids,
+                    next_ids[table_name],
+                ) = _capture_match_teams_for_duplicate_rows(
+                    file_path=file_manifest.file_path,
+                    source_match_ids=source_match_ids,
+                )
+                match_teams_by_match_id = captured_match_teams
+            elif table_name == "match_team_players":
+                (
+                    players_by_match_team_id,
+                    next_ids[table_name],
+                ) = _capture_match_team_players_for_duplicate_rows(
+                    file_path=file_manifest.file_path,
+                    source_match_team_ids=source_match_team_ids,
+                )
+            elif table_name == "match_games":
+                (
+                    games_by_match_id,
+                    next_ids[table_name],
+                ) = _capture_match_games_for_duplicate_rows(
+                    file_path=file_manifest.file_path,
+                    source_match_ids=source_match_ids,
+                )
+            if table_name in DUPLICATE_LIKE_TABLES:
+                temp_paths[table_name] = file_manifest.file_path
+            else:
+                injected_table_row_counts[table_name] = file_manifest.row_count
+                files_by_table[table_name] = file_manifest
+            processed_tables.add(table_name)
+            _check_export_rss_guard(
+                rss_guard_mb=rss_guard_mb,
+                release_name=release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                phase_name="after_streamed_data_quality_table",
+                table_name=table_name,
+                activity_callback=activity_callback,
+            )
+            return
+        load_started = perf_counter()
+        injection_observer(
+            "buffered_table_load_start",
+            {
+                "phase_name": "buffered_table_load",
+                "table_name": table_name,
+                "table_mode": "buffered",
+            },
+        )
         row_dicts = _load_table_rows(
             session=session,
             table_name=table_name,
@@ -546,13 +697,40 @@ def _write_data_quality_tainted_release_streaming(
             instrumentation=instrumentation,
             rss_guard_mb=rss_guard_mb,
         )
+        injection_observer(
+            "buffered_table_load_end",
+            {
+                "phase_name": "buffered_table_load",
+                "table_name": table_name,
+                "table_mode": "buffered",
+                "row_count": len(row_dicts),
+                "input_count": len(row_dicts),
+                "output_count": len(row_dicts),
+                "elapsed_ms": int((perf_counter() - load_started) * 1000),
+            },
+        )
         original_table_row_counts[table_name] = len(row_dicts)
+        apply_started = perf_counter()
         apply_table_quality_rules(
             state,
             table_name=table_name,
             rows=row_dicts,
         )
+        injection_observer(
+            "buffered_table_apply_rules_end",
+            {
+                "phase_name": "buffered_table_apply_rules",
+                "table_name": table_name,
+                "table_mode": "buffered",
+                "row_count": len(row_dicts),
+                "input_count": len(row_dicts),
+                "output_count": len(row_dicts),
+                "elapsed_ms": int((perf_counter() - apply_started) * 1000),
+            },
+        )
         next_ids[table_name] = next_primary_key(row_dicts, table_name)
+        capture_started = perf_counter()
+        captured_row_count = 0
         if table_name == "matches":
             duplicate_plan = plan_duplicate_like_rows(state, matches=row_dicts)
             source_match_ids = set(duplicate_plan.source_match_ids)
@@ -563,23 +741,43 @@ def _write_data_quality_tainted_release_streaming(
                     if row["id"] in source_match_ids
                 }
             )
+            captured_row_count = len(matches_by_id)
         elif table_name == "match_teams":
             for row in row_dicts:
                 if row["match_id"] in source_match_ids:
                     cloned_row = dict(row)
                     match_teams_by_match_id[row["match_id"]].append(cloned_row)
                     source_match_team_ids.add(row["id"])
+                    captured_row_count += 1
         elif table_name == "match_team_players":
             for row in row_dicts:
                 if row["match_team_id"] in source_match_team_ids:
                     players_by_match_team_id[row["match_team_id"]].append(dict(row))
+                    captured_row_count += 1
         elif table_name == "match_games":
             for row in row_dicts:
                 if row["match_id"] in source_match_ids:
                     games_by_match_id[row["match_id"]].append(dict(row))
+                    captured_row_count += 1
+        injection_observer(
+            "buffered_table_duplicate_capture_end",
+            {
+                "phase_name": "buffered_table_duplicate_capture",
+                "table_name": table_name,
+                "table_mode": "buffered",
+                "row_count": len(row_dicts),
+                "input_count": len(row_dicts),
+                "output_count": captured_row_count,
+                "captured_row_count": captured_row_count,
+                "source_match_count": len(source_match_ids),
+                "source_match_team_count": len(source_match_team_ids),
+                "elapsed_ms": int((perf_counter() - capture_started) * 1000),
+            },
+        )
 
         if activity_callback is not None:
             activity_callback(f"Writing parquet for {release_name}: {table_name}.")
+        write_started = perf_counter()
         if table_name in DUPLICATE_LIKE_TABLES:
             temp_path = release_dir / f".{table_name}.base.parquet"
             temp_paths[table_name] = temp_path
@@ -611,6 +809,22 @@ def _write_data_quality_tainted_release_streaming(
             )
             files_by_table[table_name] = file_manifest
             injected_table_row_counts[table_name] = file_manifest.row_count
+        injection_observer(
+            "buffered_table_write_end",
+            {
+                "phase_name": "buffered_table_write",
+                "table_name": table_name,
+                "table_mode": "buffered",
+                "row_count": len(row_dicts),
+                "input_count": len(row_dicts),
+                "output_count": (
+                    file_manifest.row_count
+                    if table_name not in DUPLICATE_LIKE_TABLES
+                    else len(row_dicts)
+                ),
+                "elapsed_ms": int((perf_counter() - write_started) * 1000),
+            },
+        )
         processed_tables.add(table_name)
         del row_dicts
         _check_export_rss_guard(
@@ -906,6 +1120,43 @@ def _write_table_from_source_stream(
 ) -> StudentDatasetFileManifest:
     projection = PROJECTION_BY_TABLE[table_name]
     file_path = release_dir / projection.output_file
+    row_count, schema = _write_source_stream_to_parquet_file(
+        session=session,
+        file_path=file_path,
+        table_name=table_name,
+        context=context,
+        release_name=release_name,
+        compression=compression,
+        runtime_recorder=runtime_recorder,
+        instrumentation=instrumentation,
+        activity_callback=activity_callback,
+        rss_guard_mb=rss_guard_mb,
+    )
+    return StudentDatasetFileManifest(
+        table_name=table_name,
+        file_name=projection.output_file,
+        file_path=file_path,
+        row_count=row_count,
+        columns=projection.included_columns,
+        schema_hash=_schema_hash(schema),
+        checksum=_file_checksum(file_path),
+    )
+
+
+def _write_source_stream_to_parquet_file(
+    *,
+    session: Session,
+    file_path: Path,
+    table_name: str,
+    context: StudentDatasetQueryContext,
+    release_name: str,
+    compression: str,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    instrumentation: ExportInstrumentationSettings | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+    rss_guard_mb: float | None = None,
+) -> tuple[int, pa.Schema]:
+    projection = PROJECTION_BY_TABLE[table_name]
     if activity_callback is not None:
         activity_callback(
             f"Building source query for {release_name}: {table_name}."
@@ -1202,15 +1453,7 @@ def _write_table_from_source_stream(
             row_group_count=row_group_count,
         )
         runtime_recorder.flush()
-    return StudentDatasetFileManifest(
-        table_name=table_name,
-        file_name=projection.output_file,
-        file_path=file_path,
-        row_count=row_count,
-        columns=projection.included_columns,
-        schema_hash=_schema_hash(schema),
-        checksum=_file_checksum(file_path),
-    )
+    return row_count, schema
 
 
 def _record_direct_stream_metric(
@@ -1237,6 +1480,461 @@ def _record_direct_stream_metric(
         output_count=output_count,
         metadata=metric_metadata,
     )
+
+
+def _write_chunk_locally_mutated_table_from_source_stream(
+    *,
+    session: Session,
+    release_dir: Path,
+    table_name: str,
+    context: StudentDatasetQueryContext,
+    release_name: str,
+    compression: str,
+    runtime_recorder: RuntimeMetricRecorder | None,
+    instrumentation: ExportInstrumentationSettings | None,
+    activity_callback: ReleaseActivityCallback | None,
+    rss_guard_mb: float | None,
+    state: Any,
+    injection_observer: Callable[[str, Mapping[str, Any]], None],
+    release_type: str,
+    snapshot_month: date,
+    final_file_path: Path | None = None,
+) -> StudentDatasetFileManifest:
+    projection = PROJECTION_BY_TABLE[table_name]
+    table_rule = state.config.table_rules.get(table_name)
+    if table_rule is None:
+        raise StudentDatasetWriteError(
+            f"Missing data quality rule configuration for streamed mutation table {table_name}."
+        )
+    issue_types = [
+        issue_type
+        for issue_type in table_rule.allowed_issue_types
+        if issue_type in SUPPORTED_ISSUE_TYPES and issue_type not in ROW_RATE_ISSUES
+    ]
+    if not issue_types:
+        raise StudentDatasetWriteError(
+            f"Chunk-local mutation requested for table without supported issue types: {table_name}."
+        )
+
+    base_path = release_dir / f".{table_name}.streamed-source.parquet"
+    row_count, schema = _write_source_stream_to_parquet_file(
+        session=session,
+        file_path=base_path,
+        table_name=table_name,
+        context=context,
+        release_name=release_name,
+        compression=compression,
+        runtime_recorder=runtime_recorder,
+        instrumentation=instrumentation,
+        activity_callback=activity_callback,
+        rss_guard_mb=rss_guard_mb,
+    )
+
+    current_path = base_path
+    current_schema = schema
+    profile = level_profile(table_rule.issue_profile or state.effective_level)
+    primary_key = primary_key_column(table_name)
+    row_count_value = row_count
+
+    for issue_type in issue_types:
+        columns = eligible_columns(table_name, issue_type)
+        state.issue_type_candidate_rows[issue_type] = (
+            state.issue_type_candidate_rows.get(issue_type, 0) + row_count_value
+        )
+        state.table_issue_type_candidate_rows[(table_name, issue_type)] = (
+            state.table_issue_type_candidate_rows.get((table_name, issue_type), 0)
+            + row_count_value
+        )
+        if row_count_value <= 0 or not columns:
+            continue
+
+        target_count = _target_count(
+            issue_type=issue_type,
+            row_count=row_count_value,
+            profile=profile,
+        )
+        if target_count <= 0:
+            continue
+        rng = random.Random(
+            state.config.seed_for(
+                state.release_context.release_id,
+                table_name,
+                issue_type,
+            )
+        )
+        candidate_count = 0
+        with _measure_injection_phase(
+            injection_observer,
+            "issue_candidate_build",
+            table_name=table_name,
+            issue_type=issue_type,
+            row_count=row_count_value,
+            target_count=target_count,
+        ) as metric:
+            for chunk in _iter_parquet_row_chunks(
+                file_path=current_path,
+                schema=current_schema,
+            ):
+                candidate_count += _count_candidate_locations(chunk, columns)
+            metric["output_count"] = candidate_count
+            metric["candidate_count"] = candidate_count
+        if candidate_count <= 0:
+            continue
+
+        sample_limit = _candidate_sample_limit(
+            candidate_count=candidate_count,
+            target_count=target_count,
+        )
+        selected_ordinals = _sample_candidate_ordinals(
+            candidate_count=candidate_count,
+            sample_limit=sample_limit,
+            rng=rng,
+        )
+        candidates: list[dict[str, Any]] = []
+        with _measure_injection_phase(
+            injection_observer,
+            "issue_candidate_shuffle",
+            table_name=table_name,
+            issue_type=issue_type,
+            input_count=candidate_count,
+            target_count=target_count,
+        ) as metric:
+            ordinal = 0
+            row_ordinal = 0
+            for chunk in _iter_parquet_row_chunks(
+                file_path=current_path,
+                schema=current_schema,
+            ):
+                for row in chunk:
+                    for column_name in columns:
+                        if row.get(column_name) is None:
+                            continue
+                        if ordinal in selected_ordinals:
+                            candidates.append(
+                                {
+                                    "row_ordinal": row_ordinal,
+                                    "column_name": column_name,
+                                    "row": dict(row),
+                                }
+                            )
+                        ordinal += 1
+                    row_ordinal += 1
+                    if len(candidates) >= sample_limit:
+                        break
+                if len(candidates) >= sample_limit:
+                    break
+            if len(candidates) > sample_limit:
+                candidates = candidates[:sample_limit]
+            rng.shuffle(candidates)
+            metric["output_count"] = len(candidates)
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
+            metric["selection_strategy"] = "deterministic_bounded_sample"
+
+        mutation_plan: dict[int, dict[str, Any]] = {}
+        applied = 0
+        with _measure_injection_phase(
+            injection_observer,
+            "issue_apply",
+            table_name=table_name,
+            issue_type=issue_type,
+            input_count=len(candidates),
+            target_count=target_count,
+        ) as metric:
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
+            noop_count = 0
+            skipped_row_limit_count = 0
+            for candidate in candidates:
+                if applied >= target_count:
+                    break
+                row = candidate["row"]
+                pk_value = row[primary_key]
+                row_key = (table_name, pk_value)
+                if (
+                    state.row_field_counts[row_key]
+                    >= state.config.global_limits.max_affected_fields_per_row
+                ):
+                    skipped_row_limit_count += 1
+                    continue
+                column_name = str(candidate["column_name"])
+                original_value = row.get(column_name)
+                injected_value = _mutated_value(
+                    issue_type=issue_type,
+                    table_name=table_name,
+                    column_name=column_name,
+                    row=row,
+                    original_value=original_value,
+                    rng=rng,
+                )
+                if injected_value == original_value:
+                    noop_count += 1
+                    continue
+                mutation_plan.setdefault(int(candidate["row_ordinal"]), {})[column_name] = (
+                    pk_value,
+                    original_value,
+                    injected_value,
+                )
+                state.row_field_counts[row_key] += 1
+                state.affected_rows.add(row_key)
+                state.issue_type_rows[issue_type].add(row_key)
+                state.table_issue_type_rows[(table_name, issue_type)].add(row_key)
+                state.issue_type_field_count[issue_type] += 1
+                state.manifest_entries.append(
+                    DataQualityInjectionManifestEntry.create(
+                        release_id=state.release_context.release_id,
+                        release_name=state.release_context.release_name,
+                        table_name=table_name,
+                        record_primary_key=pk_value,
+                        column_name=column_name,
+                        issue_type=issue_type,
+                        original_value=original_value,
+                        injected_value=injected_value,
+                        injection_level=state.effective_level,
+                        random_seed=state.config.random_seed,
+                        rule_id=f"{table_name}.{issue_type}",
+                    )
+                )
+                applied += 1
+            metric["output_count"] = applied
+            metric["applied_count"] = applied
+            metric["noop_count"] = noop_count
+            metric["skipped_row_limit_count"] = skipped_row_limit_count
+            metric["candidate_count"] = candidate_count
+            metric["sampled_count"] = len(candidates)
+
+        next_path = release_dir / f".{table_name}.{issue_type}.parquet"
+        current_schema = _rewrite_parquet_with_mutations(
+            source_path=current_path,
+            target_path=next_path,
+            columns=projection.included_columns,
+            schema=current_schema,
+            mutation_plan=mutation_plan,
+            compression=compression,
+        )
+        if current_path != base_path:
+            current_path.unlink(missing_ok=True)
+        current_path = next_path
+        _check_export_rss_guard(
+            rss_guard_mb=rss_guard_mb,
+            release_name=release_name,
+            release_type=release_type,
+            snapshot_month=snapshot_month,
+            phase_name="after_streamed_mutation_issue",
+            table_name=table_name,
+            activity_callback=activity_callback,
+        )
+
+    final_path = final_file_path or (release_dir / projection.output_file)
+    if current_path != final_path:
+        current_path.replace(final_path)
+    if base_path != final_path:
+        base_path.unlink(missing_ok=True)
+    return StudentDatasetFileManifest(
+        table_name=table_name,
+        file_name=projection.output_file,
+        file_path=final_path,
+        row_count=row_count_value,
+        columns=projection.included_columns,
+        schema_hash=_schema_hash(current_schema),
+        checksum=_file_checksum(final_path),
+    )
+
+
+def _iter_parquet_row_chunks(
+    *,
+    file_path: Path,
+    schema: pa.Schema | None = None,
+) -> list[dict[str, Any]]:
+    source_file = pq.ParquetFile(file_path)
+    batch_schema = schema or source_file.schema_arrow
+    for batch in source_file.iter_batches(batch_size=PARQUET_ROW_GROUP_SIZE):
+        table = pa.Table.from_batches([batch], schema=batch_schema)
+        yield table.to_pylist()
+
+
+def _rewrite_parquet_with_mutations(
+    *,
+    source_path: Path,
+    target_path: Path,
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+    mutation_plan: Mapping[int, Mapping[str, tuple[object, Any, Any]]],
+    compression: str,
+) -> pa.Schema:
+    row_ordinal = 0
+    with pq.ParquetWriter(target_path, schema=schema, compression=compression) as writer:
+        for chunk in _iter_parquet_row_chunks(file_path=source_path, schema=schema):
+            for row in chunk:
+                row_mutations = mutation_plan.get(row_ordinal)
+                if row_mutations:
+                    for column_name, (_, _, injected_value) in row_mutations.items():
+                        row[column_name] = injected_value
+                row_ordinal += 1
+            for row_group_chunk in _iter_row_chunks(chunk, PARQUET_ROW_GROUP_SIZE):
+                writer.write_table(
+                    _rows_to_arrow_table(
+                        rows=row_group_chunk,
+                        columns=columns,
+                        schema=schema,
+                    )
+                )
+    return schema
+
+
+def _plan_and_capture_duplicate_source_matches(
+    *,
+    state: Any,
+    file_path: Path,
+    release_name: str,
+    injection_observer: Callable[[str, Mapping[str, Any]], None],
+) -> tuple[Any, dict[object, dict[str, Any]], int]:
+    row_count = 0
+    max_id = 0
+    for chunk in _iter_parquet_row_chunks(file_path=file_path):
+        row_count += len(chunk)
+        for row in chunk:
+            row_id = int(row["id"])
+            if row_id > max_id:
+                max_id = row_id
+    matches_rule = state.config.table_rules.get("matches")
+    if (
+        matches_rule is None
+        or ISSUE_TYPE_DUPLICATE_LIKE_ROWS not in matches_rule.allowed_issue_types
+    ):
+        state.issue_type_candidate_rows.setdefault(ISSUE_TYPE_DUPLICATE_LIKE_ROWS, row_count)
+        state.table_issue_type_candidate_rows.setdefault(
+            ("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS),
+            row_count,
+        )
+        return (
+            DataQualityDuplicateLikePlan((), 0, row_count, 0),
+            {},
+            max_id + 1,
+        )
+
+    profile = level_profile(matches_rule.issue_profile or state.effective_level)
+    state.issue_type_candidate_rows.setdefault(ISSUE_TYPE_DUPLICATE_LIKE_ROWS, row_count)
+    state.table_issue_type_candidate_rows.setdefault(
+        ("matches", ISSUE_TYPE_DUPLICATE_LIKE_ROWS),
+        row_count,
+    )
+    target_count = _target_count(
+        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        row_count=row_count,
+        profile=profile,
+    )
+    if target_count <= 0 or row_count <= 0:
+        return (
+            DataQualityDuplicateLikePlan((), 0, row_count, 0),
+            {},
+            max_id + 1,
+        )
+
+    rng = random.Random(
+        state.config.seed_for(
+            state.release_context.release_id,
+            "matches",
+            ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        )
+    )
+    with _measure_injection_phase(
+        injection_observer,
+        "duplicate_like_match_copy_shuffle",
+        table_name="matches",
+        issue_type=ISSUE_TYPE_DUPLICATE_LIKE_ROWS,
+        input_count=row_count,
+        target_count=target_count,
+    ) as metric:
+        sample_limit = _candidate_sample_limit(
+            candidate_count=row_count,
+            target_count=target_count,
+            multiplier=8,
+            min_extra=4096,
+        )
+        selected_ordinals = _sample_candidate_ordinals(
+            candidate_count=row_count,
+            sample_limit=sample_limit,
+            rng=rng,
+        )
+        selected_rows: list[dict[str, Any]] = []
+        ordinal = 0
+        for chunk in _iter_parquet_row_chunks(file_path=file_path):
+            for row in chunk:
+                if ordinal in selected_ordinals:
+                    selected_rows.append(dict(row))
+                    if len(selected_rows) >= sample_limit:
+                        break
+                ordinal += 1
+            if len(selected_rows) >= sample_limit:
+                break
+        rng.shuffle(selected_rows)
+        metric["output_count"] = len(selected_rows)
+        metric["candidate_count"] = row_count
+        metric["sampled_count"] = len(selected_rows)
+        metric["selection_strategy"] = "deterministic_bounded_sample"
+    captures = {row["id"]: row for row in selected_rows}
+    plan = DataQualityDuplicateLikePlan(
+        source_match_ids=tuple(row["id"] for row in selected_rows),
+        target_count=target_count,
+        candidate_count=row_count,
+        sampled_count=len(selected_rows),
+    )
+    return plan, captures, max_id + 1
+
+
+def _capture_match_teams_for_duplicate_rows(
+    *,
+    file_path: Path,
+    source_match_ids: set[object],
+) -> tuple[defaultdict[object, list[dict[str, Any]]], set[object], int]:
+    captured: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+    source_match_team_ids: set[object] = set()
+    max_id = 0
+    for chunk in _iter_parquet_row_chunks(file_path=file_path):
+        for row in chunk:
+            row_id = int(row["id"])
+            if row_id > max_id:
+                max_id = row_id
+            if row["match_id"] in source_match_ids:
+                copied = dict(row)
+                captured[row["match_id"]].append(copied)
+                source_match_team_ids.add(row["id"])
+    return captured, source_match_team_ids, max_id + 1
+
+
+def _capture_match_team_players_for_duplicate_rows(
+    *,
+    file_path: Path,
+    source_match_team_ids: set[object],
+) -> tuple[defaultdict[object, list[dict[str, Any]]], int]:
+    captured: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+    max_id = 0
+    for chunk in _iter_parquet_row_chunks(file_path=file_path):
+        for row in chunk:
+            row_id = int(row["id"])
+            if row_id > max_id:
+                max_id = row_id
+            if row["match_team_id"] in source_match_team_ids:
+                captured[row["match_team_id"]].append(dict(row))
+    return captured, max_id + 1
+
+
+def _capture_match_games_for_duplicate_rows(
+    *,
+    file_path: Path,
+    source_match_ids: set[object],
+) -> tuple[defaultdict[object, list[dict[str, Any]]], int]:
+    captured: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+    max_id = 0
+    for chunk in _iter_parquet_row_chunks(file_path=file_path):
+        for row in chunk:
+            row_id = int(row["id"])
+            if row_id > max_id:
+                max_id = row_id
+            if row["match_id"] in source_match_ids:
+                captured[row["match_id"]].append(dict(row))
+    return captured, max_id + 1
 
 
 def _load_normalized_rows_from_stream(
@@ -1924,12 +2622,14 @@ def _build_export_runtime_recorder(
     session: Session,
     build_parameters: StudentDatasetBuildParameters,
     instrumentation: ExportInstrumentationSettings,
+    job_status_id: int | None = None,
 ) -> RuntimeMetricRecorder | None:
     if not instrumentation.enabled:
         return None
     return RuntimeMetricRecorder(
         session=session,
         generation_run_id=build_parameters.generation_run_id,
+        job_status_id=job_status_id,
         stage_name="student_dataset_export",
     )
 
@@ -1975,6 +2675,7 @@ def _build_data_quality_injection_observer(
                         "issue_type": issue_type,
                         "rss_mb": rss_mb,
                         "row_count": event_fields.get("row_count"),
+                        "table_mode": event_fields.get("table_mode"),
                         "table_count": event_fields.get("table_count"),
                         "copy_mode": event_fields.get("copy_mode"),
                         "target_count": event_fields.get("target_count"),
@@ -1984,6 +2685,7 @@ def _build_data_quality_injection_observer(
                         "source_match_team_count": event_fields.get(
                             "source_match_team_count"
                         ),
+                        "captured_row_count": event_fields.get("captured_row_count"),
                         "applied_count": event_fields.get("applied_count"),
                         "noop_count": event_fields.get("noop_count"),
                         "skipped_row_limit_count": event_fields.get(

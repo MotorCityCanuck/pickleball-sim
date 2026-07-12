@@ -34,6 +34,7 @@ from app.exports.student_dataset import (  # noqa: E402
     validate_staged_release,
     write_staged_release_family,
 )
+import app.exports.student_dataset.writer as student_dataset_writer  # noqa: E402
 from app.exports.student_dataset.writer import _load_table_rows  # noqa: E402
 from app.models import GenerationRuntimeMetric  # noqa: E402
 from test_student_dataset_queries import (  # noqa: E402
@@ -142,6 +143,7 @@ def _enable_export_runtime_metrics(session, instrumentation_overrides=None) -> N
             CREATE TABLE generation_runtime_metrics (
                 id integer primary key autoincrement,
                 generation_run_id bigint not null,
+                job_status_id bigint,
                 batch_id bigint,
                 stage_name varchar(100) not null,
                 subphase_name varchar(100) not null,
@@ -490,12 +492,14 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
         overwrite_existing=False,
     )
 
+    job_status_id = 17
     write_staged_release_family(
         session=session,
         output_root=tmp_path,
         release_name="napa_student_release",
         release_windows=(release_window,),
         build_parameters=build_parameters,
+        job_status_id=job_status_id,
         activity_callback=activity_messages.append,
     )
 
@@ -510,6 +514,7 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
     assert "data_quality_capture_original_table_stats" in subphase_names
     assert "data_quality_prepare_injected_tables" in subphase_names
     assert "data_quality_validate_injected_tables" in subphase_names
+    assert "finalize_streamed_data_quality_file" in subphase_names
     assert any(
         message.startswith("Data quality injection capture original table stats start")
         for message in activity_messages
@@ -524,6 +529,7 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
     )
     assert stats_metric.input_count is not None
     assert "rss_mb" in stats_metric.metadata_json
+    assert stats_metric.job_status_id == job_status_id
     prepare_metric = (
         session.query(GenerationRuntimeMetric)
         .filter(
@@ -533,6 +539,18 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
         .one()
     )
     assert prepare_metric.metadata_json["copy_mode"] == "streaming"
+    finalize_metric = next(
+        metric
+        for metric in session.query(GenerationRuntimeMetric)
+        .filter(
+            GenerationRuntimeMetric.stage_name == "student_dataset_export",
+            GenerationRuntimeMetric.subphase_name == "finalize_streamed_data_quality_file",
+        )
+        .all()
+        if metric.metadata_json["table_name"] == "matches"
+    )
+    assert finalize_metric.metadata_json["row_group_count"] is not None
+    assert finalize_metric.metadata_json["parquet_row_group_size"] is not None
     injection_metric = (
         session.query(GenerationRuntimeMetric)
         .filter(
@@ -598,6 +616,137 @@ def test_streamed_data_quality_writer_matches_in_memory_injection_rows(
     for table_name in STUDENT_TABLE_ORDER:
         actual_rows = pq.read_table(release_dir / f"{table_name}.parquet").to_pylist()
         assert actual_rows == expected.tables[table_name]
+
+
+def test_tainted_write_streams_only_safe_tables_directly(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    streamed_tables: list[str] = []
+    original_write_table_from_source_stream = (
+        student_dataset_writer._write_table_from_source_stream
+    )
+
+    def recording_direct_stream(*args, **kwargs):
+        streamed_tables.append(kwargs["table_name"])
+        return original_write_table_from_source_stream(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._write_table_from_source_stream",
+        recording_direct_stream,
+    )
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    assert "team_memberships" in streamed_tables
+    assert "matches" not in streamed_tables
+    assert "match_teams" not in streamed_tables
+    assert "match_team_players" not in streamed_tables
+    assert "match_games" not in streamed_tables
+
+
+def test_tainted_write_streams_mutation_tables_without_row_buffering(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    original_load_table_rows = student_dataset_writer._load_table_rows
+    forbidden_tables = {
+        "clubs",
+        "club_memberships",
+        "monthly_batches",
+        "player_assessment_history",
+        "player_master",
+        "player_registrations",
+        "regions",
+        "teams",
+    }
+
+    def guarded_load_table_rows(*args, **kwargs):
+        table_name = kwargs["table_name"]
+        if table_name in forbidden_tables:
+            raise AssertionError(
+                f"tainted export should stream chunk-local mutations for {table_name}"
+            )
+        return original_load_table_rows(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._load_table_rows",
+        guarded_load_table_rows,
+    )
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+
+def test_tainted_write_streams_duplicate_family_without_row_buffering(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+
+    def fail_if_called(**kwargs):
+        raise AssertionError(
+            f"tainted export should not fully load table rows for {kwargs['table_name']}"
+        )
+
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._load_table_rows",
+        fail_if_called,
+    )
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(

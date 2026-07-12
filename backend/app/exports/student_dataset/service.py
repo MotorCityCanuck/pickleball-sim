@@ -292,6 +292,7 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=build_parameters,
+                    job_status_id=job_status.id,
                     progress_callback=lambda release_id, current, total: self._advance_stage_progress(
                         session=session,
                         checkpoint=checkpoint,
@@ -351,6 +352,7 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=clean_build_parameters,
+                    job_status_id=job_status.id,
                     progress_callback=lambda release_id, current, total: self._advance_stage_progress(
                         session=session,
                         checkpoint=checkpoint,
@@ -388,6 +390,7 @@ class StudentDatasetExportService:
                     release_name=release_name,
                     release_windows=release_windows,
                     build_parameters=build_parameters,
+                    job_status_id=job_status.id,
                     progress_callback=lambda release_id, current, total: self._advance_stage_progress(
                         session=session,
                         checkpoint=checkpoint,

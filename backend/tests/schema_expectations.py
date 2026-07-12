@@ -98,6 +98,7 @@ EXPECTED_PUBLIC_INDEXES = {
     "idx_generation_runs_status",
     "idx_generation_runtime_metrics_batch",
     "idx_generation_runtime_metrics_event",
+    "idx_generation_runtime_metrics_job",
     "idx_generation_runtime_metrics_run",
     "idx_generation_runtime_metrics_stage",
     "idx_generation_runtime_metrics_subphase",
@@ -426,6 +427,7 @@ EXPECTED_FOREIGN_KEYS = {
     "generation_runtime_metrics": {
         "batch_id->monthly_batches.id",
         "generation_run_id->generation_runs.id",
+        "job_status_id->job_status.id",
     },
     "job_stage_progress": {
         "batch_id->monthly_batches.id",

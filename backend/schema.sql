@@ -258,7 +258,7 @@ CREATE TABLE players (
 
 CREATE TABLE raw_seed_load_runs (
 	id BIGSERIAL NOT NULL, 
-	job_status_id BIGINT, 
+	job_status_id BIGINT,
 	dataset_type VARCHAR(80) NOT NULL, 
 	source_path VARCHAR(1000) NOT NULL, 
 	source_file_count INTEGER NOT NULL, 
@@ -427,6 +427,7 @@ CREATE TABLE export_runs (
 CREATE TABLE generation_runtime_metrics (
 	id BIGSERIAL NOT NULL, 
 	generation_run_id BIGINT NOT NULL, 
+	job_status_id BIGINT,
 	batch_id BIGINT, 
 	stage_name VARCHAR(100) NOT NULL, 
 	subphase_name VARCHAR(100) NOT NULL, 
@@ -444,6 +445,7 @@ CREATE TABLE generation_runtime_metrics (
 	CONSTRAINT chk_generation_runtime_metric_event_type CHECK (event_type IN ('completed', 'failed')), 
 	CONSTRAINT chk_generation_runtime_metric_elapsed CHECK (elapsed_ms >= 0), 
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id), 
+	FOREIGN KEY(job_status_id) REFERENCES job_status (id),
 	FOREIGN KEY(batch_id) REFERENCES monthly_batches (id)
 );
 
@@ -1121,6 +1123,7 @@ CREATE INDEX idx_generation_runs_started ON generation_runs (started_at);
 CREATE INDEX idx_generation_runs_status ON generation_runs (status);
 CREATE INDEX idx_generation_runtime_metrics_batch ON generation_runtime_metrics (batch_id);
 CREATE INDEX idx_generation_runtime_metrics_event ON generation_runtime_metrics (event_type);
+CREATE INDEX idx_generation_runtime_metrics_job ON generation_runtime_metrics (job_status_id);
 CREATE INDEX idx_generation_runtime_metrics_run ON generation_runtime_metrics (generation_run_id);
 CREATE INDEX idx_generation_runtime_metrics_stage ON generation_runtime_metrics (stage_name);
 CREATE INDEX idx_generation_runtime_metrics_subphase ON generation_runtime_metrics (subphase_name);

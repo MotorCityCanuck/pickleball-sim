@@ -28,11 +28,13 @@ class RuntimeMetricRecorder:
         *,
         session: Session,
         generation_run_id: int,
+        job_status_id: int | None = None,
         batch_id: int | None = None,
         stage_name: str,
     ) -> None:
         self.session = session
         self.generation_run_id = generation_run_id
+        self.job_status_id = job_status_id
         self.batch_id = batch_id
         self.stage_name = stage_name
         GenerationRuntimeMetric.__table__.create(
@@ -76,6 +78,7 @@ class RuntimeMetricRecorder:
             self.session.add(
                 GenerationRuntimeMetric(
                     generation_run_id=self.generation_run_id,
+                    job_status_id=self.job_status_id,
                     batch_id=self.batch_id,
                     stage_name=self.stage_name,
                     subphase_name=subphase_name,
@@ -121,6 +124,7 @@ class RuntimeMetricRecorder:
         self.session.add(
             GenerationRuntimeMetric(
                 generation_run_id=self.generation_run_id,
+                job_status_id=self.job_status_id,
                 batch_id=self.batch_id,
                 stage_name=self.stage_name,
                 subphase_name=subphase_name,

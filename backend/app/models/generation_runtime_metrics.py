@@ -26,6 +26,7 @@ class GenerationRuntimeMetric(Base, TimestampMixin):
         ForeignKey("generation_runs.id"),
         nullable=False,
     )
+    job_status_id = Column(BigInteger, ForeignKey("job_status.id"))
     batch_id = Column(BigInteger, ForeignKey("monthly_batches.id"))
     stage_name = Column(String(100), nullable=False)
     subphase_name = Column(String(100), nullable=False)
@@ -39,10 +40,12 @@ class GenerationRuntimeMetric(Base, TimestampMixin):
     metadata_json = Column(JSONB().with_variant(JSON(), "sqlite"))
 
     generation_run = relationship("GenerationRun")
+    job_status = relationship("JobStatus")
     batch = relationship("MonthlyBatch")
 
     __table_args__ = (
         Index("idx_generation_runtime_metrics_run", "generation_run_id"),
+        Index("idx_generation_runtime_metrics_job", "job_status_id"),
         Index("idx_generation_runtime_metrics_batch", "batch_id"),
         Index("idx_generation_runtime_metrics_stage", "stage_name"),
         Index("idx_generation_runtime_metrics_subphase", "subphase_name"),
