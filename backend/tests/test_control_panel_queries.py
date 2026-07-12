@@ -802,6 +802,86 @@ def test_student_dataset_export_job_prefers_newer_completed_job_over_older_runni
     assert job.status == "succeeded"
 
 
+def test_student_dataset_export_summary_deduplicates_and_orders_release_catalog(session):
+    _seed_valid_config(session)
+    _seed_ready_reference_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, completed_at, created_at, updated_at
+            ) VALUES (
+                18, 'Export catalog run', 42, 'v1', 'succeeded', '2026-05-20 12:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_releases (
+                id, release_name, release_type, release_month, generation_run_id, data_quality_level,
+                output_path, status, created_at, updated_at, completed_at
+            ) VALUES
+                (181, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 18, 'none',
+                 'data/student_dataset_exports/run/clean/student_release_initial_history', 'succeeded',
+                 '2026-05-20 12:10:00', '2026-05-20 12:10:00', '2026-05-20 12:10:00'),
+                (182, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 18, 'none',
+                 'data/student_dataset_exports/run/clean/student_release_snapshot_2026_06', 'succeeded',
+                 '2026-05-20 12:11:00', '2026-05-20 12:11:00', '2026-05-20 12:11:00'),
+                (183, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'none',
+                 'data/student_dataset_exports/run/clean/student_release_snapshot_2026_07', 'succeeded',
+                 '2026-05-20 12:12:00', '2026-05-20 12:12:00', '2026-05-20 12:12:00'),
+                (184, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 18, 'medium',
+                 'data/student_dataset_exports/run/tainted/student_release_initial_history', 'succeeded',
+                 '2026-05-20 12:20:00', '2026-05-20 12:20:00', '2026-05-20 12:20:00'),
+                (185, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 18, 'medium',
+                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_06', 'succeeded',
+                 '2026-05-20 12:21:00', '2026-05-20 12:21:00', '2026-05-20 12:21:00'),
+                (186, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'medium',
+                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_07', 'succeeded',
+                 '2026-05-20 12:22:00', '2026-05-20 12:22:00', '2026-05-20 12:22:00'),
+                (187, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'medium',
+                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_07', 'succeeded',
+                 '2026-05-20 12:22:00', '2026-05-20 12:23:00', '2026-05-20 12:23:00')
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 30, 0)
+    ).get_student_dataset_export_summary(session)
+
+    releases = summary.latest_releases
+    assert len(releases) == 6
+    assert [release.display_quality_label for release in releases] == [
+        "Clean",
+        "Clean",
+        "Clean",
+        "Tainted",
+        "Tainted",
+        "Tainted",
+    ]
+    assert [release.display_release_type for release in releases] == [
+        "initial_snapshot",
+        "monthly_incremental",
+        "monthly_incremental",
+        "initial_snapshot",
+        "monthly_incremental",
+        "monthly_incremental",
+    ]
+    assert [release.release_month.isoformat() for release in releases] == [
+        "2026-05-01",
+        "2026-06-01",
+        "2026-07-01",
+        "2026-05-01",
+        "2026-06-01",
+        "2026-07-01",
+    ]
+    assert releases[-1].release_id == 187
+
+
 def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(session):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)

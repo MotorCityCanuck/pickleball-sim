@@ -329,11 +329,11 @@
         <div style="display:grid; gap:12px;">
             <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end; flex-wrap:wrap;">
                 <div>
-                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Published release packages</div>
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Published releases</div>
                     <div style="margin-top:6px; font-size:20px; color:#172033; font-weight:800;">Release catalog</div>
                 </div>
                 <div style="color:#5a6477; font-size:13px;">
-                    Each card is a published package with its release type, row volume, and direct operator actions.
+                    Each card is one published release folder, ordered clean first and then tainted, with initial snapshots before monthly incrementals.
                 </div>
             </div>
 
@@ -356,6 +356,7 @@
                         <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
                             <div style="display:grid; gap:6px; min-width:0; flex:1 1 180px;">
                                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <div style="border:1px solid {{ '#b7dfc2' if release.is_clean else '#c5d1e6' }}; border-radius:999px; padding:4px 10px; font-size:12px; color:{{ '#1f5f30' if release.is_clean else '#173f8a' }}; background:{{ '#edf8f0' if release.is_clean else '#eff4ff' }};">{{ release.display_quality_label }}</div>
                                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">{{ release.display_release_type }}</div>
                                     {% if release.release_month %}
                                         <div style="border:1px solid #d6d9df; border-radius:999px; padding:4px 10px; font-size:12px; color:#5a6477;">{{ release.release_month }}</div>

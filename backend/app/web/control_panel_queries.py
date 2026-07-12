@@ -210,6 +210,14 @@ class StudentDatasetReleaseSummary:
     def display_release_type(self) -> str:
         return _display_release_type(self.release_type)
 
+    @property
+    def is_clean(self) -> bool:
+        return (self.data_quality_level or "none") == "none"
+
+    @property
+    def display_quality_label(self) -> str:
+        return "Clean" if self.is_clean else "Tainted"
+
 
 @dataclass(frozen=True)
 class StudentDatasetExportCompletionGroupSummary:
@@ -782,9 +790,10 @@ class ControlPanelQueries:
                     StudentDatasetRelease.created_at.desc(),
                     StudentDatasetRelease.id.desc(),
                 )
-                .limit(5)
+                .limit(100)
             )
         )
+        release_rows = _catalog_release_rows(release_rows, limit=30)
         file_counts = _student_release_file_counts(session, release_rows)
         comparison_rows: list[StudentDatasetComparison] = []
         if _table_exists(session, StudentDatasetComparison.__tablename__):
@@ -2190,6 +2199,58 @@ def _display_release_type(value: str | None) -> str:
     if value == "historical_baseline":
         return "initial_snapshot"
     return value or "unknown"
+
+
+def _catalog_release_rows(
+    release_rows: list[StudentDatasetRelease],
+    *,
+    limit: int,
+) -> list[StudentDatasetRelease]:
+    deduped_by_key: dict[tuple[object, ...], StudentDatasetRelease] = {}
+    for release in release_rows:
+        key = (
+            release.release_name,
+            release.release_type,
+            release.release_month,
+            release.data_quality_level or "none",
+            release.output_path,
+        )
+        current = deduped_by_key.get(key)
+        if current is None or _release_catalog_sort_key(release) > _release_catalog_sort_key(current):
+            deduped_by_key[key] = release
+
+    ordered = sorted(
+        deduped_by_key.values(),
+        key=_release_catalog_display_key,
+    )
+    return ordered[:limit]
+
+
+def _release_catalog_sort_key(
+    release: StudentDatasetRelease,
+) -> tuple[datetime, datetime, int]:
+    return (
+        release.completed_at or datetime.min.replace(tzinfo=None),
+        release.created_at or datetime.min.replace(tzinfo=None),
+        int(release.id or 0),
+    )
+
+
+def _release_catalog_display_key(
+    release: StudentDatasetRelease,
+) -> tuple[int, int, date, datetime, int]:
+    quality_rank = 0 if (release.data_quality_level or "none") == "none" else 1
+    release_type = _display_release_type(release.release_type)
+    release_type_rank = 0 if release_type == "initial_snapshot" else 1
+    release_month = release.release_month or date.min
+    completed_at = release.completed_at or release.created_at or datetime.min
+    return (
+        quality_rank,
+        release_type_rank,
+        release_month,
+        completed_at,
+        int(release.id or 0),
+    )
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:

@@ -1267,6 +1267,40 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Open Orchestration" in tournament.body.decode()
 
 
+def test_control_panel_marks_export_completion_seen_only_on_close(session_factory):
+    _seed_snapshot_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        response = routes["/control"](
+            request=_request("/control"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+
+    initialize_match = re.search(
+        r"window\.initializeStudentExportCompletionModal = function initializeStudentExportCompletionModal\(\) \{(?P<body>.*?)\n            \};",
+        body,
+        re.DOTALL,
+    )
+    close_match = re.search(
+        r"window\.closeStudentExportCompletionModal = function closeStudentExportCompletionModal\(\) \{(?P<body>.*?)\n            \};",
+        body,
+        re.DOTALL,
+    )
+
+    assert initialize_match is not None
+    assert close_match is not None
+    assert "studentExportCompletionStorageSet(" not in initialize_match.group("body")
+    assert "markStudentExportCompletionSeen(modal);" in close_match.group("body")
+
+
 def test_tournament_partial_renders_empty_state_without_generation_run(session_factory):
     _seed_idle_config_state(session_factory)
     app = create_app()
@@ -2355,6 +2389,54 @@ def test_export_progress_renders_release_actions(session_factory):
     assert "Open Folder" in body
     assert "Run QC" in body
     assert "Copy Path" in body
+
+
+def test_export_progress_deduplicates_and_orders_release_cards(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO student_dataset_releases (
+                    id, release_name, release_type, release_month, generation_run_id,
+                    data_quality_level, output_path, status, created_at, updated_at, completed_at
+                ) VALUES
+                    (71, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 2,
+                     'none', 'data/student_dataset_exports/run/clean/student_release_initial_history',
+                     'succeeded', '2026-05-20 10:10:00', '2026-05-20 10:10:00', '2026-05-20 10:10:00'),
+                    (72, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 2,
+                     'none', 'data/student_dataset_exports/run/clean/student_release_snapshot_2026_06',
+                     'succeeded', '2026-05-20 10:11:00', '2026-05-20 10:11:00', '2026-05-20 10:11:00'),
+                    (73, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 2,
+                     'medium', 'data/student_dataset_exports/run/tainted/student_release_initial_history',
+                     'succeeded', '2026-05-20 10:12:00', '2026-05-20 10:12:00', '2026-05-20 10:12:00'),
+                    (74, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 2,
+                     'medium', 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_06',
+                     'succeeded', '2026-05-20 10:13:00', '2026-05-20 10:13:00', '2026-05-20 10:13:00'),
+                    (75, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 2,
+                     'medium', 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_06',
+                     'succeeded', '2026-05-20 10:13:00', '2026-05-20 10:14:00', '2026-05-20 10:14:00')
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Published releases" in body
+    assert "Each card is one published release folder" in body
+    assert body.find(">Clean</div>") < body.find(">Tainted</div>")
+    assert body.find("student_release_initial_history") < body.find("student_release_snapshot_2026_06")
 
 
 def test_export_progress_renders_refresh_and_clear_stalled_controls(session_factory):
