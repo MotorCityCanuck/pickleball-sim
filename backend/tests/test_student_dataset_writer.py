@@ -14,7 +14,12 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.exports.data_quality import INSTRUCTOR_MANIFEST_FILE_NAME  # noqa: E402
+from app.exports.data_quality import (  # noqa: E402
+    INSTRUCTOR_MANIFEST_FILE_NAME,
+    DataQualityReleaseContext,
+    build_default_data_quality_config,
+    inject_data_quality_issues,
+)
 from app.exports.student_dataset import (  # noqa: E402
     MANIFEST_FILE_NAME,
     PROJECTION_BY_TABLE,
@@ -29,6 +34,7 @@ from app.exports.student_dataset import (  # noqa: E402
     validate_staged_release,
     write_staged_release_family,
 )
+from app.exports.student_dataset.writer import _load_table_rows  # noqa: E402
 from app.models import GenerationRuntimeMetric  # noqa: E402
 from test_student_dataset_queries import (  # noqa: E402
     incremental_release_window,
@@ -38,6 +44,28 @@ from test_student_dataset_queries import (  # noqa: E402
     session,
     session_factory,
 )
+
+
+class _StreamingOnlyExecuteResult:
+    def __init__(self, result):
+        self._result = result
+
+    def mappings(self):
+        return _StreamingOnlyMappingResult(self._result.mappings())
+
+
+class _StreamingOnlyMappingResult:
+    def __init__(self, result):
+        self._result = result
+
+    def all(self):
+        raise AssertionError("student export source queries must stream partitions")
+
+    def partitions(self, size):
+        yield from self._result.partitions(size)
+
+    def __iter__(self):
+        return iter(self._result)
 
 
 def _seed_incremental_match_shape(session) -> None:
@@ -187,7 +215,11 @@ def test_clean_write_staged_release_family_skips_data_quality_injection(
         raise AssertionError("clean exports should stream directly to parquet")
 
     monkeypatch.setattr(
-        "app.exports.student_dataset.writer.inject_data_quality_issues",
+        "app.exports.student_dataset.writer._write_data_quality_tainted_release_streaming",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._load_table_rows",
         fail_if_called,
     )
     build_parameters = StudentDatasetBuildParameters(
@@ -324,6 +356,75 @@ def test_write_staged_release_family_records_export_query_metrics_when_enabled(
     )
 
 
+def test_write_staged_release_family_streams_source_query_rows(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    original_execute = session.execute
+
+    def execute_streaming_only(*args, **kwargs):
+        return _StreamingOnlyExecuteResult(original_execute(*args, **kwargs))
+
+    monkeypatch.setattr(session, "execute", execute_streaming_only)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+        overwrite_existing=False,
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    assert len(result.releases[0].files) == len(STUDENT_TABLE_ORDER)
+
+
+def test_write_staged_release_family_writes_parquet_row_groups(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer.PARQUET_ROW_GROUP_SIZE",
+        1,
+    )
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="none",
+        overwrite_existing=False,
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    monthly_batches_file = (
+        result.releases[0].release_dir / "monthly_batches.parquet"
+    )
+    assert pq.ParquetFile(monthly_batches_file).num_row_groups == 2
+
+
 def test_write_staged_release_family_stops_when_rss_guard_is_exceeded(
     session,
     release_window,
@@ -431,7 +532,7 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
         )
         .one()
     )
-    assert prepare_metric.metadata_json["copy_mode"] == "in_place"
+    assert prepare_metric.metadata_json["copy_mode"] == "streaming"
     injection_metric = (
         session.query(GenerationRuntimeMetric)
         .filter(
@@ -441,6 +542,62 @@ def test_write_staged_release_family_records_data_quality_injection_metrics_when
         .one()
     )
     assert "rss_mb" in injection_metric.metadata_json
+
+
+def test_streamed_data_quality_writer_matches_in_memory_injection_rows(
+    session,
+    release_window,
+    query_context,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    release_name = "napa_student_release"
+    concrete_release_name = f"{release_name}{release_window.folder_suffix}"
+    config = build_default_data_quality_config(level="medium")
+    clean_tables = {
+        table_name: _load_table_rows(
+            session=session,
+            table_name=table_name,
+            context=query_context,
+            release_name=concrete_release_name,
+        )
+        for table_name in STUDENT_TABLE_ORDER
+    }
+    expected = inject_data_quality_issues(
+        tables=clean_tables,
+        config=config,
+        release_context=DataQualityReleaseContext(
+            release_id=concrete_release_name,
+            release_name=concrete_release_name,
+            release_type=release_window.release_type,
+            generation_run_id=1,
+            snapshot_month=release_window.snapshot_month,
+        ),
+        copy_tables=False,
+    )
+
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name=release_name,
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name=release_name,
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    release_dir = result.releases[0].release_dir
+    for table_name in STUDENT_TABLE_ORDER:
+        actual_rows = pq.read_table(release_dir / f"{table_name}.parquet").to_pylist()
+        assert actual_rows == expected.tables[table_name]
 
 
 def test_write_staged_release_manifest_reports_files_and_row_counts(

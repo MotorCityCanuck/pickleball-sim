@@ -214,7 +214,97 @@
                     replacement.textContent = originalScript.textContent;
                     originalScript.replaceWith(replacement);
                 }
+                window.initializeStudentExportCompletionModal?.();
             }
+
+            function studentExportCompletionStorageGet(key) {
+                try {
+                    return window.localStorage.getItem(key);
+                } catch (_) {
+                    return null;
+                }
+            }
+
+            function studentExportCompletionStorageSet(key, value) {
+                try {
+                    window.localStorage.setItem(key, value);
+                } catch (_) {
+                    /* Ignore storage failures; the modal can still be shown. */
+                }
+            }
+
+            function studentExportCompletionStorageKey(modal) {
+                const completionKey = `${modal.dataset.jobStatusId}:${modal.dataset.completedAt || "completed"}`;
+                return `student-dataset-export-complete:v3:${completionKey}`;
+            }
+
+            window.closeStudentExportCompletionModal = function closeStudentExportCompletionModal() {
+                const modal = document.getElementById("student-export-completion-modal");
+                if (modal) {
+                    modal.style.display = "none";
+                    modal.setAttribute("aria-hidden", "true");
+                }
+                delete document.body.dataset.studentExportCompletionModalOpen;
+                document.body.style.overflow = "";
+            };
+
+            window.initializeStudentExportCompletionModal = function initializeStudentExportCompletionModal() {
+                const modal = document.getElementById("student-export-completion-modal");
+                if (!modal || !modal.isConnected) {
+                    delete document.body.dataset.studentExportCompletionModalOpen;
+                    document.body.style.overflow = "";
+                    return;
+                }
+                if (!modal.dataset.initialized) {
+                    modal.dataset.initialized = "true";
+                    modal.addEventListener("click", (event) => {
+                        if (event.target === modal) {
+                            window.closeStudentExportCompletionModal();
+                        }
+                    });
+                }
+                const storageKey = studentExportCompletionStorageKey(modal);
+                if (studentExportCompletionStorageGet(storageKey)) {
+                    modal.style.display = "none";
+                    modal.setAttribute("aria-hidden", "true");
+                    return;
+                }
+                window.setTimeout(() => {
+                    const currentModal = document.getElementById("student-export-completion-modal");
+                    if (currentModal !== modal || !modal.isConnected) {
+                        return;
+                    }
+                    modal.style.display = "flex";
+                    modal.removeAttribute("aria-hidden");
+                    document.body.dataset.studentExportCompletionModalOpen = "true";
+                    document.body.style.overflow = "hidden";
+                    studentExportCompletionStorageSet(storageKey, "shown");
+                }, 80);
+            };
+
+            document.body.addEventListener("htmx:afterSwap", () => {
+                window.initializeStudentExportCompletionModal?.();
+            });
+
+            document.body.addEventListener("htmx:beforeRequest", (event) => {
+                if (document.body.dataset.studentExportCompletionModalOpen !== "true") {
+                    return;
+                }
+                const requestPath = event.detail?.requestConfig?.path
+                    || event.detail?.pathInfo?.requestPath
+                    || "";
+                if (String(requestPath).includes("/control/partials/orchestration")) {
+                    event.preventDefault();
+                }
+            });
+
+            document.body.addEventListener("htmx:beforeSwap", (event) => {
+                const modal = document.getElementById("student-export-completion-modal");
+                const target = event.detail?.target;
+                if (modal && target instanceof Element && (target === modal || target.contains(modal))) {
+                    window.closeStudentExportCompletionModal();
+                }
+            });
 
             window.setControlPanelTab = function setControlPanelTab(activeButton) {
                 document.querySelectorAll(".tab-button").forEach((button) => {
@@ -393,6 +483,7 @@
                     window.setControlPanelActionStatus(error.message || "DuckDB QC failed.", "error");
                 }
             };
+            window.initializeStudentExportCompletionModal?.();
         })();
     </script>
 </body>

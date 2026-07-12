@@ -86,6 +86,45 @@ def validate_injected_tables(
     return DataQualityInjectionValidationResult(status="passed", checks=tuple(checks))
 
 
+def validate_streamed_injected_tables(
+    *,
+    original_table_row_counts: Mapping[str, int],
+    injected_table_row_counts: Mapping[str, int],
+    config: DataQualityInjectionConfig,
+    summary,
+    manifest_entries: Iterable[Any] = (),
+) -> DataQualityInjectionValidationResult:
+    """Validate streamed injection safety checks that do not require full tables."""
+
+    checks: list[DataQualityValidationCheck] = []
+    manifest_entries_tuple = tuple(manifest_entries)
+    checks.extend(
+        _validate_streamed_row_counts(
+            original_table_row_counts,
+            injected_table_row_counts,
+            summary,
+        )
+    )
+    checks.extend(_validate_required_fields(manifest_entries_tuple))
+    checks.extend(_validate_protected_fields(manifest_entries_tuple))
+    checks.extend(_validate_issue_rates(original_table_row_counts, config, summary))
+
+    failed = [check for check in checks if check.status != "passed"]
+    if failed:
+        result = DataQualityInjectionValidationResult(
+            status="failed",
+            checks=tuple(checks),
+        )
+        failed_names = ", ".join(check.name for check in failed[:5])
+        if len(failed) > 5:
+            failed_names += ", ..."
+        raise DataQualityValidationError(
+            f"Streamed data quality injection validation failed: {failed_names}",
+            result,
+        )
+    return DataQualityInjectionValidationResult(status="passed", checks=tuple(checks))
+
+
 def _validate_column_shapes(
     original_table_row_counts: Mapping[str, int],
     injected_tables: Mapping[str, list[dict[str, Any]]],
@@ -123,6 +162,34 @@ def _validate_row_counts(
         row_delta = summary.table_row_deltas.get(table_name, 0)
         expected_row_count = original_row_count + row_delta
         injected_row_count = len(injected_tables[table_name])
+        checks.append(
+            _check(
+                name=f"rows:{table_name}",
+                passed=injected_row_count == expected_row_count,
+                passed_message="Injected row count matches the expected table delta.",
+                failed_message="Injected row count does not match the expected table delta.",
+                details={
+                    "table": table_name,
+                    "original_row_count": original_row_count,
+                    "expected_row_count": expected_row_count,
+                    "injected_row_count": injected_row_count,
+                    "row_delta": row_delta,
+                },
+            )
+        )
+    return tuple(checks)
+
+
+def _validate_streamed_row_counts(
+    original_table_row_counts: Mapping[str, int],
+    injected_table_row_counts: Mapping[str, int],
+    summary,
+) -> tuple[DataQualityValidationCheck, ...]:
+    checks: list[DataQualityValidationCheck] = []
+    for table_name, original_row_count in original_table_row_counts.items():
+        row_delta = summary.table_row_deltas.get(table_name, 0)
+        expected_row_count = original_row_count + row_delta
+        injected_row_count = injected_table_row_counts.get(table_name)
         checks.append(
             _check(
                 name=f"rows:{table_name}",

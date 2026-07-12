@@ -1117,6 +1117,10 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "window.openControlPanelFolder" in body
     assert "window.downloadControlPanelReleasePackage" in body
     assert "window.runControlPanelReleaseQc" in body
+    assert "window.initializeStudentExportCompletionModal" in body
+    assert "student-dataset-export-complete:v3:" in body
+    assert 'document.body.addEventListener("htmx:afterSwap"' in body
+    assert 'document.body.addEventListener("htmx:beforeRequest"' in body
     assert "Read only config" in body
 
 
@@ -2240,6 +2244,8 @@ def test_export_progress_renders_completion_popup_summary(session_factory):
     body = response.body.decode()
     assert response.status_code == 200
     assert 'id="student-export-completion-modal"' in body
+    assert 'data-completed-at="2026-05-20T10:02:03"' in body
+    assert "student-dataset-export-complete:" not in body
     assert "Job 86 completed" in body
     assert "123 seconds" in body
     assert "Rows exported" in body
@@ -2402,6 +2408,7 @@ def test_export_progress_renders_refresh_and_clear_stalled_controls(session_fact
     assert response.status_code == 200
     assert "Refresh export status" in body
     assert "Clear stalled job" in body
+    assert 'hx-trigger="every 10s"\n        hx-target="#control-tab-content"' not in body
 
 
 def test_export_progress_prefers_newer_succeeded_job_over_older_failed_job(session_factory):

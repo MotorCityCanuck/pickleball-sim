@@ -6,30 +6,41 @@ import json
 import logging
 import os
 import resource
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Mapping
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import sqltypes
 
 from app.generation.runtime_metrics import RuntimeMetricRecorder
 from app.exports.data_quality import (
     INSTRUCTOR_MANIFEST_FILE_NAME,
+    DataQualityDuplicateLikeCaptures,
+    DataQualityDuplicateLikeNextIds,
     DataQualityInjectionManifestEntry,
     DataQualityReleaseContext,
+    apply_table_quality_rules,
+    build_duplicate_like_rows,
     build_default_data_quality_config,
-    inject_data_quality_issues,
+    create_injection_state,
+    injection_summary_from_state,
     manifest_table,
     normalize_data_quality_level,
+    plan_duplicate_like_rows,
+    validate_streamed_injected_tables,
 )
+from app.exports.data_quality.rules import next_primary_key
 from app.models import GenerationRun
 
 from .projection import (
@@ -45,6 +56,15 @@ from .validation import StudentDatasetValidationResult, validate_staged_release
 MANIFEST_FILE_NAME = "manifest.json"
 DEFAULT_PARQUET_COMPRESSION = "snappy"
 EXPORT_RSS_GUARD_ENV_VAR = "STUDENT_DATASET_EXPORT_RSS_GUARD_MB"
+SOURCE_QUERY_STREAM_BATCH_SIZE = 10_000
+PARQUET_ROW_GROUP_SIZE = 10_000
+DUPLICATE_LIKE_TABLE_ORDER = (
+    "matches",
+    "match_teams",
+    "match_team_players",
+    "match_games",
+)
+DUPLICATE_LIKE_TABLES = frozenset(DUPLICATE_LIKE_TABLE_ORDER)
 ReleaseProgressCallback = Callable[[str, int, int], None]
 ReleaseActivityCallback = Callable[[str], None]
 logger = logging.getLogger("uvicorn.error")
@@ -148,6 +168,14 @@ class ExportInstrumentationSettings:
     enabled: bool
     capture_sql_text: bool
     rss_guard_mb: float | None = None
+
+
+@dataclass(frozen=True)
+class _StreamedDataQualityWriteResult:
+    files: tuple[StudentDatasetFileManifest, ...]
+    manifest_entries: tuple[DataQualityInjectionManifestEntry, ...]
+    original_table_row_counts: Mapping[str, int]
+    injected_table_row_counts: Mapping[str, int]
 
 
 def create_staging_root(output_root: Path, release_name: str) -> Path:
@@ -269,18 +297,6 @@ def write_staged_release(
         config=data_quality_config,
         release_type=release_window.release_type,
     ):
-        clean_tables: dict[str, list[dict[str, Any]]] = {}
-        for table_name in STUDENT_TABLE_ORDER:
-            clean_tables[table_name] = _load_table_rows(
-                session=session,
-                table_name=table_name,
-                context=context,
-                release_name=concrete_release_name,
-                activity_callback=activity_callback,
-                runtime_recorder=runtime_recorder,
-                instrumentation=instrumentation,
-                rss_guard_mb=rss_guard_mb,
-            )
         if activity_callback is not None:
             activity_callback(
                 f"Applying data quality rules for {concrete_release_name}."
@@ -292,14 +308,6 @@ def write_staged_release(
             snapshot_month=release_window.snapshot_month,
             phase_name="before_data_quality_injection",
             activity_callback=activity_callback,
-        )
-        _log_export_observation(
-            "data_quality_injection_start",
-            release_name=concrete_release_name,
-            release_type=release_window.release_type,
-            snapshot_month=release_window.snapshot_month.isoformat(),
-            table_count=len(clean_tables),
-            row_count=_table_row_count(clean_tables),
         )
         injection_metadata = _export_metric_metadata(
             release_name=concrete_release_name,
@@ -316,59 +324,47 @@ def write_staged_release(
             rss_guard_mb=rss_guard_mb,
         )
         if runtime_recorder is None:
-            injection_result = inject_data_quality_issues(
-                tables=clean_tables,
+            streaming_result = _write_data_quality_tainted_release_streaming(
+                session=session,
+                release_dir=release_dir,
+                context=context,
+                release_name=concrete_release_name,
+                release_window=release_window,
                 config=data_quality_config,
                 release_context=release_context,
-                instrumentation_callback=injection_observer,
-                copy_tables=False,
+                compression=compression,
+                activity_callback=activity_callback,
+                runtime_recorder=runtime_recorder,
+                instrumentation=instrumentation,
+                injection_observer=injection_observer,
+                rss_guard_mb=rss_guard_mb,
             )
         else:
             with runtime_recorder.measure(
                 "inject_data_quality_issues",
-                input_count=_table_row_count(clean_tables),
                 metadata=injection_metadata,
             ) as metric:
-                injection_result = inject_data_quality_issues(
-                    tables=clean_tables,
+                streaming_result = _write_data_quality_tainted_release_streaming(
+                    session=session,
+                    release_dir=release_dir,
+                    context=context,
+                    release_name=concrete_release_name,
+                    release_window=release_window,
                     config=data_quality_config,
                     release_context=release_context,
-                    instrumentation_callback=injection_observer,
-                    copy_tables=False,
-                )
-                metric["output_count"] = _table_row_count(injection_result.tables)
-                _record_metric_rss(metric)
-            runtime_recorder.flush()
-        data_quality_manifest_entries = injection_result.manifest_entries
-        _log_export_observation(
-            "data_quality_injection_end",
-            release_name=concrete_release_name,
-            release_type=release_window.release_type,
-            snapshot_month=release_window.snapshot_month.isoformat(),
-            affected_rows=injection_result.summary.total_affected_rows,
-            affected_fields=injection_result.summary.total_affected_fields,
-            manifest_entry_count=len(injection_result.manifest_entries),
-            row_count=_table_row_count(injection_result.tables),
-        )
-        for table_name in STUDENT_TABLE_ORDER:
-            if activity_callback is not None:
-                activity_callback(
-                    f"Writing parquet for {concrete_release_name}: {table_name}."
-                )
-            files_list.append(
-                _write_table_rows(
-                    release_dir=release_dir,
-                    table_name=table_name,
-                    row_dicts=injection_result.tables[table_name],
                     compression=compression,
-                    release_name=concrete_release_name,
-                    release_type=release_window.release_type,
-                    snapshot_month=release_window.snapshot_month,
-                    runtime_recorder=runtime_recorder,
                     activity_callback=activity_callback,
+                    runtime_recorder=runtime_recorder,
+                    instrumentation=instrumentation,
+                    injection_observer=injection_observer,
                     rss_guard_mb=rss_guard_mb,
                 )
-            )
+                metric["input_count"] = sum(streaming_result.original_table_row_counts.values())
+                metric["output_count"] = sum(streaming_result.injected_table_row_counts.values())
+                _record_metric_rss(metric)
+            runtime_recorder.flush()
+        files_list.extend(streaming_result.files)
+        data_quality_manifest_entries = streaming_result.manifest_entries
     else:
         _log_export_observation(
             "data_quality_injection_skipped",
@@ -380,35 +376,24 @@ def write_staged_release(
             ),
         )
         for table_name in STUDENT_TABLE_ORDER:
-            row_dicts = _load_table_rows(
-                session=session,
-                table_name=table_name,
-                context=context,
-                release_name=concrete_release_name,
-                activity_callback=activity_callback,
-                runtime_recorder=runtime_recorder,
-                instrumentation=instrumentation,
-                rss_guard_mb=rss_guard_mb,
-            )
             if activity_callback is not None:
                 activity_callback(
                     f"Writing parquet for {concrete_release_name}: {table_name}."
                 )
             files_list.append(
-                _write_table_rows(
+                _write_table_from_source_stream(
+                    session=session,
                     release_dir=release_dir,
                     table_name=table_name,
-                    row_dicts=row_dicts,
-                    compression=compression,
+                    context=context,
                     release_name=concrete_release_name,
-                    release_type=release_window.release_type,
-                    snapshot_month=release_window.snapshot_month,
+                    compression=compression,
                     runtime_recorder=runtime_recorder,
+                    instrumentation=instrumentation,
                     activity_callback=activity_callback,
                     rss_guard_mb=rss_guard_mb,
                 )
             )
-            del row_dicts
     files = tuple(files_list)
     manifest_path = release_dir / MANIFEST_FILE_NAME
     manifest_row_counts = {
@@ -484,6 +469,280 @@ def write_staged_release(
     )
 
 
+def _write_data_quality_tainted_release_streaming(
+    *,
+    session: Session,
+    release_dir: Path,
+    context: StudentDatasetQueryContext,
+    release_name: str,
+    release_window: StudentDatasetReleaseWindow,
+    config,
+    release_context: DataQualityReleaseContext,
+    compression: str,
+    activity_callback: ReleaseActivityCallback | None,
+    runtime_recorder: RuntimeMetricRecorder | None,
+    instrumentation: ExportInstrumentationSettings | None,
+    injection_observer: Callable[[str, Mapping[str, Any]], None],
+    rss_guard_mb: float | None,
+) -> _StreamedDataQualityWriteResult:
+    requested_level = normalize_data_quality_level(config.level)
+    effective_level = config.effective_level_for_release(release_window.release_type)
+    state = create_injection_state(
+        config=config,
+        release_context=release_context,
+        effective_level=effective_level,
+        instrumentation_callback=injection_observer,
+    )
+    files_by_table: dict[str, StudentDatasetFileManifest] = {}
+    original_table_row_counts: dict[str, int] = {}
+    injected_table_row_counts: dict[str, int] = {}
+    temp_paths: dict[str, Path] = {}
+    next_ids: dict[str, int] = {}
+    processed_tables: set[str] = set()
+    source_match_ids: set[object] = set()
+    source_match_team_ids: set[object] = set()
+    matches_by_id: dict[object, dict[str, Any]] = {}
+    match_teams_by_match_id: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+    players_by_match_team_id: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+    games_by_match_id: defaultdict[object, list[dict[str, Any]]] = defaultdict(list)
+
+    _log_export_observation(
+        "data_quality_injection_start",
+        release_name=release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        table_count=len(STUDENT_TABLE_ORDER),
+        mode="streaming",
+    )
+    capture_started = perf_counter()
+    prepare_started = perf_counter()
+    injection_observer(
+        "capture_original_table_stats_start",
+        {
+            "phase_name": "capture_original_table_stats",
+            "table_count": len(STUDENT_TABLE_ORDER),
+        },
+    )
+    injection_observer(
+        "prepare_injected_tables_start",
+        {
+            "phase_name": "prepare_injected_tables",
+            "table_count": len(STUDENT_TABLE_ORDER),
+            "copy_mode": "streaming",
+        },
+    )
+
+    duplicate_plan = None
+
+    def process_table(table_name: str) -> None:
+        nonlocal duplicate_plan, source_match_ids, source_match_team_ids
+        row_dicts = _load_table_rows(
+            session=session,
+            table_name=table_name,
+            context=context,
+            release_name=release_name,
+            activity_callback=activity_callback,
+            runtime_recorder=runtime_recorder,
+            instrumentation=instrumentation,
+            rss_guard_mb=rss_guard_mb,
+        )
+        original_table_row_counts[table_name] = len(row_dicts)
+        apply_table_quality_rules(
+            state,
+            table_name=table_name,
+            rows=row_dicts,
+        )
+        next_ids[table_name] = next_primary_key(row_dicts, table_name)
+        if table_name == "matches":
+            duplicate_plan = plan_duplicate_like_rows(state, matches=row_dicts)
+            source_match_ids = set(duplicate_plan.source_match_ids)
+            matches_by_id.update(
+                {
+                    row["id"]: dict(row)
+                    for row in row_dicts
+                    if row["id"] in source_match_ids
+                }
+            )
+        elif table_name == "match_teams":
+            for row in row_dicts:
+                if row["match_id"] in source_match_ids:
+                    cloned_row = dict(row)
+                    match_teams_by_match_id[row["match_id"]].append(cloned_row)
+                    source_match_team_ids.add(row["id"])
+        elif table_name == "match_team_players":
+            for row in row_dicts:
+                if row["match_team_id"] in source_match_team_ids:
+                    players_by_match_team_id[row["match_team_id"]].append(dict(row))
+        elif table_name == "match_games":
+            for row in row_dicts:
+                if row["match_id"] in source_match_ids:
+                    games_by_match_id[row["match_id"]].append(dict(row))
+
+        if activity_callback is not None:
+            activity_callback(f"Writing parquet for {release_name}: {table_name}.")
+        if table_name in DUPLICATE_LIKE_TABLES:
+            temp_path = release_dir / f".{table_name}.base.parquet"
+            temp_paths[table_name] = temp_path
+            _write_table_rows_to_file(
+                file_path=temp_path,
+                file_name=PROJECTION_BY_TABLE[table_name].output_file,
+                table_name=table_name,
+                row_dicts=row_dicts,
+                compression=compression,
+                release_name=release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                runtime_recorder=runtime_recorder,
+                activity_callback=activity_callback,
+                rss_guard_mb=rss_guard_mb,
+            )
+        else:
+            file_manifest = _write_table_rows(
+                release_dir=release_dir,
+                table_name=table_name,
+                row_dicts=row_dicts,
+                compression=compression,
+                release_name=release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                runtime_recorder=runtime_recorder,
+                activity_callback=activity_callback,
+                rss_guard_mb=rss_guard_mb,
+            )
+            files_by_table[table_name] = file_manifest
+            injected_table_row_counts[table_name] = file_manifest.row_count
+        processed_tables.add(table_name)
+        del row_dicts
+        _check_export_rss_guard(
+            rss_guard_mb=rss_guard_mb,
+            release_name=release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+            phase_name="after_streamed_data_quality_table",
+            table_name=table_name,
+            activity_callback=activity_callback,
+        )
+
+    process_table("matches")
+    process_table("match_teams")
+    for table_name in STUDENT_TABLE_ORDER:
+        if table_name not in processed_tables:
+            process_table(table_name)
+
+    input_count = sum(original_table_row_counts.values())
+    injection_observer(
+        "capture_original_table_stats_end",
+        {
+            "phase_name": "capture_original_table_stats",
+            "table_count": len(original_table_row_counts),
+            "input_count": input_count,
+            "output_count": input_count,
+            "elapsed_ms": int((perf_counter() - capture_started) * 1000),
+        },
+    )
+
+    if duplicate_plan is None:
+        raise StudentDatasetWriteError("Data quality duplicate-like planning did not run.")
+    duplicate_rows = build_duplicate_like_rows(
+        state,
+        plan=duplicate_plan,
+        captures=DataQualityDuplicateLikeCaptures(
+            matches_by_id=matches_by_id,
+            match_teams_by_match_id=match_teams_by_match_id,
+            players_by_match_team_id=players_by_match_team_id,
+            games_by_match_id=games_by_match_id,
+            related_input_count=(
+                original_table_row_counts.get("match_teams", 0)
+                + original_table_row_counts.get("match_team_players", 0)
+                + original_table_row_counts.get("match_games", 0)
+            ),
+        ),
+        next_ids=DataQualityDuplicateLikeNextIds(
+            match_id=next_ids["matches"],
+            match_team_id=next_ids["match_teams"],
+            match_team_player_id=next_ids["match_team_players"],
+            match_game_id=next_ids["match_games"],
+        ),
+    )
+    for table_name in DUPLICATE_LIKE_TABLE_ORDER:
+        file_manifest = _append_rows_to_parquet_file(
+            source_path=temp_paths[table_name],
+            final_path=release_dir / PROJECTION_BY_TABLE[table_name].output_file,
+            table_name=table_name,
+            extra_rows=duplicate_rows[table_name],
+            compression=compression,
+            release_name=release_name,
+            release_type=release_window.release_type,
+            snapshot_month=release_window.snapshot_month,
+            runtime_recorder=runtime_recorder,
+            activity_callback=activity_callback,
+            rss_guard_mb=rss_guard_mb,
+        )
+        files_by_table[table_name] = file_manifest
+        injected_table_row_counts[table_name] = file_manifest.row_count
+        temp_paths[table_name].unlink(missing_ok=True)
+
+    output_count = sum(injected_table_row_counts.values())
+    injection_observer(
+        "prepare_injected_tables_end",
+        {
+            "phase_name": "prepare_injected_tables",
+            "table_count": len(STUDENT_TABLE_ORDER),
+            "input_count": input_count,
+            "output_count": output_count,
+            "copy_mode": "streaming",
+            "elapsed_ms": int((perf_counter() - prepare_started) * 1000),
+        },
+    )
+    summary = injection_summary_from_state(
+        state=state,
+        requested_level=requested_level,
+    )
+    validation_started = perf_counter()
+    injection_observer(
+        "validate_injected_tables_start",
+        {
+            "phase_name": "validate_injected_tables",
+            "table_count": len(STUDENT_TABLE_ORDER),
+            "input_count": output_count,
+        },
+    )
+    validate_streamed_injected_tables(
+        original_table_row_counts=original_table_row_counts,
+        injected_table_row_counts=injected_table_row_counts,
+        config=config,
+        summary=summary,
+        manifest_entries=state.manifest_entries,
+    )
+    injection_observer(
+        "validate_injected_tables_end",
+        {
+            "phase_name": "validate_injected_tables",
+            "table_count": len(STUDENT_TABLE_ORDER),
+            "input_count": output_count,
+            "output_count": len(state.manifest_entries),
+            "elapsed_ms": int((perf_counter() - validation_started) * 1000),
+        },
+    )
+    _log_export_observation(
+        "data_quality_injection_end",
+        release_name=release_name,
+        release_type=release_window.release_type,
+        snapshot_month=release_window.snapshot_month.isoformat(),
+        affected_rows=summary.total_affected_rows,
+        affected_fields=summary.total_affected_fields,
+        manifest_entry_count=len(state.manifest_entries),
+        row_count=output_count,
+        mode="streaming",
+    )
+    return _StreamedDataQualityWriteResult(
+        files=tuple(files_by_table[table_name] for table_name in STUDENT_TABLE_ORDER),
+        manifest_entries=tuple(state.manifest_entries),
+        original_table_row_counts=original_table_row_counts,
+        injected_table_row_counts=injected_table_row_counts,
+    )
+
+
 def _load_table_rows(
     *,
     session: Session,
@@ -541,16 +800,47 @@ def _load_table_rows(
         table_name=table_name,
         release_type=context.release_window.release_type,
         snapshot_month=context.release_window.snapshot_month.isoformat(),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+    )
+    normalize_started = perf_counter()
+    _log_export_observation(
+        "normalize_source_rows_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
     )
     if runtime_recorder is None:
-        rows = session.execute(query).mappings().all()
+        normalized_rows = _load_normalized_rows_from_stream(
+            session=session,
+            query=query,
+            table_name=table_name,
+            projection_columns=projection.included_columns,
+            release_name=release_name,
+            release_type=context.release_window.release_type,
+            snapshot_month=context.release_window.snapshot_month,
+            runtime_recorder=None,
+            query_metadata=query_metadata,
+        )
     else:
         with runtime_recorder.measure(
             "execute_source_query",
             metadata=query_metadata,
         ) as metric:
-            rows = session.execute(query).mappings().all()
-            metric["output_count"] = len(rows)
+            metric["metadata"]["stream_batch_size"] = SOURCE_QUERY_STREAM_BATCH_SIZE
+            normalized_rows = _load_normalized_rows_from_stream(
+                session=session,
+                query=query,
+                table_name=table_name,
+                projection_columns=projection.included_columns,
+                release_name=release_name,
+                release_type=context.release_window.release_type,
+                snapshot_month=context.release_window.snapshot_month,
+                runtime_recorder=runtime_recorder,
+                query_metadata=query_metadata,
+            )
+            metric["output_count"] = len(normalized_rows)
             _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
@@ -559,8 +849,9 @@ def _load_table_rows(
         table_name=table_name,
         release_type=context.release_window.release_type,
         snapshot_month=context.release_window.snapshot_month.isoformat(),
-        row_count=len(rows),
+        row_count=len(normalized_rows),
         elapsed_ms=int((perf_counter() - query_started) * 1000),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
     )
     _check_export_rss_guard(
         rss_guard_mb=rss_guard_mb,
@@ -573,35 +864,8 @@ def _load_table_rows(
     )
     if activity_callback is not None:
         activity_callback(
-            f"Fetched {len(rows):,} source rows for {release_name}: {table_name}."
+            f"Fetched {len(normalized_rows):,} source rows for {release_name}: {table_name}."
         )
-    normalize_started = perf_counter()
-    _log_export_observation(
-        "normalize_source_rows_start",
-        release_name=release_name,
-        table_name=table_name,
-        release_type=context.release_window.release_type,
-        snapshot_month=context.release_window.snapshot_month.isoformat(),
-        row_count=len(rows),
-    )
-    if runtime_recorder is None:
-        normalized_rows = [
-            {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
-            for row in rows
-        ]
-    else:
-        with runtime_recorder.measure(
-            "normalize_source_rows",
-            input_count=len(rows),
-            metadata=query_metadata,
-        ) as metric:
-            normalized_rows = [
-                {column_name: _normalize_value(row[column_name]) for column_name in projection.included_columns}
-                for row in rows
-            ]
-            metric["output_count"] = len(normalized_rows)
-            _record_metric_rss(metric)
-        runtime_recorder.flush()
     _log_export_observation(
         "normalize_source_rows_end",
         release_name=release_name,
@@ -625,6 +889,453 @@ def _load_table_rows(
             f"Normalized {len(normalized_rows):,} source rows for {release_name}: {table_name}."
         )
     return normalized_rows
+
+
+def _write_table_from_source_stream(
+    *,
+    session: Session,
+    release_dir: Path,
+    table_name: str,
+    context: StudentDatasetQueryContext,
+    release_name: str,
+    compression: str,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    instrumentation: ExportInstrumentationSettings | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+    rss_guard_mb: float | None = None,
+) -> StudentDatasetFileManifest:
+    projection = PROJECTION_BY_TABLE[table_name]
+    file_path = release_dir / projection.output_file
+    if activity_callback is not None:
+        activity_callback(
+            f"Building source query for {release_name}: {table_name}."
+        )
+    query = build_student_dataset_query(table_name, context)
+    query_metadata = _export_metric_metadata(
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+    )
+    if runtime_recorder is not None and instrumentation is not None and instrumentation.capture_sql_text:
+        query_metadata["sql_text"] = _compiled_sql_text(
+            query=query,
+            bind=session.get_bind(),
+        )
+    if activity_callback is not None:
+        activity_callback(
+            f"Resolving database bind for {release_name}: {table_name}."
+        )
+    bind = session.get_bind()
+    if activity_callback is not None:
+        activity_callback(
+            f"Resolved database bind for {release_name}: {table_name}. "
+            f"{_pool_status(bind)}"
+        )
+        activity_callback(
+            f"Acquiring database connection for {release_name}: {table_name}."
+        )
+    connection = session.connection()
+    if activity_callback is not None:
+        activity_callback(
+            f"Connection acquired for {release_name}: {table_name}. "
+            f"{_pool_status(connection)}"
+        )
+        activity_callback(
+            f"Executing source query for {release_name}: {table_name}."
+        )
+
+    query_started = perf_counter()
+    _log_export_observation(
+        "source_query_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+        mode="direct_to_parquet",
+    )
+    query_with_streaming = query.execution_options(
+        stream_results=True,
+        yield_per=SOURCE_QUERY_STREAM_BATCH_SIZE,
+    )
+    result = session.execute(query_with_streaming).mappings()
+    execute_elapsed_ms = int((perf_counter() - query_started) * 1000)
+
+    normalize_started = perf_counter()
+    write_started = perf_counter()
+    schema_started = perf_counter()
+    _log_export_observation(
+        "normalize_source_rows_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+        mode="direct_to_parquet",
+    )
+    _log_export_observation(
+        "write_parquet_file_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        file_path=str(file_path),
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+        mode="direct_to_parquet",
+    )
+    row_count = 0
+    row_group_count = 0
+    chunk_count = 0
+    schema: pa.Schema | None = None
+    writer: pq.ParquetWriter | None = None
+    normalize_elapsed_ms = 0
+    try:
+        for chunk_count, partition in enumerate(
+            _iter_mapping_partitions(result, SOURCE_QUERY_STREAM_BATCH_SIZE),
+            start=1,
+        ):
+            chunk_normalize_started = perf_counter()
+            normalized_chunk = _normalize_row_partition(
+                partition,
+                projection.included_columns,
+            )
+            normalize_elapsed_ms += int(
+                (perf_counter() - chunk_normalize_started) * 1000
+            )
+            if schema is None:
+                schema = _infer_arrow_schema(
+                    row_dicts=normalized_chunk,
+                    columns=projection.included_columns,
+                )
+                _log_export_observation(
+                    "build_parquet_table_start",
+                    release_name=release_name,
+                    table_name=table_name,
+                    release_type=context.release_window.release_type,
+                    snapshot_month=context.release_window.snapshot_month.isoformat(),
+                    row_count=len(normalized_chunk),
+                    mode="direct_to_parquet",
+                )
+                _log_export_observation(
+                    "build_parquet_table_end",
+                    release_name=release_name,
+                    table_name=table_name,
+                    release_type=context.release_window.release_type,
+                    snapshot_month=context.release_window.snapshot_month.isoformat(),
+                    row_count=len(normalized_chunk),
+                    elapsed_ms=int((perf_counter() - schema_started) * 1000),
+                    parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+                    mode="direct_to_parquet",
+                )
+                writer = pq.ParquetWriter(
+                    file_path,
+                    schema=schema,
+                    compression=compression,
+                )
+            assert writer is not None and schema is not None
+            for row_group_chunk in _iter_row_chunks(
+                normalized_chunk,
+                PARQUET_ROW_GROUP_SIZE,
+            ):
+                writer.write_table(
+                    _rows_to_arrow_table(
+                        rows=row_group_chunk,
+                        columns=projection.included_columns,
+                        schema=schema,
+                    )
+                )
+                row_count += len(row_group_chunk)
+                row_group_count += 1
+            _log_export_observation(
+                "source_query_stream_chunk",
+                release_name=release_name,
+                table_name=table_name,
+                release_type=context.release_window.release_type,
+                snapshot_month=context.release_window.snapshot_month.isoformat(),
+                chunk_index=chunk_count,
+                row_count=len(normalized_chunk),
+                cumulative_row_count=row_count,
+                stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+                parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+                mode="direct_to_parquet",
+            )
+        if schema is None:
+            schema = _projection_arrow_schema(table_name)
+            empty_table = _rows_to_arrow_table(
+                rows=[],
+                columns=projection.included_columns,
+                schema=schema,
+            )
+            pq.write_table(empty_table, file_path, compression=compression)
+            row_group_count = 1
+            _log_export_observation(
+                "build_parquet_table_start",
+                release_name=release_name,
+                table_name=table_name,
+                release_type=context.release_window.release_type,
+                snapshot_month=context.release_window.snapshot_month.isoformat(),
+                row_count=0,
+                mode="direct_to_parquet",
+            )
+            _log_export_observation(
+                "build_parquet_table_end",
+                release_name=release_name,
+                table_name=table_name,
+                release_type=context.release_window.release_type,
+                snapshot_month=context.release_window.snapshot_month.isoformat(),
+                row_count=0,
+                elapsed_ms=int((perf_counter() - schema_started) * 1000),
+                parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+                mode="direct_to_parquet",
+            )
+    finally:
+        if writer is not None:
+            writer.close()
+
+    write_elapsed_ms = int((perf_counter() - write_started) * 1000)
+    _log_export_observation(
+        "source_query_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=row_count,
+        elapsed_ms=int((perf_counter() - query_started) * 1000),
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+        mode="direct_to_parquet",
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+        phase_name="after_source_query",
+        table_name=table_name,
+        activity_callback=activity_callback,
+    )
+    _log_export_observation(
+        "normalize_source_rows_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=row_count,
+        elapsed_ms=normalize_elapsed_ms,
+        stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+        mode="direct_to_parquet",
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+        phase_name="after_normalize_source_rows",
+        table_name=table_name,
+        activity_callback=activity_callback,
+    )
+    _log_export_observation(
+        "write_parquet_file_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month.isoformat(),
+        row_count=row_count,
+        elapsed_ms=write_elapsed_ms,
+        file_path=str(file_path),
+        file_size_bytes=file_path.stat().st_size if file_path.exists() else None,
+        row_group_count=row_group_count,
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+        mode="direct_to_parquet",
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=context.release_window.release_type,
+        snapshot_month=context.release_window.snapshot_month,
+        phase_name="after_write_parquet_file",
+        table_name=table_name,
+        activity_callback=activity_callback,
+    )
+    if activity_callback is not None:
+        activity_callback(
+            f"Wrote {row_count:,} source rows for {release_name}: {table_name}."
+        )
+    if runtime_recorder is not None:
+        _record_direct_stream_metric(
+            runtime_recorder=runtime_recorder,
+            subphase_name="execute_source_query",
+            elapsed_ms=execute_elapsed_ms,
+            output_count=row_count,
+            metadata=query_metadata,
+            chunk_count=chunk_count,
+            row_group_count=row_group_count,
+        )
+        _record_direct_stream_metric(
+            runtime_recorder=runtime_recorder,
+            subphase_name="normalize_source_rows",
+            elapsed_ms=normalize_elapsed_ms,
+            input_count=row_count,
+            output_count=row_count,
+            metadata=query_metadata,
+            chunk_count=chunk_count,
+            row_group_count=row_group_count,
+        )
+        _record_direct_stream_metric(
+            runtime_recorder=runtime_recorder,
+            subphase_name="build_parquet_table",
+            elapsed_ms=int((perf_counter() - schema_started) * 1000),
+            input_count=row_count,
+            output_count=row_count,
+            metadata=query_metadata,
+            chunk_count=chunk_count,
+            row_group_count=row_group_count,
+        )
+        _record_direct_stream_metric(
+            runtime_recorder=runtime_recorder,
+            subphase_name="write_parquet_file",
+            elapsed_ms=write_elapsed_ms,
+            input_count=row_count,
+            output_count=row_count,
+            metadata=query_metadata,
+            chunk_count=chunk_count,
+            row_group_count=row_group_count,
+        )
+        runtime_recorder.flush()
+    return StudentDatasetFileManifest(
+        table_name=table_name,
+        file_name=projection.output_file,
+        file_path=file_path,
+        row_count=row_count,
+        columns=projection.included_columns,
+        schema_hash=_schema_hash(schema),
+        checksum=_file_checksum(file_path),
+    )
+
+
+def _record_direct_stream_metric(
+    *,
+    runtime_recorder: RuntimeMetricRecorder,
+    subphase_name: str,
+    elapsed_ms: int,
+    metadata: Mapping[str, Any],
+    input_count: int | None = None,
+    output_count: int | None = None,
+    chunk_count: int | None = None,
+    row_group_count: int | None = None,
+) -> None:
+    metric_metadata = dict(metadata)
+    metric_metadata["stream_batch_size"] = SOURCE_QUERY_STREAM_BATCH_SIZE
+    metric_metadata["parquet_row_group_size"] = PARQUET_ROW_GROUP_SIZE
+    metric_metadata["chunk_count"] = chunk_count
+    metric_metadata["row_group_count"] = row_group_count
+    metric_metadata["rss_mb"] = _current_rss_megabytes()
+    runtime_recorder.record_completed(
+        subphase_name,
+        elapsed_ms=elapsed_ms,
+        input_count=input_count,
+        output_count=output_count,
+        metadata=metric_metadata,
+    )
+
+
+def _load_normalized_rows_from_stream(
+    *,
+    session: Session,
+    query: Any,
+    table_name: str,
+    projection_columns: tuple[str, ...],
+    release_name: str,
+    release_type: str,
+    snapshot_month: date,
+    runtime_recorder: RuntimeMetricRecorder | None,
+    query_metadata: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    normalized_rows: list[dict[str, Any]] = []
+    query_with_streaming = query.execution_options(
+        stream_results=True,
+        yield_per=SOURCE_QUERY_STREAM_BATCH_SIZE,
+    )
+    result = session.execute(query_with_streaming).mappings()
+    chunk_index = 0
+    if runtime_recorder is None:
+        for chunk_index, partition in enumerate(
+            _iter_mapping_partitions(result, SOURCE_QUERY_STREAM_BATCH_SIZE),
+            start=1,
+        ):
+            normalized_rows.extend(
+                _normalize_row_partition(partition, projection_columns)
+            )
+            _log_export_observation(
+                "source_query_stream_chunk",
+                release_name=release_name,
+                table_name=table_name,
+                release_type=release_type,
+                snapshot_month=snapshot_month.isoformat(),
+                chunk_index=chunk_index,
+                row_count=len(partition),
+                cumulative_row_count=len(normalized_rows),
+                stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+            )
+        return normalized_rows
+
+    with runtime_recorder.measure(
+        "normalize_source_rows",
+        metadata=dict(query_metadata),
+    ) as metric:
+        metric["metadata"]["stream_batch_size"] = SOURCE_QUERY_STREAM_BATCH_SIZE
+        for chunk_index, partition in enumerate(
+            _iter_mapping_partitions(result, SOURCE_QUERY_STREAM_BATCH_SIZE),
+            start=1,
+        ):
+            normalized_rows.extend(
+                _normalize_row_partition(partition, projection_columns)
+            )
+            _log_export_observation(
+                "source_query_stream_chunk",
+                release_name=release_name,
+                table_name=table_name,
+                release_type=release_type,
+                snapshot_month=snapshot_month.isoformat(),
+                chunk_index=chunk_index,
+                row_count=len(partition),
+                cumulative_row_count=len(normalized_rows),
+                stream_batch_size=SOURCE_QUERY_STREAM_BATCH_SIZE,
+            )
+        metric["input_count"] = len(normalized_rows)
+        metric["output_count"] = len(normalized_rows)
+        metric["metadata"]["chunk_count"] = chunk_index
+        _record_metric_rss(metric)
+    runtime_recorder.flush()
+    return normalized_rows
+
+
+def _iter_mapping_partitions(result: Any, batch_size: int):
+    if hasattr(result, "partitions"):
+        yield from result.partitions(batch_size)
+        return
+
+    partition = []
+    for row in result:
+        partition.append(row)
+        if len(partition) >= batch_size:
+            yield partition
+            partition = []
+    if partition:
+        yield partition
+
+
+def _normalize_row_partition(
+    rows: list[Any],
+    projection_columns: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            column_name: _normalize_value(row[column_name])
+            for column_name in projection_columns
+        }
+        for row in rows
+    ]
 
 
 def _pool_status(bind: Engine | Connection | Any) -> str:
@@ -654,6 +1365,36 @@ def _write_table_rows(
     rss_guard_mb: float | None = None,
 ) -> StudentDatasetFileManifest:
     projection = PROJECTION_BY_TABLE[table_name]
+    return _write_table_rows_to_file(
+        file_path=release_dir / projection.output_file,
+        file_name=projection.output_file,
+        table_name=table_name,
+        row_dicts=row_dicts,
+        compression=compression,
+        release_name=release_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
+        runtime_recorder=runtime_recorder,
+        activity_callback=activity_callback,
+        rss_guard_mb=rss_guard_mb,
+    )
+
+
+def _write_table_rows_to_file(
+    *,
+    file_path: Path,
+    file_name: str,
+    table_name: str,
+    row_dicts: list[dict[str, Any]],
+    compression: str,
+    release_name: str,
+    release_type: str,
+    snapshot_month: date | None,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+    rss_guard_mb: float | None = None,
+) -> StudentDatasetFileManifest:
+    projection = PROJECTION_BY_TABLE[table_name]
     metadata = _export_metric_metadata(
         release_name=release_name,
         table_name=table_name,
@@ -670,11 +1411,9 @@ def _write_table_rows(
         row_count=len(row_dicts),
     )
     if runtime_recorder is None:
-        table = pa.table(
-            {
-                column_name: pa.array([row[column_name] for row in row_dicts])
-                for column_name in projection.included_columns
-            }
+        schema = _infer_arrow_schema(
+            row_dicts=row_dicts,
+            columns=projection.included_columns,
         )
     else:
         with runtime_recorder.measure(
@@ -682,13 +1421,12 @@ def _write_table_rows(
             input_count=len(row_dicts),
             metadata=metadata,
         ) as metric:
-            table = pa.table(
-                {
-                    column_name: pa.array([row[column_name] for row in row_dicts])
-                    for column_name in projection.included_columns
-                }
+            schema = _infer_arrow_schema(
+                row_dicts=row_dicts,
+                columns=projection.included_columns,
             )
-            metric["output_count"] = table.num_rows
+            metric["output_count"] = len(row_dicts)
+            metric["metadata"]["parquet_row_group_size"] = PARQUET_ROW_GROUP_SIZE
             _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
@@ -697,8 +1435,9 @@ def _write_table_rows(
         table_name=table_name,
         release_type=release_type,
         snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
-        row_count=table.num_rows,
+        row_count=len(row_dicts),
         elapsed_ms=int((perf_counter() - build_started) * 1000),
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
     )
     _check_export_rss_guard(
         rss_guard_mb=rss_guard_mb,
@@ -709,7 +1448,6 @@ def _write_table_rows(
         table_name=table_name,
         activity_callback=activity_callback,
     )
-    file_path = release_dir / projection.output_file
     write_started = perf_counter()
     _log_export_observation(
         "write_parquet_file_start",
@@ -717,19 +1455,34 @@ def _write_table_rows(
         table_name=table_name,
         release_type=release_type,
         snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
-        row_count=table.num_rows,
+        row_count=len(row_dicts),
         file_path=str(file_path),
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
     )
     if runtime_recorder is None:
-        pq.write_table(table, file_path, compression=compression)
+        row_group_count = _write_rows_to_parquet_file(
+            file_path=file_path,
+            schema=schema,
+            columns=projection.included_columns,
+            row_dicts=row_dicts,
+            compression=compression,
+        )
     else:
         with runtime_recorder.measure(
             "write_parquet_file",
-            input_count=table.num_rows,
-            output_count=table.num_rows,
+            input_count=len(row_dicts),
+            output_count=len(row_dicts),
             metadata=metadata,
         ) as metric:
-            pq.write_table(table, file_path, compression=compression)
+            row_group_count = _write_rows_to_parquet_file(
+                file_path=file_path,
+                schema=schema,
+                columns=projection.included_columns,
+                row_dicts=row_dicts,
+                compression=compression,
+            )
+            metric["metadata"]["parquet_row_group_size"] = PARQUET_ROW_GROUP_SIZE
+            metric["metadata"]["row_group_count"] = row_group_count
             _record_metric_rss(metric)
         runtime_recorder.flush()
     _log_export_observation(
@@ -738,10 +1491,12 @@ def _write_table_rows(
         table_name=table_name,
         release_type=release_type,
         snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
-        row_count=table.num_rows,
+        row_count=len(row_dicts),
         elapsed_ms=int((perf_counter() - write_started) * 1000),
         file_path=str(file_path),
         file_size_bytes=file_path.stat().st_size if file_path.exists() else None,
+        row_group_count=row_group_count,
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
     )
     _check_export_rss_guard(
         rss_guard_mb=rss_guard_mb,
@@ -754,13 +1509,300 @@ def _write_table_rows(
     )
     return StudentDatasetFileManifest(
         table_name=table_name,
-        file_name=projection.output_file,
+        file_name=file_name,
         file_path=file_path,
-        row_count=table.num_rows,
+        row_count=len(row_dicts),
         columns=projection.included_columns,
-        schema_hash=_schema_hash(table.schema),
+        schema_hash=_schema_hash(schema),
         checksum=_file_checksum(file_path),
     )
+
+
+def _write_rows_to_parquet_file(
+    *,
+    file_path: Path,
+    schema: pa.Schema,
+    columns: tuple[str, ...],
+    row_dicts: list[dict[str, Any]],
+    compression: str,
+) -> int:
+    if not row_dicts:
+        pq.write_table(
+            _rows_to_arrow_table(rows=[], columns=columns, schema=schema),
+            file_path,
+            compression=compression,
+        )
+        return 1
+
+    row_group_count = 0
+    with pq.ParquetWriter(file_path, schema=schema, compression=compression) as writer:
+        for chunk in _iter_row_chunks(row_dicts, PARQUET_ROW_GROUP_SIZE):
+            writer.write_table(
+                _rows_to_arrow_table(rows=chunk, columns=columns, schema=schema)
+            )
+            row_group_count += 1
+    return row_group_count
+
+
+def _iter_row_chunks(rows: list[dict[str, Any]], chunk_size: int):
+    for start in range(0, len(rows), chunk_size):
+        yield rows[start : start + chunk_size]
+
+
+def _rows_to_arrow_table(
+    *,
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    schema: pa.Schema,
+) -> pa.Table:
+    return pa.table(
+        {
+            column_name: pa.array(
+                [row[column_name] for row in rows],
+                type=schema.field(column_name).type,
+            )
+            for column_name in columns
+        },
+        schema=schema,
+    )
+
+
+def _infer_arrow_schema(
+    *,
+    row_dicts: list[dict[str, Any]],
+    columns: tuple[str, ...],
+) -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field(
+                column_name,
+                _infer_arrow_type(row.get(column_name) for row in row_dicts),
+            )
+            for column_name in columns
+        ]
+    )
+
+
+def _projection_arrow_schema(table_name: str) -> pa.Schema:
+    projection = PROJECTION_BY_TABLE[table_name]
+    source_columns = projection.model.__table__.columns
+    return pa.schema(
+        [
+            pa.field(
+                column_name,
+                _arrow_type_for_projection_column(
+                    column_name=column_name,
+                    source_columns=source_columns,
+                ),
+            )
+            for column_name in projection.included_columns
+        ]
+    )
+
+
+def _arrow_type_for_projection_column(
+    *,
+    column_name: str,
+    source_columns,
+) -> pa.DataType:
+    source_column = source_columns.get(column_name)
+    if source_column is None and column_name == "player_id":
+        source_column = source_columns.get("id")
+    if source_column is None:
+        return pa.string()
+    column_type = source_column.type
+    if isinstance(column_type, (sqltypes.Date, sqltypes.DateTime)):
+        return pa.string()
+    if isinstance(column_type, sqltypes.Boolean):
+        return pa.bool_()
+    if isinstance(column_type, sqltypes.Integer):
+        return pa.int64()
+    if isinstance(column_type, sqltypes.Numeric):
+        precision = int(column_type.precision or 38)
+        scale = int(column_type.scale or 0)
+        if precision <= 38:
+            return pa.decimal128(precision, scale)
+        return pa.decimal256(precision, scale)
+    if isinstance(column_type, sqltypes.Float):
+        return pa.float64()
+    if column_type.__class__.__name__.lower() == "uuid":
+        return pa.uuid()
+    return pa.string()
+
+
+def _infer_arrow_type(values) -> pa.DataType:
+    has_float = False
+    has_int = False
+    has_bool = False
+    has_string = False
+    has_uuid = False
+    decimal_integer_digits = 0
+    decimal_scale = 0
+    has_decimal = False
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            has_bool = True
+        elif isinstance(value, int):
+            has_int = True
+        elif isinstance(value, float):
+            has_float = True
+        elif isinstance(value, Decimal):
+            has_decimal = True
+            integer_digits, scale = _decimal_shape(value)
+            decimal_integer_digits = max(decimal_integer_digits, integer_digits)
+            decimal_scale = max(decimal_scale, scale)
+        elif isinstance(value, UUID):
+            has_uuid = True
+        else:
+            has_string = True
+
+    if has_string:
+        return pa.string()
+    if has_uuid:
+        return pa.uuid()
+    if has_decimal:
+        precision = max(1, decimal_integer_digits + decimal_scale)
+        if precision <= 38:
+            return pa.decimal128(precision, decimal_scale)
+        return pa.decimal256(precision, decimal_scale)
+    if has_float:
+        return pa.float64()
+    if has_int:
+        return pa.int64()
+    if has_bool:
+        return pa.bool_()
+    return pa.null()
+
+
+def _decimal_shape(value: Decimal) -> tuple[int, int]:
+    sign, digits, exponent = value.as_tuple()
+    del sign
+    scale = max(0, -exponent)
+    integer_digits = max(0, len(digits) - scale)
+    if integer_digits == 0 and value != 0:
+        integer_digits = 1
+    return integer_digits, scale
+
+
+def _append_rows_to_parquet_file(
+    *,
+    source_path: Path,
+    final_path: Path,
+    table_name: str,
+    extra_rows: list[dict[str, Any]],
+    compression: str,
+    release_name: str,
+    release_type: str,
+    snapshot_month: date | None,
+    runtime_recorder: RuntimeMetricRecorder | None = None,
+    activity_callback: ReleaseActivityCallback | None = None,
+    rss_guard_mb: float | None = None,
+) -> StudentDatasetFileManifest:
+    projection = PROJECTION_BY_TABLE[table_name]
+    metadata = _export_metric_metadata(
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
+    )
+    _log_export_observation(
+        "finalize_streamed_data_quality_file_start",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        source_path=str(source_path),
+        final_path=str(final_path),
+        extra_row_count=len(extra_rows),
+    )
+    if runtime_recorder is None:
+        schema, row_count, row_group_count = _copy_parquet_file_with_extra_rows(
+            source_path=source_path,
+            final_path=final_path,
+            columns=projection.included_columns,
+            extra_rows=extra_rows,
+            compression=compression,
+        )
+    else:
+        with runtime_recorder.measure(
+            "finalize_streamed_data_quality_file",
+            input_count=len(extra_rows),
+            metadata=metadata,
+        ) as metric:
+            schema, row_count, row_group_count = _copy_parquet_file_with_extra_rows(
+                source_path=source_path,
+                final_path=final_path,
+                columns=projection.included_columns,
+                extra_rows=extra_rows,
+                compression=compression,
+            )
+            metric["output_count"] = row_count
+            metric["metadata"]["parquet_row_group_size"] = PARQUET_ROW_GROUP_SIZE
+            metric["metadata"]["row_group_count"] = row_group_count
+            _record_metric_rss(metric)
+        runtime_recorder.flush()
+    _log_export_observation(
+        "finalize_streamed_data_quality_file_end",
+        release_name=release_name,
+        table_name=table_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month.isoformat() if snapshot_month is not None else None,
+        row_count=row_count,
+        final_path=str(final_path),
+        file_size_bytes=final_path.stat().st_size if final_path.exists() else None,
+        row_group_count=row_group_count,
+        parquet_row_group_size=PARQUET_ROW_GROUP_SIZE,
+    )
+    _check_export_rss_guard(
+        rss_guard_mb=rss_guard_mb,
+        release_name=release_name,
+        release_type=release_type,
+        snapshot_month=snapshot_month,
+        phase_name="after_finalize_streamed_data_quality_file",
+        table_name=table_name,
+        activity_callback=activity_callback,
+    )
+    return StudentDatasetFileManifest(
+        table_name=table_name,
+        file_name=projection.output_file,
+        file_path=final_path,
+        row_count=row_count,
+        columns=projection.included_columns,
+        schema_hash=_schema_hash(schema),
+        checksum=_file_checksum(final_path),
+    )
+
+
+def _copy_parquet_file_with_extra_rows(
+    *,
+    source_path: Path,
+    final_path: Path,
+    columns: tuple[str, ...],
+    extra_rows: list[dict[str, Any]],
+    compression: str,
+) -> tuple[pa.Schema, int, int]:
+    source_file = pq.ParquetFile(source_path)
+    schema = source_file.schema_arrow
+    row_count = 0
+    row_group_count = 0
+    with pq.ParquetWriter(final_path, schema=schema, compression=compression) as writer:
+        for batch in source_file.iter_batches(batch_size=PARQUET_ROW_GROUP_SIZE):
+            table = pa.Table.from_batches([batch], schema=schema)
+            writer.write_table(table)
+            row_count += table.num_rows
+            row_group_count += 1
+        for chunk in _iter_row_chunks(extra_rows, PARQUET_ROW_GROUP_SIZE):
+            table = _rows_to_arrow_table(
+                rows=chunk,
+                columns=columns,
+                schema=schema,
+            )
+            writer.write_table(table)
+            row_count += table.num_rows
+            row_group_count += 1
+    return schema, row_count, row_group_count
 
 
 def _release_manifest(

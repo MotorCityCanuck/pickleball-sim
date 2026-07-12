@@ -24,10 +24,18 @@ from .comparison import (
     compare_export_locations,
 )
 from .injector import (
+    DataQualityDuplicateLikeCaptures,
+    DataQualityDuplicateLikeNextIds,
+    DataQualityDuplicateLikePlan,
     DataQualityInjectionResult,
     DataQualityInjectionSummary,
     DataQualityReleaseContext,
+    apply_table_quality_rules,
+    build_duplicate_like_rows,
+    create_injection_state,
     inject_data_quality_issues,
+    injection_summary_from_state,
+    plan_duplicate_like_rows,
 )
 from .manifests import (
     INSTRUCTOR_MANIFEST_FILE_NAME,
@@ -39,6 +47,7 @@ from .validators import (
     DataQualityValidationCheck,
     DataQualityValidationError,
     validate_injected_tables,
+    validate_streamed_injected_tables,
 )
 
 __all__ = [
@@ -48,6 +57,9 @@ __all__ = [
     "SUPPORTED_ISSUE_TYPES",
     "DataQualityColumnComparison",
     "DataQualityComparisonError",
+    "DataQualityDuplicateLikeCaptures",
+    "DataQualityDuplicateLikeNextIds",
+    "DataQualityDuplicateLikePlan",
     "DataQualityExportComparisonResult",
     "DataQualityGlobalLimits",
     "DataQualityInjectionConfig",
@@ -65,11 +77,17 @@ __all__ = [
     "DataQualityValidationError",
     "INSTRUCTOR_MANIFEST_FILE_NAME",
     "adjust_data_quality_level",
+    "apply_table_quality_rules",
     "build_default_data_quality_config",
+    "build_duplicate_like_rows",
     "compare_export_locations",
+    "create_injection_state",
     "inject_data_quality_issues",
+    "injection_summary_from_state",
     "level_profile",
     "manifest_table",
     "normalize_data_quality_level",
+    "plan_duplicate_like_rows",
     "validate_injected_tables",
+    "validate_streamed_injected_tables",
 ]

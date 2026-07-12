@@ -1,12 +1,6 @@
 <section
     class="info-card"
     style="display:grid; gap:18px; border:1px solid #d6d9df; border-radius:22px; padding:20px; background:#f7f9fc;"
-    {% if snapshot.student_dataset_export_summary.latest_export_job_is_active %}
-        hx-get="/control/partials/orchestration"
-        hx-trigger="every 10s"
-        hx-target="#control-tab-content"
-        hx-swap="innerHTML"
-    {% endif %}
 >
     {% set latest_job = snapshot.student_dataset_export_summary.latest_export_job %}
     {% set latest_status = latest_job.status if latest_job else 'idle' %}
@@ -160,6 +154,7 @@
         <div
             id="student-export-completion-modal"
             data-job-status-id="{{ completion.job_status_id }}"
+            data-completed-at="{% if completion.completed_at %}{{ completion.completed_at.isoformat() }}{% endif %}"
             style="position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(16, 24, 40, 0.46);"
             role="dialog"
             aria-modal="true"
@@ -264,32 +259,6 @@
                 </div>
             </div>
         </div>
-        <script>
-            (() => {
-                const modal = document.getElementById("student-export-completion-modal");
-                if (!modal) {
-                    return;
-                }
-                const storageKey = `student-dataset-export-complete:${modal.dataset.jobStatusId}`;
-                window.closeStudentExportCompletionModal = function closeStudentExportCompletionModal() {
-                    modal.style.display = "none";
-                    document.body.style.overflow = "";
-                };
-                const showModal = () => {
-                    modal.style.display = "flex";
-                    document.body.style.overflow = "hidden";
-                };
-                modal.addEventListener("click", (event) => {
-                    if (event.target === modal) {
-                        window.closeStudentExportCompletionModal();
-                    }
-                });
-                if (!window.localStorage.getItem(storageKey)) {
-                    window.localStorage.setItem(storageKey, "shown");
-                    window.setTimeout(showModal, 80);
-                }
-            })();
-        </script>
     {% endif %}
 
     {% if snapshot.student_dataset_export_summary.latest_export_stage_progress %}
