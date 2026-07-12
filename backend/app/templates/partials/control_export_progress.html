@@ -10,6 +10,7 @@
 >
     {% set latest_job = snapshot.student_dataset_export_summary.latest_export_job %}
     {% set latest_status = latest_job.status if latest_job else 'idle' %}
+    {% set completion = snapshot.student_dataset_export_summary.latest_completion %}
     {% set status_color = '#8f1d18' if latest_status == 'failed' else '#247a3d' if latest_status == 'succeeded' else '#1857c2' if latest_status in ('running', 'pending') else '#5a6477' %}
     {% set status_tint = '#fef3f2' if latest_status == 'failed' else '#edf8f0' if latest_status == 'succeeded' else '#edf3ff' if latest_status in ('running', 'pending') else '#f4f6fa' %}
     {% set status_border = '#f1b2ad' if latest_status == 'failed' else '#b7dfc2' if latest_status == 'succeeded' else '#b9d0fb' if latest_status in ('running', 'pending') else '#d6d9df' %}
@@ -153,6 +154,142 @@
         <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:14px; padding:12px 14px;">
             Export failed. Review the failed stage details below, fix the blocker, and relaunch the release family.
         </div>
+    {% endif %}
+
+    {% if completion %}
+        <div
+            id="student-export-completion-modal"
+            data-job-status-id="{{ completion.job_status_id }}"
+            style="position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(16, 24, 40, 0.46);"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="student-export-completion-title"
+        >
+            <div style="width:min(760px, 100%); max-height:min(86vh, 760px); overflow:auto; border:1px solid #b7dfc2; border-radius:18px; background:#ffffff; box-shadow:0 24px 70px rgba(23, 32, 51, 0.28);">
+                <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:18px 20px; border-bottom:1px solid #e5eaf1;">
+                    <div style="display:grid; gap:6px;">
+                        <div style="font-size:12px; color:#247a3d; text-transform:uppercase; font-weight:800;">Export complete</div>
+                        <div id="student-export-completion-title" style="font-size:22px; font-weight:800; color:#172033; line-height:1.2;">Student dataset package is ready</div>
+                        <div style="color:#5a6477; line-height:1.45;">
+                            Job {{ completion.job_status_id }} completed{% if completion.elapsed_seconds is not none %} in {{ "{:,}".format(completion.elapsed_seconds) }} seconds{% endif %}.
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onclick="window.closeStudentExportCompletionModal?.()"
+                        style="border:1px solid #d6d9df; background:#f7f9fc; color:#1d2433; border-radius:10px; min-width:40px; height:40px; cursor:pointer; font-size:20px; line-height:1;"
+                        aria-label="Close export completion summary"
+                    >
+                        &times;
+                    </button>
+                </div>
+
+                <div style="display:grid; gap:16px; padding:20px;">
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+                        <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Started</div>
+                            <div style="margin-top:6px; font-size:15px; font-weight:800; color:#172033;">{{ completion.started_at or "--" }}</div>
+                        </div>
+                        <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Elapsed</div>
+                            <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">
+                                {% if completion.elapsed_seconds is not none %}
+                                    {{ "{:,}".format(completion.elapsed_seconds) }}s
+                                {% else %}
+                                    {{ completion.elapsed_label or "--" }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Rows exported</div>
+                            <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">{{ "{:,}".format(completion.total_row_count) }}</div>
+                        </div>
+                        <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Files</div>
+                            <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">{{ "{:,}".format(completion.file_count) }}</div>
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+                        {% for group in (completion.clean, completion.tainted) if group %}
+                            <div style="display:grid; gap:10px; border:1px solid #dfe5ee; border-radius:14px; padding:14px; background:#ffffff;">
+                                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                                    <div style="font-size:16px; font-weight:800; color:#172033;">{{ group.label }}</div>
+                                    <div style="border:1px solid #d6d9df; background:#f7f9fc; color:#5a6477; border-radius:999px; padding:4px 9px; font-size:12px;">{{ group.release_count }} package{% if group.release_count != 1 %}s{% endif %}</div>
+                                </div>
+                                <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px;">
+                                    <div>
+                                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Rows</div>
+                                        <div style="margin-top:5px; font-size:17px; font-weight:800; color:#172033;">{{ "{:,}".format(group.total_row_count) }}</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Files</div>
+                                        <div style="margin-top:5px; font-size:17px; font-weight:800; color:#172033;">{{ "{:,}".format(group.file_count) }}</div>
+                                    </div>
+                                </div>
+                                {% if group.output_path %}
+                                    <code style="display:block; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; font-size:12px; line-height:1.45; border:1px solid #eef1f5; border-radius:10px; background:#f9fbfd; padding:9px 10px;">{{ group.output_path }}</code>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+
+                    <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+                        {% if completion.tainted and completion.tainted.output_path %}
+                            <button
+                                type="button"
+                                onclick='window.copyControlPanelText?.({{ completion.tainted.output_path|tojson }})'
+                                style="border:1px solid #c5d1e6; background:#eff4ff; color:#173f8a; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:800;"
+                            >
+                                Copy Tainted Path
+                            </button>
+                        {% endif %}
+                        {% if completion.clean and completion.clean.output_path %}
+                            <button
+                                type="button"
+                                onclick='window.copyControlPanelText?.({{ completion.clean.output_path|tojson }})'
+                                style="border:1px solid #d6d9df; background:#fff; color:#1d2433; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:800;"
+                            >
+                                Copy Clean Path
+                            </button>
+                        {% endif %}
+                        <button
+                            type="button"
+                            onclick="window.closeStudentExportCompletionModal?.()"
+                            style="border:1px solid #247a3d; background:#247a3d; color:#fff; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:800;"
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+            (() => {
+                const modal = document.getElementById("student-export-completion-modal");
+                if (!modal) {
+                    return;
+                }
+                const storageKey = `student-dataset-export-complete:${modal.dataset.jobStatusId}`;
+                window.closeStudentExportCompletionModal = function closeStudentExportCompletionModal() {
+                    modal.style.display = "none";
+                    document.body.style.overflow = "";
+                };
+                const showModal = () => {
+                    modal.style.display = "flex";
+                    document.body.style.overflow = "hidden";
+                };
+                modal.addEventListener("click", (event) => {
+                    if (event.target === modal) {
+                        window.closeStudentExportCompletionModal();
+                    }
+                });
+                if (!window.localStorage.getItem(storageKey)) {
+                    window.localStorage.setItem(storageKey, "shown");
+                    window.setTimeout(showModal, 80);
+                }
+            })();
+        </script>
     {% endif %}
 
     {% if snapshot.student_dataset_export_summary.latest_export_stage_progress %}

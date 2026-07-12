@@ -2179,6 +2179,78 @@ def test_export_progress_shows_elapsed_time_for_completed_export(session_factory
     assert "Duration 7m 30s" in body
 
 
+def test_export_progress_renders_completion_popup_summary(session_factory):
+    _seed_completed_generation_state(session_factory)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete, current_message,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    86, 'student_dataset_export', 'student-dataset-export-86', 'succeeded', 'completed', 100.00,
+                    'Student dataset baseline and incremental export completed successfully.',
+                    '2026-05-20 10:00:00', '2026-05-20 10:02:03', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO student_dataset_releases (
+                    id, release_name, release_type, release_month, generation_run_id,
+                    data_quality_level, output_path, status, created_at, updated_at, completed_at
+                ) VALUES
+                    (861, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 2,
+                     'none', 'data/student_dataset_exports/student_release/clean/student_release_initial_history',
+                     'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:02:01'),
+                    (862, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 2,
+                     'medium', 'data/student_dataset_exports/student_release/tainted/student_release_initial_history',
+                     'succeeded', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '2026-05-20 10:02:02')
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO student_dataset_release_files (
+                    release_id, table_name, file_path, row_count, schema_hash, checksum, created_at
+                ) VALUES
+                    (861, 'player_master', 'clean/player_master.parquet', 1000, 'a', 'a', CURRENT_TIMESTAMP),
+                    (861, 'matches', 'clean/matches.parquet', 2000, 'b', 'b', CURRENT_TIMESTAMP),
+                    (862, 'player_master', 'tainted/player_master.parquet', 1100, 'c', 'c', CURRENT_TIMESTAMP),
+                    (862, 'matches', 'tainted/matches.parquet', 2100, 'd', 'd', CURRENT_TIMESTAMP)
+                """
+            )
+        )
+        session.commit()
+        app = create_app()
+        routes = _route_map(app)
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert 'id="student-export-completion-modal"' in body
+    assert "Job 86 completed" in body
+    assert "123 seconds" in body
+    assert "Rows exported" in body
+    assert "6,200" in body
+    assert "Clean" in body
+    assert "3,000" in body
+    assert "Tainted" in body
+    assert "3,200" in body
+    assert "data/student_dataset_exports/student_release/tainted/student_release_initial_history" in body
+
+
 def test_export_progress_reports_failed_export_job(session_factory):
     _seed_completed_generation_state(session_factory)
     session = session_factory()

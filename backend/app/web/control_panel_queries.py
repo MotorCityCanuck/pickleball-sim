@@ -212,6 +212,33 @@ class StudentDatasetReleaseSummary:
 
 
 @dataclass(frozen=True)
+class StudentDatasetExportCompletionGroupSummary:
+    """Compact completion totals for one clean or tainted export group."""
+
+    label: str
+    release_count: int
+    file_count: int
+    total_row_count: int
+    output_path: str | None
+
+
+@dataclass(frozen=True)
+class StudentDatasetExportCompletionSummary:
+    """Popup-ready completion totals for the latest student dataset export."""
+
+    job_status_id: int
+    started_at: datetime | None
+    completed_at: datetime | None
+    elapsed_seconds: int | None
+    elapsed_label: str | None
+    release_count: int
+    file_count: int
+    total_row_count: int
+    clean: StudentDatasetExportCompletionGroupSummary | None
+    tainted: StudentDatasetExportCompletionGroupSummary | None
+
+
+@dataclass(frozen=True)
 class StudentDatasetComparisonSummary:
     """UI-ready student dataset comparison history row."""
 
@@ -239,6 +266,7 @@ class StudentDatasetExportSummary:
     clearable_job: JobSummary | None
     latest_export_stage_progress: tuple[StageProgressSummary, ...]
     latest_releases: tuple[StudentDatasetReleaseSummary, ...]
+    latest_completion: StudentDatasetExportCompletionSummary | None
     comparison_history: tuple[StudentDatasetComparisonSummary, ...]
 
 
@@ -790,6 +818,10 @@ class ControlPanelQueries:
                     total_row_count=file_counts.get(release.id, (0, 0))[1],
                 )
                 for release in release_rows
+            ),
+            latest_completion=_student_export_completion_summary(
+                session,
+                latest_job=latest_job,
             ),
             comparison_history=tuple(
                 _student_dataset_comparison_summary(comparison)
@@ -1858,6 +1890,95 @@ def _student_release_file_counts(
         int(release_id): (int(file_count or 0), int(row_count or 0))
         for release_id, file_count, row_count in rows
     }
+
+
+def _student_export_completion_summary(
+    session: Session,
+    *,
+    latest_job: JobSummary | None,
+) -> StudentDatasetExportCompletionSummary | None:
+    if latest_job is None or latest_job.status != "succeeded":
+        return None
+
+    filters = [StudentDatasetRelease.status == "succeeded"]
+    if latest_job.started_at is not None:
+        filters.append(StudentDatasetRelease.completed_at >= latest_job.started_at)
+    if latest_job.completed_at is not None:
+        filters.append(StudentDatasetRelease.completed_at <= latest_job.completed_at)
+
+    releases = list(
+        session.scalars(
+            select(StudentDatasetRelease)
+            .where(*filters)
+            .order_by(
+                StudentDatasetRelease.completed_at.asc(),
+                StudentDatasetRelease.id.asc(),
+            )
+        )
+    )
+    file_counts = _student_release_file_counts(session, releases)
+    clean_releases = [
+        release
+        for release in releases
+        if (release.data_quality_level or "none") == "none"
+    ]
+    tainted_releases = [
+        release
+        for release in releases
+        if (release.data_quality_level or "none") != "none"
+    ]
+
+    elapsed_seconds = None
+    if (
+        latest_job.started_at is not None
+        and latest_job.completed_at is not None
+        and latest_job.completed_at >= latest_job.started_at
+    ):
+        elapsed_seconds = int(
+            (latest_job.completed_at - latest_job.started_at).total_seconds()
+        )
+
+    total_file_count = sum(file_counts.get(release.id, (0, 0))[0] for release in releases)
+    total_row_count = sum(file_counts.get(release.id, (0, 0))[1] for release in releases)
+    return StudentDatasetExportCompletionSummary(
+        job_status_id=latest_job.job_status_id,
+        started_at=latest_job.started_at,
+        completed_at=latest_job.completed_at,
+        elapsed_seconds=elapsed_seconds,
+        elapsed_label=latest_job.elapsed_label,
+        release_count=len(releases),
+        file_count=total_file_count,
+        total_row_count=total_row_count,
+        clean=_student_export_completion_group(
+            "Clean",
+            releases=clean_releases,
+            file_counts=file_counts,
+        ),
+        tainted=_student_export_completion_group(
+            "Tainted",
+            releases=tainted_releases,
+            file_counts=file_counts,
+        ),
+    )
+
+
+def _student_export_completion_group(
+    label: str,
+    *,
+    releases: list[StudentDatasetRelease],
+    file_counts: dict[int, tuple[int, int]],
+) -> StudentDatasetExportCompletionGroupSummary | None:
+    if not releases:
+        return None
+    return StudentDatasetExportCompletionGroupSummary(
+        label=label,
+        release_count=len(releases),
+        file_count=sum(file_counts.get(release.id, (0, 0))[0] for release in releases),
+        total_row_count=sum(
+            file_counts.get(release.id, (0, 0))[1] for release in releases
+        ),
+        output_path=releases[0].output_path,
+    )
 
 
 def _table_exists(session: Session, table_name: str) -> bool:
