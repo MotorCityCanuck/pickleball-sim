@@ -2435,6 +2435,7 @@ def test_export_progress_deduplicates_and_orders_release_cards(session_factory):
     assert response.status_code == 200
     assert "Published releases" in body
     assert "Each card is one published release folder" in body
+    assert body.count("2 published releases") == 2
     assert body.find(">Clean</div>") < body.find(">Tainted</div>")
     assert body.find("student_release_initial_history") < body.find("student_release_snapshot_2026_06")
 

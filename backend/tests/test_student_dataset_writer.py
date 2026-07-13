@@ -475,6 +475,54 @@ def test_write_staged_release_family_stops_when_rss_guard_is_exceeded(
     assert any("RSS guard exceeded" in message for message in activity_messages)
 
 
+def test_write_staged_release_family_reports_tainted_rss_guard_handoff_failure(
+    session,
+    release_window,
+    tmp_path,
+    monkeypatch,
+):
+    seed_snapshot_query_data(session)
+    _enable_export_runtime_metrics(
+        session,
+        {
+            "export_queries_enabled": False,
+            "export_query_sql_text_enabled": False,
+            "export_rss_guard_mb": 1,
+        },
+    )
+    monkeypatch.setattr(
+        "app.exports.student_dataset.writer._current_rss_megabytes",
+        lambda: 2.0,
+    )
+    activity_messages: list[str] = []
+
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+        overwrite_existing=False,
+    )
+
+    with pytest.raises(StudentDatasetExportMemoryLimitError) as exc_info:
+        write_staged_release_family(
+            session=session,
+            output_root=tmp_path,
+            release_name="napa_student_release",
+            release_windows=(release_window,),
+            build_parameters=build_parameters,
+            activity_callback=activity_messages.append,
+        )
+
+    message = str(exc_info.value)
+    assert "blocked before tainted data quality injection" in message
+    assert "Clean export staging completed" in message
+    assert "before_data_quality_injection" in message
+    assert any("Applying data quality rules" in msg for msg in activity_messages)
+
+
 def test_write_staged_release_family_records_data_quality_injection_metrics_when_enabled(
     session,
     release_window,

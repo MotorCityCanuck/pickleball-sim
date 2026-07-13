@@ -319,14 +319,21 @@ def write_staged_release(
             activity_callback(
                 f"Applying data quality rules for {concrete_release_name}."
             )
-        _check_export_rss_guard(
-            rss_guard_mb=rss_guard_mb,
-            release_name=concrete_release_name,
-            release_type=release_window.release_type,
-            snapshot_month=release_window.snapshot_month,
-            phase_name="before_data_quality_injection",
-            activity_callback=activity_callback,
-        )
+        try:
+            _check_export_rss_guard(
+                rss_guard_mb=rss_guard_mb,
+                release_name=concrete_release_name,
+                release_type=release_window.release_type,
+                snapshot_month=release_window.snapshot_month,
+                phase_name="before_data_quality_injection",
+                activity_callback=activity_callback,
+            )
+        except StudentDatasetExportMemoryLimitError as exc:
+            raise StudentDatasetExportMemoryLimitError(
+                "Student dataset export blocked before tainted data quality injection "
+                f"for {concrete_release_name}. Clean export staging completed, but the "
+                f"worker exceeded the RSS guard before tainted injection could begin. {exc}"
+            ) from exc
         injection_metadata = _export_metric_metadata(
             release_name=concrete_release_name,
             table_name=None,

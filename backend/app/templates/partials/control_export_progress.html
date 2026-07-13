@@ -337,8 +337,26 @@
                 </div>
             </div>
 
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px;">
-                {% for release in snapshot.student_dataset_export_summary.latest_releases %}
+            {% set clean_releases = snapshot.student_dataset_export_summary.latest_releases | selectattr("is_clean") | list %}
+            {% set tainted_releases = snapshot.student_dataset_export_summary.latest_releases | rejectattr("is_clean") | list %}
+
+            {% for section_label, section_releases, section_border, section_background, section_text in [
+                ('Clean', clean_releases, '#b7dfc2', '#edf8f0', '#1f5f30'),
+                ('Tainted', tainted_releases, '#c5d1e6', '#eff4ff', '#173f8a')
+            ] %}
+                {% if section_releases %}
+                <section style="display:grid; gap:12px;">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div style="border:1px solid {{ section_border }}; border-radius:999px; padding:5px 11px; font-size:12px; font-weight:800; color:{{ section_text }}; background:{{ section_background }};">{{ section_label }}</div>
+                            <div style="font-size:14px; color:#5a6477;">
+                                {{ section_releases|length }} published release{% if section_releases|length != 1 %}s{% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px;">
+                    {% for release in section_releases %}
                     {% set latest_job_reference_at = latest_job.started_at or latest_job.created_at if latest_job else none %}
                     {% set release_is_from_active_run = latest_job_reference_at and release.completed_at and release.completed_at >= latest_job_reference_at %}
                     {% set release_is_stale_during_active_run = latest_status in ('pending', 'running') and not release_is_from_active_run %}
@@ -548,8 +566,11 @@
                             </button>
                         </div>
                     </article>
-                {% endfor %}
-            </div>
+                    {% endfor %}
+                    </div>
+                </section>
+                {% endif %}
+            {% endfor %}
         </div>
     {% endif %}
 </section>
