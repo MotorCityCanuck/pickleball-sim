@@ -4,6 +4,7 @@ import json
 from datetime import date
 from pathlib import Path
 import sys
+from uuid import UUID
 
 import pytest
 import pyarrow as pa
@@ -47,6 +48,26 @@ from test_student_dataset_queries import (  # noqa: E402
     session,
     session_factory,
 )
+
+
+def _assert_external_player_key_exported_as_uuid_string(player_master_file: Path) -> None:
+    arrow_schema = pq.read_schema(player_master_file)
+    field = arrow_schema.field("external_player_key")
+    assert field.type == pa.string()
+
+    parquet_schema_text = str(pq.ParquetFile(player_master_file).schema)
+    assert "UUID" not in parquet_schema_text
+    assert "FIXED_LEN_BYTE_ARRAY" not in parquet_schema_text
+
+    rows = pq.read_table(
+        player_master_file,
+        columns=["external_player_key"],
+    ).to_pylist()
+    assert rows
+    for row in rows:
+        value = row["external_player_key"]
+        assert isinstance(value, str)
+        assert str(UUID(value)) == value
 
 
 class _StreamingOnlyExecuteResult:
@@ -941,6 +962,80 @@ def test_write_staged_release_parquet_contains_snapshot_transformed_values(
         release_dir / "club_memberships.parquet"
     ).to_pylist()
     assert club_memberships[0]["end_date"] is None
+
+
+def test_uuid_values_are_materialized_as_parquet_strings():
+    player_uuid = UUID("00000000-0000-0000-0000-000000000001")
+    schema = student_dataset_writer._infer_arrow_schema(
+        row_dicts=[{"player_id": 1, "external_player_key": player_uuid}],
+        columns=("player_id", "external_player_key"),
+        table_name="player_master",
+    )
+
+    assert schema.field("external_player_key").type == pa.string()
+    table = student_dataset_writer._rows_to_arrow_table(
+        rows=[{"player_id": 1, "external_player_key": player_uuid}],
+        columns=("player_id", "external_player_key"),
+        schema=schema,
+    )
+
+    assert table.schema.field("external_player_key").type == pa.string()
+    assert table.to_pylist()[0]["external_player_key"] == str(player_uuid)
+
+
+def test_clean_export_uuid_identifier_is_parquet_string(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    _assert_external_player_key_exported_as_uuid_string(
+        result.releases[0].release_dir / "player_master.parquet"
+    )
+
+
+def test_tainted_export_uuid_identifier_is_parquet_string(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        data_quality_level="medium",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+
+    _assert_external_player_key_exported_as_uuid_string(
+        result.releases[0].release_dir / "player_master.parquet"
+    )
 
 
 def test_write_staged_release_family_writes_instructor_manifest_outside_student_release(

@@ -102,7 +102,7 @@ Grain: one row per exported player.
 | Column | Type | Nullable | FK | Description |
 | --- | --- | --- | --- | --- |
 | `player_id` | BIGINT | no | none | Player identifier. |
-| `external_player_key` | UUID | no | none | Stable external player identifier. |
+| `external_player_key` | UUID-formatted string | no | none | Stable external player identifier exported as a plain string column. |
 | `first_name` | VARCHAR | no | none | Player first name. |
 | `last_name` | VARCHAR | no | none | Player last name. |
 | `gender` | VARCHAR | yes | none | Player gender value. |

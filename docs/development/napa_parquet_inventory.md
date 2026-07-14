@@ -277,7 +277,7 @@ The current code emits exactly these student-facing Parquet files per release:
 - Partitioning: single unpartitioned file within the release folder.
 - Columns and data types:
   - `player_id: int64`
-  - `external_player_key: extension<arrow.uuid>`
+  - `external_player_key: string` (UUID-formatted string; no native Parquet UUID logical type)
   - `first_name: string`
   - `last_name: string`
   - `gender: string`

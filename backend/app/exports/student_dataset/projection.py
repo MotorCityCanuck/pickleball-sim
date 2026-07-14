@@ -47,6 +47,10 @@ STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "teams",
 )
 
+UUID_FORMATTED_STRING_COLUMNS: Mapping[str, tuple[str, ...]] = {
+    "player_master": ("external_player_key",),
+}
+
 EXCLUDED_SOURCE_TABLES: frozenset[str] = frozenset(
     {
         "audit_batch_team_rosters",

@@ -63,6 +63,7 @@ from .projection import (
     PROJECTION_BY_TABLE,
     STUDENT_DATASET_SCHEMA_VERSION,
     STUDENT_TABLE_ORDER,
+    UUID_FORMATTED_STRING_COLUMNS,
 )
 from .queries import StudentDatasetQueryContext, build_student_dataset_query
 from .release_windows import StudentDatasetReleaseWindow
@@ -1267,6 +1268,7 @@ def _write_source_stream_to_parquet_file(
                 schema = _infer_arrow_schema(
                     row_dicts=normalized_chunk,
                     columns=projection.included_columns,
+                    table_name=table_name,
                 )
                 _log_export_observation(
                     "build_parquet_table_start",
@@ -2121,6 +2123,7 @@ def _write_table_rows_to_file(
         schema = _infer_arrow_schema(
             row_dicts=row_dicts,
             columns=projection.included_columns,
+            table_name=table_name,
         )
     else:
         with runtime_recorder.measure(
@@ -2131,6 +2134,7 @@ def _write_table_rows_to_file(
             schema = _infer_arrow_schema(
                 row_dicts=row_dicts,
                 columns=projection.included_columns,
+                table_name=table_name,
             )
             metric["output_count"] = len(row_dicts)
             metric["metadata"]["parquet_row_group_size"] = PARQUET_ROW_GROUP_SIZE
@@ -2265,7 +2269,13 @@ def _rows_to_arrow_table(
     return pa.table(
         {
             column_name: pa.array(
-                [row[column_name] for row in rows],
+                [
+                    _normalize_value_for_arrow(
+                        row[column_name],
+                        arrow_type=schema.field(column_name).type,
+                    )
+                    for row in rows
+                ],
                 type=schema.field(column_name).type,
             )
             for column_name in columns
@@ -2278,12 +2288,15 @@ def _infer_arrow_schema(
     *,
     row_dicts: list[dict[str, Any]],
     columns: tuple[str, ...],
+    table_name: str | None = None,
 ) -> pa.Schema:
     return pa.schema(
         [
             pa.field(
                 column_name,
-                _infer_arrow_type(row.get(column_name) for row in row_dicts),
+                pa.string()
+                if _is_uuid_formatted_string_column(table_name, column_name)
+                else _infer_arrow_type(row.get(column_name) for row in row_dicts),
             )
             for column_name in columns
         ]
@@ -2297,7 +2310,9 @@ def _projection_arrow_schema(table_name: str) -> pa.Schema:
         [
             pa.field(
                 column_name,
-                _arrow_type_for_projection_column(
+                pa.string()
+                if _is_uuid_formatted_string_column(table_name, column_name)
+                else _arrow_type_for_projection_column(
                     column_name=column_name,
                     source_columns=source_columns,
                 ),
@@ -2333,7 +2348,7 @@ def _arrow_type_for_projection_column(
     if isinstance(column_type, sqltypes.Float):
         return pa.float64()
     if column_type.__class__.__name__.lower() == "uuid":
-        return pa.uuid()
+        return pa.string()
     return pa.string()
 
 
@@ -2368,7 +2383,7 @@ def _infer_arrow_type(values) -> pa.DataType:
     if has_string:
         return pa.string()
     if has_uuid:
-        return pa.uuid()
+        return pa.string()
     if has_decimal:
         precision = max(1, decimal_integer_digits + decimal_scale)
         if precision <= 38:
@@ -2932,7 +2947,24 @@ def _file_checksum(path: Path) -> str:
 def _normalize_value(value):
     if isinstance(value, (date, datetime)):
         return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
     return value
+
+
+def _normalize_value_for_arrow(value, *, arrow_type: pa.DataType):
+    if pa.types.is_string(arrow_type) and isinstance(value, UUID):
+        return str(value)
+    return value
+
+
+def _is_uuid_formatted_string_column(
+    table_name: str | None,
+    column_name: str,
+) -> bool:
+    if table_name is None:
+        return False
+    return column_name in UUID_FORMATTED_STRING_COLUMNS.get(table_name, ())
 
 
 def _log_export_observation(event_name: str, **fields: Any) -> None:
