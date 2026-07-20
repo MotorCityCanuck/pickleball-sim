@@ -9,7 +9,7 @@ student dataset export code in:
 - [backend/app/exports/student_dataset/queries.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/queries.py)
 - [backend/app/exports/student_dataset/writer.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/writer.py)
 
-The active export contract is schema version `1.3`, with 13 student-facing
+The active export contract is schema version `1.4`, with 13 student-facing
 Parquet files per release folder.
 
 Record counts, physical paths, schemas, and example rows below were taken from
@@ -23,7 +23,7 @@ Release metadata for the analyzed artifact:
 - `release_type`: `historical_baseline`
 - `build_timestamp`: `2026-06-17T11:37:18Z`
 - `parquet_compression`: `snappy`
-- `student_dataset_schema_version`: `1.3`
+- `student_dataset_schema_version`: `1.4`
 
 ## Partitioning Strategy
 
@@ -174,17 +174,19 @@ The current code emits exactly these student-facing Parquet files per release:
 - Alternate key candidate: `(match_id, team_number)`
 - Foreign key relationships:
   - `match_id -> matches.id`
+  - `team_id -> teams.id` when populated
 - Partitioning: single unpartitioned file within the release folder.
 - Columns and data types:
   - `id: int64`
   - `match_id: int64`
   - `team_number: int64`
+  - `team_id: int64`
   - `team_score: int64`
   - `average_team_rating: decimal128(7, 3)`
 - Example record:
 
 ```json
-{"id":1,"match_id":1,"team_number":1,"team_score":0,"average_team_rating":"1477.297"}
+{"id":1,"match_id":1,"team_number":1,"team_id":20001,"team_score":0,"average_team_rating":"1477.297"}
 ```
 
 ### `matches.parquet`
