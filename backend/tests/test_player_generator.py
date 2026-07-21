@@ -24,6 +24,7 @@ from app.models import (  # noqa: E402
     LastName,
     MonthlyBatch,
     Player,
+    PlayerAssessmentHistory,
     PlayerRatingHistory,
     PlayerRegistration,
     Region,
@@ -228,6 +229,22 @@ def session_factory():
                 initial_skill_seed numeric(8, 4),
                 player_status varchar(30) not null default 'ACTIVE',
                 generation_run_id bigint,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE player_assessment_history (
+                id integer primary key autoincrement,
+                player_id bigint not null,
+                assessment_date date not null,
+                assessment_type varchar(100) not null,
+                assessment_value numeric(8, 3),
+                confidence_score numeric(8, 3),
+                derived_from_matches integer,
+                batch_id bigint not null,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -483,6 +500,7 @@ def test_generate_initial_population_records_runtime_subphases(session):
         "flush_players",
         "flush_registrations",
         "flush_initial_ratings",
+        "flush_initial_assessments",
         "finalize_batch",
         "name_lookup_queries",
         "club_lookup_queries",
@@ -498,6 +516,7 @@ def test_generate_initial_population_records_runtime_subphases(session):
     assert by_subphase["flush_players"].output_count == 8
     assert by_subphase["flush_registrations"].output_count == 8
     assert by_subphase["flush_initial_ratings"].output_count == 8
+    assert by_subphase["flush_initial_assessments"].output_count == 8
     name_query_metric = by_subphase["name_lookup_queries"]
     assert name_query_metric.output_count == 2
     assert name_query_metric.metadata_json["query_counts"] == {
@@ -1593,10 +1612,9 @@ def test_payload_generation_leaves_batch_match_counts_unchanged(session):
     assert monthly_batch.match_count_generated == 99
 
 
-def test_payload_generation_sets_only_player_intake_counts(session):
+def test_payload_generation_sets_assessment_count_from_initial_snapshots(session):
     generation_run, monthly_batch = seed_reference_data(session, payload=test_payload(1))
     monthly_batch.rating_update_count = 10
-    monthly_batch.assessment_update_count = 11
     session.commit()
 
     PlayerGenerator().generate_initial_population(
@@ -1606,7 +1624,12 @@ def test_payload_generation_sets_only_player_intake_counts(session):
     )
 
     assert monthly_batch.rating_update_count == 10
-    assert monthly_batch.assessment_update_count == 11
+    assert monthly_batch.assessment_update_count == 1
+    assessment = session.query(PlayerAssessmentHistory).one()
+    assert assessment.assessment_type == "confidence"
+    assert assessment.assessment_value == Decimal("0.200")
+    assert assessment.confidence_score == Decimal("0.200")
+    assert assessment.derived_from_matches == 0
 
 
 def test_payload_generation_allows_small_test_loads(session):
@@ -3152,11 +3175,10 @@ def test_payload_generation_uses_configured_player_count_exactly(session):
     assert result.rows_loaded == 11
 
 
-def test_payload_generation_does_not_update_completed_counts_unrelated(session):
+def test_payload_generation_preserves_unrelated_counts_and_refreshes_assessment_count(session):
     generation_run, monthly_batch = seed_reference_data(session, payload=test_payload(1))
     monthly_batch.match_count_generated = 5
     monthly_batch.rating_update_count = 6
-    monthly_batch.assessment_update_count = 7
     session.commit()
 
     PlayerGenerator().generate_initial_population(
@@ -3167,7 +3189,7 @@ def test_payload_generation_does_not_update_completed_counts_unrelated(session):
 
     assert monthly_batch.match_count_generated == 5
     assert monthly_batch.rating_update_count == 6
-    assert monthly_batch.assessment_update_count == 7
+    assert monthly_batch.assessment_update_count == 1
 
 
 def test_payload_generation_uses_current_batch_only_for_registrations(session):

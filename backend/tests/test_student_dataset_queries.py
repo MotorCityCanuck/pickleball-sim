@@ -215,12 +215,12 @@ def seed_snapshot_query_data(session):
             """
             INSERT INTO match_teams (
                 id, match_id, team_number, team_score, expected_win_probability,
-                average_team_rating
+                average_team_rating, source_team_id
             )
             VALUES
-                (10, 1, 1, 2, 0.7, 1400.0),
-                (11, 1, 2, 1, 0.3, 1350.0),
-                (20, 2, 1, 2, 0.7, 1500.0)
+                (10, 1, 1, 2, 0.7, 1400.0, 1),
+                (11, 1, 2, 1, 0.3, 1350.0, NULL),
+                (20, 2, 1, 2, 0.7, 1500.0, 3)
             """
         )
     )
@@ -357,10 +357,9 @@ def test_batch_tied_queries_use_included_batch_ids(session, query_context):
         102,
     ]
     assert [row["id"] for row in rows(session, "matches", query_context)] == [1]
-    assert [row["id"] for row in rows(session, "match_teams", query_context)] == [
-        10,
-        11,
-    ]
+    match_team_rows = rows(session, "match_teams", query_context)
+    assert [row["id"] for row in match_team_rows] == [10, 11]
+    assert [row["team_id"] for row in match_team_rows] == [1, None]
     assert [row["id"] for row in rows(session, "match_games", query_context)] == [1]
     assert [
         row["id"] for row in rows(session, "player_assessment_history", query_context)
@@ -380,9 +379,9 @@ def test_incremental_batch_tied_queries_use_fact_batch_ids(
         row["id"] for row in rows(session, "monthly_batches", incremental_query_context)
     ] == [103]
     assert [row["id"] for row in rows(session, "matches", incremental_query_context)] == [2]
-    assert [row["id"] for row in rows(session, "match_teams", incremental_query_context)] == [
-        20,
-    ]
+    match_team_rows = rows(session, "match_teams", incremental_query_context)
+    assert [row["id"] for row in match_team_rows] == [20]
+    assert [row["team_id"] for row in match_team_rows] == [3]
     assert [row["id"] for row in rows(session, "match_games", incremental_query_context)] == [2]
     assert [
         row["id"]

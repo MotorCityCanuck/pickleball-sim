@@ -98,9 +98,9 @@ def _seed_incremental_match_shape(session) -> None:
             """
             INSERT INTO match_teams (
                 id, match_id, team_number, team_score, expected_win_probability,
-                average_team_rating
+                average_team_rating, source_team_id
             )
-            VALUES (21, 2, 2, 1, 0.3, 1450.0)
+            VALUES (21, 2, 2, 1, 0.3, 1450.0, 2)
             """
         )
     )
@@ -897,7 +897,7 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["release_month"] is None
     assert manifest["included_months"] == [1, 2]
     assert manifest["load_strategy"] == "full_load"
-    assert manifest["student_dataset_schema_version"] == "1.3"
+    assert manifest["student_dataset_schema_version"] == "1.4"
     assert manifest["included_batch_sequences"] == [1, 2]
     assert manifest["included_batch_months"] == ["2025-01-01", "2025-02-01"]
     assert manifest["snapshot_batch_sequences"] == [1, 2]

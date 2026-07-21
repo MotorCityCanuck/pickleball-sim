@@ -248,8 +248,11 @@ def _matches_query(context: StudentDatasetQueryContext) -> Select:
 
 def _match_teams_query(context: StudentDatasetQueryContext) -> Select:
     projection = PROJECTION_BY_TABLE["match_teams"]
+    overrides = {
+        "team_id": MatchTeam.source_team_id.label("team_id"),
+    }
     return (
-        _select_projection(projection)
+        _select_projection(projection, overrides)
         .where(MatchTeam.match_id.in_(_included_match_ids(context)))
         .order_by(MatchTeam.id)
     )

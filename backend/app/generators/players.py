@@ -22,6 +22,7 @@ from app.models import (
     LastName,
     MonthlyBatch,
     Player,
+    PlayerAssessmentHistory,
     PlayerRatingHistory,
     PlayerRegistration,
     Region,
@@ -1052,12 +1053,40 @@ class PlayerGenerator:
                     session.flush()
                     metric["output_count"] = len(rating_history_rows)
 
+                with _measure_runtime(
+                    runtime_recorder,
+                    "flush_initial_assessments",
+                    input_count=len(generated_players),
+                    metadata={"chunk_start": generated_so_far},
+                ) as metric:
+                    assessment_history_rows = [
+                        PlayerAssessmentHistory(
+                            player_id=player.id,
+                            assessment_date=creation_month,
+                            assessment_type="confidence",
+                            assessment_value=config.initial_confidence_score,
+                            confidence_score=config.initial_confidence_score,
+                            derived_from_matches=0,
+                            batch_id=batch_id,
+                        )
+                        for player in generated_players
+                    ]
+                    session.add_all(assessment_history_rows)
+                    session.flush()
+                    metric["output_count"] = len(assessment_history_rows)
+                    batch.assessment_update_count = (
+                        (batch.assessment_update_count or 0)
+                        + len(assessment_history_rows)
+                    )
+
                 for player in generated_players:
                     session.expunge(player)
                 for registration in registrations:
                     session.expunge(registration)
                 for rating_history_row in rating_history_rows:
                     session.expunge(rating_history_row)
+                for assessment_history_row in assessment_history_rows:
+                    session.expunge(assessment_history_row)
                 generated_so_far += current_chunk_size
 
             with _measure_runtime(

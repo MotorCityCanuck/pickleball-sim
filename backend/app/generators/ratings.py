@@ -15,6 +15,7 @@ from app.models import (
     Match,
     MatchTeam,
     MonthlyBatch,
+    PlayerAssessmentHistory,
     PlayerRatingHistory,
     RatingsUpdateLog,
     GenerationRun,
@@ -175,6 +176,7 @@ class RatingUpdateGenerator:
             )
 
         history_rows: list[dict[str, Any]] = []
+        assessment_rows: list[dict[str, Any]] = []
         log_rows: list[dict[str, Any]] = []
         match_number = 0
         with _measure_runtime(
@@ -229,6 +231,18 @@ class RatingUpdateGenerator:
                                 "batch_id": batch_id,
                             }
                         )
+                        if confidence_after is not None:
+                            assessment_rows.append(
+                                {
+                                    "player_id": match_player.player_id,
+                                    "assessment_date": match.match_date,
+                                    "assessment_type": "confidence",
+                                    "assessment_value": confidence_after,
+                                    "confidence_score": confidence_after,
+                                    "derived_from_matches": state.match_count,
+                                    "batch_id": batch_id,
+                                }
+                            )
                         log_rows.append(
                             {
                                 "generation_run_id": batch.generation_run_id,
@@ -260,6 +274,7 @@ class RatingUpdateGenerator:
                         )
             metric["output_count"] = len(log_rows)
             metric["metadata"]["rating_history_count"] = len(history_rows)
+            metric["metadata"]["assessment_history_count"] = len(assessment_rows)
             metric["metadata"]["log_count"] = len(log_rows)
 
         with _measure_runtime(
@@ -270,6 +285,12 @@ class RatingUpdateGenerator:
             metric["output_count"] = len(history_rows)
         with _measure_runtime(
             runtime_recorder,
+            "stage_assessment_history_rows",
+            input_count=len(assessment_rows),
+        ) as metric:
+            metric["output_count"] = len(assessment_rows)
+        with _measure_runtime(
+            runtime_recorder,
             "stage_rating_log_rows",
             input_count=len(log_rows),
         ) as metric:
@@ -277,17 +298,23 @@ class RatingUpdateGenerator:
         with _measure_runtime(
             runtime_recorder,
             "flush_rating_rows",
-            input_count=len(history_rows) + len(log_rows),
+            input_count=len(history_rows) + len(assessment_rows) + len(log_rows),
             metadata={
                 "rating_history_count": len(history_rows),
+                "assessment_history_count": len(assessment_rows),
                 "log_count": len(log_rows),
             },
         ) as metric:
             batch.rating_update_count = len(history_rows)
+            batch.assessment_update_count = len(assessment_rows)
             session.execute(insert(PlayerRatingHistory), history_rows)
+            if assessment_rows:
+                session.execute(insert(PlayerAssessmentHistory), assessment_rows)
             session.execute(insert(RatingsUpdateLog), log_rows)
             session.flush()
-            metric["output_count"] = len(history_rows) + len(log_rows)
+            metric["output_count"] = (
+                len(history_rows) + len(assessment_rows) + len(log_rows)
+            )
         if runtime_recorder is not None:
             runtime_recorder.flush()
         return RatingUpdateResult(

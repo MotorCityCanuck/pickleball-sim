@@ -28,6 +28,7 @@ from app.models import (  # noqa: E402
     MatchTeamPlayer,
     MonthlyBatch,
     Player,
+    PlayerAssessmentHistory,
     PlayerRatingHistory,
     RatingsUpdateLog,
 )
@@ -111,6 +112,22 @@ def session_factory():
                 global_percentile numeric(5, 2),
                 match_count_used integer,
                 calculation_version varchar(50),
+                batch_id bigint not null,
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE player_assessment_history (
+                id integer primary key,
+                player_id bigint not null,
+                assessment_date date not null,
+                assessment_type varchar(100) not null,
+                assessment_value numeric(8, 3),
+                confidence_score numeric(8, 3),
+                derived_from_matches integer,
                 batch_id bigint not null,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
@@ -406,6 +423,7 @@ def test_rating_updates_write_history_and_match_logs(session):
     assert result.log_count == 4
     assert session.query(RatingsUpdateLog).count() == 4
     assert session.query(PlayerRatingHistory).count() == 8
+    assert session.query(PlayerAssessmentHistory).count() == 4
     team_one_log = (
         session.query(RatingsUpdateLog)
         .filter(RatingsUpdateLog.player_id == 1)
@@ -426,8 +444,18 @@ def test_rating_updates_write_history_and_match_logs(session):
     assert team_one_log.match_won == 1
     assert team_two_log.rating_after == Decimal("1491.000")
     assert team_two_log.rating_delta == Decimal("-9.000")
+    confidence_assessment = (
+        session.query(PlayerAssessmentHistory)
+        .filter(PlayerAssessmentHistory.player_id == 1)
+        .one()
+    )
+    assert confidence_assessment.assessment_type == "confidence"
+    assert confidence_assessment.assessment_value == Decimal("0.220")
+    assert confidence_assessment.confidence_score == Decimal("0.220")
+    assert confidence_assessment.derived_from_matches == 1
     session.refresh(batch)
     assert batch.rating_update_count == 4
+    assert batch.assessment_update_count == 4
 
 
 def test_rating_updates_record_runtime_metrics(session):
@@ -454,6 +482,7 @@ def test_rating_updates_record_runtime_metrics(session):
         "load_initial_states",
         "compute_rating_updates",
         "stage_rating_history_rows",
+        "stage_assessment_history_rows",
         "stage_rating_log_rows",
         "flush_rating_rows",
     ]
@@ -470,8 +499,13 @@ def test_rating_updates_record_runtime_metrics(session):
     flush_metric = next(
         metric for metric in metrics if metric.subphase_name == "flush_rating_rows"
     )
-    assert flush_metric.input_count == result.rating_history_count + result.log_count
+    assert flush_metric.input_count == (
+        result.rating_history_count
+        + session.query(PlayerAssessmentHistory).count()
+        + result.log_count
+    )
     assert flush_metric.metadata_json["rating_history_count"] == result.rating_history_count
+    assert flush_metric.metadata_json["assessment_history_count"] == 4
     assert flush_metric.metadata_json["log_count"] == result.log_count
 
 

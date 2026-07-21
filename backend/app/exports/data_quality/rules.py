@@ -90,7 +90,14 @@ TABLE_REQUIRED_COLUMNS: Mapping[str, tuple[str, ...]] = {
         "player_position",
         "player_rating_at_match",
     ),
-    "match_teams": ("id", "match_id", "team_number", "team_score", "average_team_rating"),
+    "match_teams": (
+        "id",
+        "match_id",
+        "team_number",
+        "team_id",
+        "team_score",
+        "average_team_rating",
+    ),
     "matches": (
         "id",
         "match_date",

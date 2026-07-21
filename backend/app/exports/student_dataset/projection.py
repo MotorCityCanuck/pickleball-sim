@@ -29,7 +29,7 @@ from app.models import (
 )
 
 
-STUDENT_DATASET_SCHEMA_VERSION = "1.3"
+STUDENT_DATASET_SCHEMA_VERSION = "1.4"
 
 STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "clubs",
@@ -391,6 +391,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "id",
             "match_id",
             "team_number",
+            "team_id",
             "team_score",
             "average_team_rating",
         ),
