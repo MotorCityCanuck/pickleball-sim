@@ -963,13 +963,38 @@ def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enab
         .all()
     )
     assert ad_hoc_match_teams
-    assert all(match_team.source_team_id is None for match_team in ad_hoc_match_teams)
+    assert all(match_team.source_team_id is not None for match_team in ad_hoc_match_teams)
+    ad_hoc_source_teams = {
+        session.get(Team, match_team.source_team_id)
+        for match_team in ad_hoc_match_teams
+    }
+    assert {team.team_identity_type for team in ad_hoc_source_teams} == {"ad_hoc"}
     ad_hoc_player_ids = {
         player.player_id
         for match_team in ad_hoc_match_teams
         for player in match_team.players
     }
     assert ad_hoc_player_ids & unteamed_player_ids
+    source_rosters = {
+        team.id: tuple(
+            membership.player_id
+            for membership in sorted(
+                team.memberships,
+                key=lambda membership: membership.player_position,
+            )
+        )
+        for team in ad_hoc_source_teams
+    }
+    for match_team in ad_hoc_match_teams:
+        assert tuple(
+            player.player_id
+            for player in sorted(
+                match_team.players,
+                key=lambda player: player.player_position,
+            )
+        ) == (
+            source_rosters[match_team.source_team_id]
+        )
     assert all(
         len({match_team.pairing_source for match_team in match.match_teams}) == 1
         for match in session.query(Match).where(Match.batch_id == batch.id)

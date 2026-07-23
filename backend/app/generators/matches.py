@@ -38,6 +38,10 @@ from .match_outcome_probabilities import (
     monthly_hidden_adjusted_win_probability,
 )
 from .players import WeightedSampler, _decimal
+from .team_identity import (
+    TeamIdentityRegistry,
+    player_pair_key,
+)
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -815,6 +819,7 @@ def _sample_ad_hoc_pair_candidates(
     rng: random.Random,
     *,
     player_pool: ActivePlayerPool,
+    team_registry: TeamIdentityRegistry | None = None,
     match_date: date,
     match_type: str,
     match_class: str,
@@ -861,6 +866,7 @@ def _sample_ad_hoc_pair_candidates(
 
     first_candidate = _ad_hoc_pair_candidate(
         first_players,
+        team_registry=team_registry,
         match_date=match_date,
         prior_pair_counts=prior_pair_counts,
     )
@@ -899,6 +905,7 @@ def _sample_ad_hoc_pair_candidates(
 
     second_candidate = _ad_hoc_pair_candidate(
         second_players,
+        team_registry=team_registry,
         match_date=match_date,
         prior_pair_counts=prior_pair_counts,
     )
@@ -1254,6 +1261,7 @@ def _ad_hoc_pair_weight(
 def _ad_hoc_pair_candidate(
     players: tuple[ActivePlayerCandidate, ActivePlayerCandidate],
     *,
+    team_registry: TeamIdentityRegistry | None = None,
     match_date: date,
     prior_pair_counts: dict[tuple[int, int], int],
 ) -> PairCandidate:
@@ -1266,11 +1274,32 @@ def _ad_hoc_pair_candidate(
     club_ids = frozenset(
         club_id for player in ordered_players for club_id in player.club_ids
     )
+    team_type = _ad_hoc_team_type(ordered_players)
+    source_team_id: int | None = None
+    candidate_id = -(player_ids[0] * 1_000_000_000 + player_ids[1])
+    pairing_source = "ad_hoc"
+    if team_registry is not None:
+        resolution = team_registry.get_or_create_team(
+            players=(
+                (ordered_players[0].id, 1),
+                (ordered_players[1].id, 2),
+            ),
+            team_type=team_type,
+            team_identity_type="ad_hoc",
+            formation_date=match_date,
+        )
+        candidate_id = resolution.record.team_id
+        source_team_id = resolution.record.team_id
+        team_type = resolution.record.team_type
+        pairing_source = _pairing_source_for_team_identity(
+            resolution.record.team_identity_type
+        )
+
     return PairCandidate(
-        id=-(player_ids[0] * 1_000_000_000 + player_ids[1]),
-        pairing_source="ad_hoc",
-        source_team_id=None,
-        team_type=_ad_hoc_team_type(ordered_players),
+        id=candidate_id,
+        pairing_source=pairing_source,
+        source_team_id=source_team_id,
+        team_type=team_type,
         region_id=ordered_players[0].region_id or ordered_players[1].region_id,
         average_rating=_average_player_rating(ordered_players),
         players=(
@@ -1310,7 +1339,7 @@ def _average_player_rating(
 
 
 def _player_pair_key(first_player_id: int, second_player_id: int) -> tuple[int, int]:
-    return tuple(sorted((int(first_player_id), int(second_player_id))))
+    return player_pair_key(first_player_id, second_player_id)
 
 
 def _match_class_for_match_type(match_type: str, config: MatchGenerationConfig) -> str:
@@ -1418,6 +1447,12 @@ def _source_attempt_order(source: str) -> tuple[str, ...]:
     if source == "ad_hoc":
         return ("ad_hoc", "competitive_team")
     return ("competitive_team", "ad_hoc")
+
+
+def _pairing_source_for_team_identity(team_identity_type: str) -> str:
+    if team_identity_type == "competitive":
+        return "competitive_team"
+    return "ad_hoc"
 
 
 def _increment_pair_candidate_player_counts(
@@ -1630,7 +1665,12 @@ class MatchGenerator:
             )
         active_player_pool: ActivePlayerPool | None = None
         prior_player_pair_counts: dict[tuple[int, int], int] = {}
+        team_registry: TeamIdentityRegistry | None = None
         if ad_hoc_enabled:
+            team_registry = TeamIdentityRegistry.load(
+                session,
+                generation_run_id=batch.generation_run_id,
+            )
             with _measure_runtime(
                 runtime_recorder,
                 "load_active_player_pool",
@@ -1821,6 +1861,7 @@ class MatchGenerator:
                         sampled = _sample_ad_hoc_pair_candidates(
                             rng,
                             player_pool=active_player_pool,
+                            team_registry=team_registry,
                             match_date=match_date,
                             match_type=match_type,
                             match_class=match_class,
@@ -1842,7 +1883,7 @@ class MatchGenerator:
                 if first_team is None:
                     continue
                 detail_start = perf_counter()
-                if first_team.pairing_source == "competitive_team":
+                if second_team is None and first_team.pairing_source == "competitive_team":
                     second_team = pair_candidate_pool.choose_opponent(
                         rng,
                         allowed_team_ids=under_target_set,

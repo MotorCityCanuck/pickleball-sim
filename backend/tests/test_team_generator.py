@@ -16,6 +16,10 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generators import TeamFormationConfig, TeamGenerator  # noqa: E402
+from app.generators.team_identity import (  # noqa: E402
+    TeamIdentityRegistry,
+    player_pair_key,
+)
 from app.models import (  # noqa: E402
     Club,
     ClubMembership,
@@ -367,6 +371,48 @@ def test_generate_for_batch_creates_teams_and_memberships(session):
     assert _no_cross_country_teams(session)
 
 
+def test_player_pair_key_is_order_insensitive():
+    assert player_pair_key(20, 10) == (10, 20)
+    assert player_pair_key(10, 20) == (10, 20)
+
+
+def test_player_pair_key_rejects_same_player():
+    with pytest.raises(ValueError, match="two distinct players"):
+        player_pair_key(10, 10)
+
+
+def test_team_identity_registry_reuses_existing_pair(session):
+    generation_run, batch = seed_team_data(session, player_count=4)
+    registry = TeamIdentityRegistry.load(
+        session,
+        generation_run_id=generation_run.id,
+    )
+
+    first = registry.get_or_create_team(
+        players=((1, 1), (2, 2)),
+        team_type="mixed_doubles",
+        team_identity_type="ad_hoc",
+        country_code="US",
+        formation_date=batch.batch_month,
+    )
+    second = registry.get_or_create_team(
+        players=((2, 2), (1, 1)),
+        team_type="mixed_doubles",
+        team_identity_type="ad_hoc",
+        country_code="US",
+        formation_date=batch.batch_month,
+    )
+
+    assert first.created is True
+    assert second.created is False
+    assert second.record.team_id == first.record.team_id
+    assert session.query(Team).count() == 1
+    assert session.query(TeamMembership).count() == 2
+    team = session.get(Team, first.record.team_id)
+    assert team.team_type == "mixed_doubles"
+    assert team.team_identity_type == "ad_hoc"
+
+
 def test_generate_for_batch_enforces_team_type_gender_constraints(session):
     payload = test_payload(20)
     payload["team_formation"]["team_type_weights"] = {
@@ -671,7 +717,7 @@ def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecy
 
     session.refresh(teams[0])
     session.refresh(teams[1])
-    assert result.rows_loaded == 1
+    assert result.rows_loaded == 0
     assert teams[0].team_status == "active"
     assert teams[0].dissolution_date is None
     assert teams[1].team_status == "dormant"
@@ -684,7 +730,6 @@ def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecy
     )
     assert [(event.team_id, event.event_type) for event in lifecycle_events] == [
         (teams[1].id, "dormant"),
-        (session.query(Team).order_by(Team.id.desc()).first().id, "formed"),
     ]
 
 

@@ -28,6 +28,7 @@ from .match_outcome_probabilities import (
 from .players import PlayerGenerator, PlayerGenerationResult
 from .ratings import RatingUpdateConfig, RatingUpdateGenerator, RatingUpdateResult
 from .teams import TeamFormationConfig, TeamGenerationResult, TeamGenerator
+from .team_identity import TeamIdentityRegistry, TeamIdentityRecord, player_pair_key
 
 __all__ = [
     "ClubMembershipGenerationConfig",
@@ -49,10 +50,13 @@ __all__ = [
     "TeamProbabilityInput",
     "TeamFormationConfig",
     "TeamGenerationResult",
+    "TeamIdentityRecord",
+    "TeamIdentityRegistry",
     "TeamGenerator",
     "generate_match_games",
     "hidden_adjusted_win_probability",
     "monthly_hidden_adjusted_win_probability",
+    "player_pair_key",
     "simulate_match_games",
     "tournament_hidden_adjusted_win_probability",
 ]

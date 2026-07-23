@@ -26,6 +26,7 @@ from app.models import (
 )
 
 from .players import WeightedSampler, _decimal
+from .team_identity import TeamIdentityRegistry
 
 
 TEAM_TYPES = {"mens_doubles", "womens_doubles", "mixed_doubles", "open_doubles"}
@@ -567,10 +568,14 @@ class TeamGenerator:
 
         target_team_count = _target_team_count(config, len(candidates))
         team_type_sampler = WeightedSampler(config.team_type_weights)
+        team_registry = TeamIdentityRegistry.load(
+            session,
+            generation_run_id=generation_run_id,
+        )
         active_team_counts: dict[int, int] = {}
         candidate_pool = TeamCandidatePool(candidates)
         teams: list[Team] = []
-        membership_pairs: list[tuple[Team, PlayerCandidate, PlayerCandidate]] = []
+        membership_rows_loaded = 0
 
         attempts = 0
         max_attempts = max(target_team_count * 20, 100)
@@ -590,10 +595,23 @@ class TeamGenerator:
             if partner is None:
                 candidate_pool.deactivate(first_player.id)
                 continue
+            if team_registry.has_pair(first_player.id, partner.id):
+                _mark_player_used(
+                    first_player,
+                    candidate_pool,
+                    active_team_counts,
+                    config,
+                )
+                _mark_player_used(partner, candidate_pool, active_team_counts, config)
+                continue
 
-            team = Team(
+            resolution = team_registry.get_or_create_team(
+                players=(
+                    (first_player.id, 1),
+                    (partner.id, 2),
+                ),
                 team_type=team_type,
-                team_status="active",
+                team_identity_type="competitive",
                 country_code=first_player.country_code,
                 formation_date=batch.batch_month,
                 chemistry_score=_initial_chemistry(rng, config),
@@ -601,36 +619,14 @@ class TeamGenerator:
                     rng,
                     config=config,
                 ),
-                generation_run_id=generation_run_id,
             )
+            if not resolution.created:
+                continue
+            team = resolution.team
             teams.append(team)
-            membership_pairs.append((team, first_player, partner))
+            membership_rows_loaded += 2
             _mark_player_used(first_player, candidate_pool, active_team_counts, config)
             _mark_player_used(partner, candidate_pool, active_team_counts, config)
-
-        session.add_all(teams)
-        session.flush()
-
-        team_memberships = [
-            membership
-            for team, first_player, second_player in membership_pairs
-            for membership in (
-                TeamMembership(
-                    team_id=team.id,
-                    player_id=first_player.id,
-                    player_position=1,
-                    joined_date=batch.batch_month,
-                ),
-                TeamMembership(
-                    team_id=team.id,
-                    player_id=second_player.id,
-                    player_position=2,
-                    joined_date=batch.batch_month,
-                ),
-            )
-        ]
-        session.add_all(team_memberships)
-        session.flush()
         _record_team_lifecycle_events(
             session,
             generation_run_id=generation_run_id,
@@ -647,7 +643,7 @@ class TeamGenerator:
             eligible_player_count=len(candidates),
             target_team_count=target_team_count,
             rows_loaded=len(teams),
-            membership_rows_loaded=len(team_memberships),
+            membership_rows_loaded=membership_rows_loaded,
             leftover_player_count=len(candidate_pool),
         )
 
