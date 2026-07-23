@@ -390,7 +390,7 @@ def session():
                 team_number integer,
                 team_score integer,
                 pairing_source varchar(30),
-                source_team_id bigint,
+                source_team_id bigint not null,
                 foreign key(match_id) references matches(id)
             )
             """
@@ -764,7 +764,7 @@ def _seed_old_generated_data(session):
         "INSERT INTO team_memberships (id, team_id, player_id, joined_date, player_position) VALUES (1, 1, 1, '2025-01-01', 1)",
         "INSERT INTO tournaments (id, tournament_name, tournament_start_date, tournament_end_date, generation_run_id) VALUES (1, 'Old Tournament', '2025-01-01', '2025-01-02', 1)",
         "INSERT INTO matches (id, tournament_id, match_date, match_type, batch_id) VALUES (1, 1, '2025-01-02', 'recreational', 1)",
-        "INSERT INTO match_teams (id, match_id, team_number, team_score) VALUES (1, 1, 1, 11)",
+        "INSERT INTO match_teams (id, match_id, team_number, team_score, source_team_id) VALUES (1, 1, 1, 11, 1)",
         "INSERT INTO match_games (id, match_id, game_number, team_one_score, team_two_score, winning_team_number, target_score, win_by) VALUES (1, 1, 1, 11, 9, 1, 11, 2)",
         "INSERT INTO match_team_players (id, match_team_id, player_id) VALUES (1, 1, 1)",
         "INSERT INTO player_rating_history (id, player_id, batch_id, rating_date, rating_type, rating_value) VALUES (1, 1, 1, '2025-01-02', 'match_update', 1500.0)",

@@ -31,6 +31,7 @@ from app.generators.matches import (  # noqa: E402
     _prior_player_pair_counts,
     _sample_ad_hoc_pair_candidates,
 )
+from app.generators.team_identity import TeamIdentityRegistry  # noqa: E402
 from app.models import (  # noqa: E402
     GenerationRuntimeMetric,
     GenerationRun,
@@ -220,7 +221,7 @@ def session_factory():
                 expected_win_probability numeric(8, 4),
                 average_team_rating numeric(8, 3),
                 pairing_source varchar(30),
-                source_team_id bigint,
+                source_team_id bigint not null,
                 created_at datetime default current_timestamp not null,
                 updated_at datetime default current_timestamp not null
             )
@@ -407,12 +408,15 @@ def add_historical_match(
     session.add(match)
     session.flush()
 
+    first_source_team_id = _source_team_id_for_pair(session, first_team_player_ids)
+    second_source_team_id = _source_team_id_for_pair(session, second_team_player_ids)
     team_one = MatchTeam(
         match_id=match.id,
         team_number=1,
         team_score=1,
         expected_win_probability=Decimal("0.6000"),
         average_team_rating=Decimal("1500"),
+        source_team_id=first_source_team_id,
     )
     team_two = MatchTeam(
         match_id=match.id,
@@ -420,6 +424,7 @@ def add_historical_match(
         team_score=0,
         expected_win_probability=Decimal("0.4000"),
         average_team_rating=Decimal("1500"),
+        source_team_id=second_source_team_id,
     )
     session.add_all([team_one, team_two])
     session.flush()
@@ -449,6 +454,22 @@ def add_historical_match(
     session.commit()
 
 
+def _source_team_id_for_pair(session, player_ids: tuple[int, int]) -> int:
+    rows = (
+        session.query(TeamMembership.team_id, TeamMembership.player_id)
+        .where(TeamMembership.player_id.in_(player_ids))
+        .all()
+    )
+    teams_by_id: dict[int, set[int]] = {}
+    for team_id, player_id in rows:
+        teams_by_id.setdefault(team_id, set()).add(player_id)
+    expected = set(player_ids)
+    for team_id, team_player_ids in teams_by_id.items():
+        if team_player_ids == expected:
+            return team_id
+    raise AssertionError(f"No source team exists for player pair {player_ids}")
+
+
 def active_player_candidate(
     player_id,
     *,
@@ -470,6 +491,18 @@ def active_player_candidate(
         recent_match_count=recent_match_count,
         recent_game_count=recent_game_count,
     )
+
+
+def empty_team_registry(session) -> TeamIdentityRegistry:
+    generation_run = GenerationRun(
+        id=999,
+        generation_name="registry-test",
+        seed_value=999,
+        status="running",
+    )
+    session.add(generation_run)
+    session.flush()
+    return TeamIdentityRegistry.load(session, generation_run_id=generation_run.id)
 
 
 active_player_candidate.__test__ = False
@@ -671,9 +704,10 @@ def test_active_player_pool_excludes_players_without_current_rating(session):
     assert set(pool.all_ids) == {1, 2, 3, 4}
 
 
-def test_ad_hoc_sampler_returns_two_unique_non_overlapping_sides():
+def test_ad_hoc_sampler_returns_two_unique_persisted_non_overlapping_sides(session):
     payload = test_payload()
     config = MatchGenerationConfig.from_payload(payload)
+    registry = empty_team_registry(session)
     pool = ActivePlayerPool(
         [
             active_player_candidate(1, rating=1500, gender="M"),
@@ -686,6 +720,7 @@ def test_ad_hoc_sampler_returns_two_unique_non_overlapping_sides():
     sampled = _sample_ad_hoc_pair_candidates(
         random.Random(7),
         player_pool=pool,
+        team_registry=registry,
         match_date=date(2024, 2, 1),
         match_type="recreational",
         match_class="casual",
@@ -698,20 +733,24 @@ def test_ad_hoc_sampler_returns_two_unique_non_overlapping_sides():
     first_side, second_side = sampled
     assert first_side.pairing_source == "ad_hoc"
     assert second_side.pairing_source == "ad_hoc"
-    assert first_side.source_team_id is None
-    assert second_side.source_team_id is None
+    assert first_side.source_team_id == first_side.id
+    assert second_side.source_team_id == second_side.id
     assert len(set(first_side.player_ids)) == 2
     assert len(set(second_side.player_ids)) == 2
     assert set(first_side.player_ids).isdisjoint(second_side.player_ids)
+    persisted_teams = session.query(Team).order_by(Team.id).all()
+    assert {team.team_type for team in persisted_teams} == {"ad_hoc"}
+    assert session.query(TeamMembership).count() == 4
     assert first_side.average_rating == (
         sum(rating for _, _, rating in first_side.players) / Decimal("2")
     ).quantize(Decimal("0.001"))
 
 
-def test_ad_hoc_sampler_respects_player_daily_caps():
+def test_ad_hoc_sampler_respects_player_daily_caps(session):
     payload = test_payload()
     payload["match_scheduling"]["max_daily_matches_per_team"] = 1
     config = MatchGenerationConfig.from_payload(payload)
+    registry = empty_team_registry(session)
     match_date = date(2024, 2, 1)
     pool = ActivePlayerPool(
         [
@@ -727,6 +766,7 @@ def test_ad_hoc_sampler_respects_player_daily_caps():
     sampled = _sample_ad_hoc_pair_candidates(
         random.Random(3),
         player_pool=pool,
+        team_registry=registry,
         match_date=match_date,
         match_type="recreational",
         match_class="casual",
@@ -744,10 +784,11 @@ def test_ad_hoc_sampler_respects_player_daily_caps():
     assert 2 not in selected_player_ids
 
 
-def test_ad_hoc_sampler_uses_rating_band_when_possible():
+def test_ad_hoc_sampler_uses_rating_band_when_possible(session):
     payload = test_payload()
     payload["matchmaking"]["rating_band_width"]["recreational"] = 60
     config = MatchGenerationConfig.from_payload(payload)
+    registry = empty_team_registry(session)
     pool = ActivePlayerPool(
         [
             active_player_candidate(1, rating=1500),
@@ -760,6 +801,7 @@ def test_ad_hoc_sampler_uses_rating_band_when_possible():
     sampled = _sample_ad_hoc_pair_candidates(
         random.Random(4),
         player_pool=pool,
+        team_registry=registry,
         match_date=date(2024, 2, 1),
         match_type="recreational",
         match_class="casual",
@@ -774,10 +816,11 @@ def test_ad_hoc_sampler_uses_rating_band_when_possible():
         assert abs(ratings[0] - ratings[1]) <= Decimal("60")
 
 
-def test_ad_hoc_sampler_uses_bounded_sampling_for_large_pool(monkeypatch):
+def test_ad_hoc_sampler_uses_bounded_sampling_for_large_pool(session, monkeypatch):
     payload = test_payload()
     payload["matchmaking"]["rating_band_width"]["recreational"] = 80
     config = MatchGenerationConfig.from_payload(payload)
+    registry = empty_team_registry(session)
     pool = ActivePlayerPool(
         [
             active_player_candidate(
@@ -801,6 +844,7 @@ def test_ad_hoc_sampler_uses_bounded_sampling_for_large_pool(monkeypatch):
     sampled = _sample_ad_hoc_pair_candidates(
         random.Random(11),
         player_pool=pool,
+        team_registry=registry,
         match_date=date(2024, 2, 1),
         match_type="recreational",
         match_class="casual",
@@ -866,9 +910,14 @@ def test_prior_player_pair_counts_derive_from_match_history(session):
     assert pair_counts[(3, 4)] == 1
 
     pool = _active_player_pool(session, generation_run.id, batch.batch_month)
+    registry = TeamIdentityRegistry.load(
+        session,
+        generation_run_id=generation_run.id,
+    )
     sampled = _sample_ad_hoc_pair_candidates(
         random.Random(1),
         player_pool=pool,
+        team_registry=registry,
         match_date=batch.batch_month,
         match_type="recreational",
         match_class="casual",

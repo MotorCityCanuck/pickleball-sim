@@ -226,7 +226,7 @@ def session():
                 team_number integer not null,
                 team_score integer not null,
                 pairing_source varchar(30),
-                source_team_id bigint
+                source_team_id bigint not null
             )
             """
         )
@@ -1358,10 +1358,10 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
         text(
             """
             INSERT INTO match_teams (
-                id, match_id, team_number, team_score
+                id, match_id, team_number, team_score, pairing_source, source_team_id
             ) VALUES
-                (3004, 2002, 1, 1),
-                (3005, 2002, 2, 0)
+                (3004, 2002, 1, 1, 'competitive_team', 500),
+                (3005, 2002, 2, 0, 'competitive_team', 501)
             """
         )
     )

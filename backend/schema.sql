@@ -836,7 +836,7 @@ CREATE TABLE match_teams (
 	expected_win_probability NUMERIC(8, 4), 
 	average_team_rating NUMERIC(8, 3), 
 	pairing_source VARCHAR(30), 
-	source_team_id BIGINT, 
+	source_team_id BIGINT NOT NULL,
 	created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	PRIMARY KEY (id), 

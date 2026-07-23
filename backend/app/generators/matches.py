@@ -819,7 +819,7 @@ def _sample_ad_hoc_pair_candidates(
     rng: random.Random,
     *,
     player_pool: ActivePlayerPool,
-    team_registry: TeamIdentityRegistry | None = None,
+    team_registry: TeamIdentityRegistry,
     match_date: date,
     match_type: str,
     match_class: str,
@@ -827,7 +827,7 @@ def _sample_ad_hoc_pair_candidates(
     prior_pair_counts: dict[tuple[int, int], int],
     config: MatchGenerationConfig,
 ) -> tuple[PairCandidate, PairCandidate] | None:
-    """Sample two ad hoc sides without mutating generation state."""
+    """Sample two ad hoc sides and resolve them to persistent team identities."""
     if len(player_pool.all_ids) < 4:
         return None
 
@@ -1261,7 +1261,7 @@ def _ad_hoc_pair_weight(
 def _ad_hoc_pair_candidate(
     players: tuple[ActivePlayerCandidate, ActivePlayerCandidate],
     *,
-    team_registry: TeamIdentityRegistry | None = None,
+    team_registry: TeamIdentityRegistry,
     match_date: date,
     prior_pair_counts: dict[tuple[int, int], int],
 ) -> PairCandidate:
@@ -1275,25 +1275,20 @@ def _ad_hoc_pair_candidate(
         club_id for player in ordered_players for club_id in player.club_ids
     )
     team_division = _ad_hoc_team_division(ordered_players)
-    source_team_id: int | None = None
-    candidate_id = -(player_ids[0] * 1_000_000_000 + player_ids[1])
-    pairing_source = "ad_hoc"
-    team_type = "ad_hoc"
-    if team_registry is not None:
-        resolution = team_registry.get_or_create_team(
-            players=(
-                (ordered_players[0].id, 1),
-                (ordered_players[1].id, 2),
-            ),
-            team_type="ad_hoc",
-            team_division=team_division,
-            formation_date=match_date,
-        )
-        candidate_id = resolution.record.team_id
-        source_team_id = resolution.record.team_id
-        team_type = resolution.record.team_type
-        team_division = resolution.record.team_division
-        pairing_source = _pairing_source_for_team_type(resolution.record.team_type)
+    resolution = team_registry.get_or_create_team(
+        players=(
+            (ordered_players[0].id, 1),
+            (ordered_players[1].id, 2),
+        ),
+        team_type="ad_hoc",
+        team_division=team_division,
+        formation_date=match_date,
+    )
+    candidate_id = resolution.record.team_id
+    source_team_id = resolution.record.team_id
+    team_type = resolution.record.team_type
+    team_division = resolution.record.team_division
+    pairing_source = _pairing_source_for_team_type(resolution.record.team_type)
 
     return PairCandidate(
         id=candidate_id,
@@ -1859,7 +1854,7 @@ class MatchGenerator:
                             config=config,
                         )
                     elif pairing_source == "ad_hoc":
-                        if active_player_pool is None:
+                        if active_player_pool is None or team_registry is None:
                             continue
                         sampled = _sample_ad_hoc_pair_candidates(
                             rng,

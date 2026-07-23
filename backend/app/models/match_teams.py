@@ -19,7 +19,7 @@ class MatchTeam(Base, TimestampMixin):
     expected_win_probability = Column(Numeric(8, 4))
     average_team_rating = Column(Numeric(8, 3))
     pairing_source = Column(String(30))
-    source_team_id = Column(BigInteger, ForeignKey('teams.id'))
+    source_team_id = Column(BigInteger, ForeignKey('teams.id'), nullable=False)
     
     # Relationships
     match = relationship("Match", back_populates="match_teams")

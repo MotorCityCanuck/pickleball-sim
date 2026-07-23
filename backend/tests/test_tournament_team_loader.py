@@ -550,7 +550,7 @@ def _schema_ddls() -> tuple[str, ...]:
             expected_win_probability numeric(8, 4),
             average_team_rating numeric(8, 3),
             pairing_source varchar(30),
-            source_team_id bigint,
+            source_team_id bigint not null,
             created_at datetime default current_timestamp not null,
             updated_at datetime default current_timestamp not null
         )

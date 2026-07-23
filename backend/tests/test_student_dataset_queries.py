@@ -219,7 +219,7 @@ def seed_snapshot_query_data(session):
             )
             VALUES
                 (10, 1, 1, 2, 0.7, 1400.0, 1),
-                (11, 1, 2, 1, 0.3, 1350.0, NULL),
+                (11, 1, 2, 1, 0.3, 1350.0, 2),
                 (20, 2, 1, 2, 0.7, 1500.0, 3)
             """
         )
@@ -359,7 +359,7 @@ def test_batch_tied_queries_use_included_batch_ids(session, query_context):
     assert [row["id"] for row in rows(session, "matches", query_context)] == [1]
     match_team_rows = rows(session, "match_teams", query_context)
     assert [row["id"] for row in match_team_rows] == [10, 11]
-    assert [row["team_id"] for row in match_team_rows] == [1, None]
+    assert [row["team_id"] for row in match_team_rows] == [1, 2]
     assert [row["id"] for row in rows(session, "match_games", query_context)] == [1]
     assert [
         row["id"] for row in rows(session, "player_assessment_history", query_context)
@@ -653,7 +653,7 @@ STUDENT_SOURCE_TABLES_SQL = (
         expected_win_probability numeric(8, 4),
         average_team_rating numeric(8, 3),
         pairing_source varchar(30),
-        source_team_id bigint,
+        source_team_id bigint not null,
         created_at datetime default current_timestamp not null,
         updated_at datetime default current_timestamp not null
     )
