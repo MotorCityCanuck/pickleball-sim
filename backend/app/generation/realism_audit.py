@@ -2827,7 +2827,7 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                     m.predicted_win_probability,
                     MAX(
                         CASE
-                            WHEN mt.id = m.winning_team_id
+                            WHEN mt.source_team_id = m.winning_team_id
                             THEN mt.team_number
                             ELSE NULL
                         END
@@ -2882,7 +2882,7 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                     m.predicted_win_probability,
                     MAX(
                         CASE
-                            WHEN mt.id = m.winning_team_id
+                            WHEN mt.source_team_id = m.winning_team_id
                             THEN mt.team_number
                             ELSE NULL
                         END

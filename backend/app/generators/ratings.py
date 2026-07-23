@@ -264,7 +264,9 @@ class RatingUpdateGenerator:
                                 "games_played": game_count,
                                 "games_won": summary.games_won,
                                 "match_won": (
-                                    1 if match.winning_team_id == match_team.id else 0
+                                    1
+                                    if match.winning_team_id == match_team.source_team_id
+                                    else 0
                                 ),
                                 "k_factor": k_factor,
                                 "confidence_before": confidence_before,

@@ -2194,7 +2194,7 @@ class MatchGenerator:
                 winning_match_team = (
                     team_one if team_one.team_score > team_two.team_score else team_two
                 )
-                match.winning_team_id = winning_match_team.id
+                match.winning_team_id = winning_match_team.source_team_id
             metric["output_count"] = len(match_team_player_rows)
 
         with _measure_runtime(

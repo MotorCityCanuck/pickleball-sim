@@ -460,10 +460,10 @@ def _validate_match_shape(
         SELECT COUNT(*)
         FROM "matches" m
         LEFT JOIN "match_teams" mt
-          ON mt.id = m.winning_team_id
+          ON mt.team_id = m.winning_team_id
          AND mt.match_id = m.id
         WHERE m.winning_team_id IS NOT NULL
-          AND mt.id IS NULL
+          AND mt.team_id IS NULL
         """,
     )
     match_team_count_failures = _count(
@@ -498,8 +498,8 @@ def _validate_match_shape(
         _check(
             name="relationship:matches.winning_team_id_same_match",
             passed=winning_team_mismatch_count == 0,
-            passed_message="Winning teams belong to their referenced matches.",
-            failed_message="Some winning teams do not belong to their referenced matches.",
+            passed_message="Winning team ids match one side's source team for the match.",
+            failed_message="Some winning team ids are not one of the match source teams.",
             details={"mismatch_count": winning_team_mismatch_count},
         ),
         _check(

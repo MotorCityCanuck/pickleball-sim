@@ -554,8 +554,8 @@ def seed_audit_dataset(session) -> None:
                 id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number,
                 predicted_win_probability, batch_id
             ) VALUES
-                (2000, '2026-01-03', 1, 'recreational', 3000, 1, 0.75, 10),
-                (2001, '2026-01-03', 1, 'league', 3003, 1, 0.80, 10)
+                (2000, '2026-01-03', 1, 'recreational', 500, 1, 0.75, 10),
+                (2001, '2026-01-03', 1, 'league', 501, 1, 0.80, 10)
             """
         )
     )
@@ -999,8 +999,8 @@ def test_realism_audit_runner_executes_name_and_longitudinal_queries(session):
                 id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number,
                 predicted_win_probability, batch_id
             ) VALUES
-                (2002, '2026-02-03', 1, 'recreational', 3004, 1, 0.65, 11),
-                (2003, '2026-03-03', 1, 'league', 3007, 2, 0.55, 12)
+                (2002, '2026-02-03', 1, 'recreational', 500, 1, 0.65, 11),
+                (2003, '2026-03-03', 1, 'league', 501, 2, 0.55, 12)
             """
         )
     )
@@ -1350,7 +1350,7 @@ def test_zero_match_player_breakdowns_explain_team_and_registration_gaps(session
                 id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number,
                 predicted_win_probability, batch_id
             ) VALUES
-                (2002, '2026-02-03', 1, 'recreational', 3004, 1, 0.65, 11)
+                (2002, '2026-02-03', 1, 'recreational', 500, 1, 0.65, 11)
             """
         )
     )

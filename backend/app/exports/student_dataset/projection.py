@@ -458,6 +458,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
                 "matches",
                 "winning_team_id",
                 "match_teams",
+                parent_column="team_id",
                 nullable=True,
             ),
         ),

@@ -977,6 +977,10 @@ def test_generate_for_batch_persists_competitive_team_source_metadata(session):
         "competitive_team"
     }
     assert all(match_team.source_team_id is not None for match_team in match_teams)
+    for match in session.query(Match).where(Match.batch_id == batch.id):
+        assert match.winning_team_id in {
+            match_team.source_team_id for match_team in match.match_teams
+        }
     for match_team in match_teams:
         assert tuple(sorted(player.player_id for player in match_team.players)) == (
             source_rosters[match_team.source_team_id]
@@ -1056,6 +1060,10 @@ def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enab
         len({match_team.pairing_source for match_team in match.match_teams}) == 1
         for match in session.query(Match).where(Match.batch_id == batch.id)
     )
+    for match in session.query(Match).where(Match.batch_id == batch.id):
+        assert match.winning_team_id in {
+            match_team.source_team_id for match_team in match.match_teams
+        }
 
 
 def test_generate_for_batch_applies_hidden_bias_to_prediction_only(session):

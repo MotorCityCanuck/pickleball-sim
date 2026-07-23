@@ -226,7 +226,7 @@ def test_duplicate_like_rows_uses_bounded_source_match_sample_and_lookup():
     matches = [
         {
             "id": match_id,
-            "winning_team_id": (match_id * 2) - 1,
+            "winning_team_id": 10_000 + ((match_id * 2) - 1),
         }
         for match_id in range(1, match_count + 1)
     ]
@@ -234,6 +234,7 @@ def test_duplicate_like_rows_uses_bounded_source_match_sample_and_lookup():
         {
             "id": team_id,
             "match_id": ((team_id - 1) // 2) + 1,
+            "source_team_id": 10_000 + team_id,
         }
         for team_id in range(1, (match_count * 2) + 1)
     ]

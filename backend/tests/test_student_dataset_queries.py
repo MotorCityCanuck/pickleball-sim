@@ -204,9 +204,9 @@ def seed_snapshot_query_data(session):
             )
             VALUES
                 (1, NULL, '2025-01-20', 3, 'recreational', 'indoor',
-                 'best_of_3', 10, 1, 0.7, 33, 0.5, 0.1, 101),
+                 'best_of_3', 1, 1, 0.7, 33, 0.5, 0.1, 101),
                 (2, NULL, '2025-03-20', 3, 'recreational', 'outdoor',
-                 'best_of_3', 20, 1, 0.7, 35, 0.5, 0.1, 103)
+                 'best_of_3', 3, 1, 0.7, 35, 0.5, 0.1, 103)
             """
         )
     )

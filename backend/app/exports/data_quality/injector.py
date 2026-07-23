@@ -475,7 +475,7 @@ def build_duplicate_like_rows(
             ]
             source_games = captures.games_by_match_id.get(source_match_id, [])
 
-            team_id_map: dict[int, int] = {}
+            match_team_id_map: dict[int, int] = {}
             new_match = dict(source_match)
             new_match["id"] = next_match_id
             next_match_id += 1
@@ -483,22 +483,21 @@ def build_duplicate_like_rows(
             new_match_teams: list[dict[str, Any]] = []
             for team_row in source_match_teams:
                 cloned_team = dict(team_row)
-                source_team_id = int(team_row["id"])
+                source_match_team_id = int(team_row["id"])
                 cloned_team["id"] = next_match_team_id
-                team_id_map[source_team_id] = next_match_team_id
+                match_team_id_map[source_match_team_id] = next_match_team_id
                 next_match_team_id += 1
                 cloned_team["match_id"] = new_match["id"]
                 new_match_teams.append(cloned_team)
-            winning_team_id = source_match.get("winning_team_id")
-            if winning_team_id is not None:
-                new_match["winning_team_id"] = team_id_map.get(int(winning_team_id))
 
             new_match_team_players: list[dict[str, Any]] = []
             for player_row in source_players:
                 cloned_player = dict(player_row)
                 cloned_player["id"] = next_match_team_player_id
                 next_match_team_player_id += 1
-                cloned_player["match_team_id"] = team_id_map[int(player_row["match_team_id"])]
+                cloned_player["match_team_id"] = match_team_id_map[
+                    int(player_row["match_team_id"])
+                ]
                 new_match_team_players.append(cloned_player)
 
             new_match_games: list[dict[str, Any]] = []
@@ -904,7 +903,7 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
             ]
             source_games = games_by_match_id.get(source_match_id, [])
 
-            team_id_map: dict[int, int] = {}
+            match_team_id_map: dict[int, int] = {}
             new_match = dict(source_match)
             new_match["id"] = next_match_id
             next_match_id += 1
@@ -912,22 +911,21 @@ def _apply_duplicate_like_rows(state: _InjectionState) -> None:
             new_match_teams: list[dict[str, Any]] = []
             for team_row in source_match_teams:
                 cloned_team = dict(team_row)
-                source_team_id = int(team_row["id"])
+                source_match_team_id = int(team_row["id"])
                 cloned_team["id"] = next_match_team_id
-                team_id_map[source_team_id] = next_match_team_id
+                match_team_id_map[source_match_team_id] = next_match_team_id
                 next_match_team_id += 1
                 cloned_team["match_id"] = new_match["id"]
                 new_match_teams.append(cloned_team)
-            winning_team_id = source_match.get("winning_team_id")
-            if winning_team_id is not None:
-                new_match["winning_team_id"] = team_id_map.get(int(winning_team_id))
 
             new_match_team_players: list[dict[str, Any]] = []
             for player_row in source_players:
                 cloned_player = dict(player_row)
                 cloned_player["id"] = next_match_team_player_id
                 next_match_team_player_id += 1
-                cloned_player["match_team_id"] = team_id_map[int(player_row["match_team_id"])]
+                cloned_player["match_team_id"] = match_team_id_map[
+                    int(player_row["match_team_id"])
+                ]
                 new_match_team_players.append(cloned_player)
 
             new_match_games: list[dict[str, Any]] = []

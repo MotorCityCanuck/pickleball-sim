@@ -307,16 +307,27 @@ def _validate_relationships(
     checks: list[DataQualityValidationCheck] = []
     lookup = {
         table_name: {
-            row[primary_key_column(table_name)]: row
-            for row in rows
-            if row.get(primary_key_column(table_name)) is not None
+            column_name: {
+                row[column_name]: row
+                for row in rows
+                if row.get(column_name) is not None
+            }
+            for column_name in {
+                primary_key_column(table_name),
+                *(
+                    relationship.parent_column
+                    for projection in _projection_by_table().values()
+                    for relationship in projection.relationship_validations
+                    if relationship.parent_table == table_name
+                ),
+            }
         }
         for table_name, rows in injected_tables.items()
     }
     for projection in _projection_by_table().values():
         for relationship in projection.relationship_validations:
             missing_count = 0
-            parent_lookup = lookup[relationship.parent_table]
+            parent_lookup = lookup[relationship.parent_table][relationship.parent_column]
             for row in injected_tables[relationship.child_table]:
                 value = row.get(relationship.child_column)
                 if value is None and relationship.nullable:
