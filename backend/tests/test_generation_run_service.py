@@ -190,6 +190,7 @@ def session():
             CREATE TABLE teams (
                 id integer primary key,
                 team_type varchar(50) not null,
+                team_identity_type varchar(30) not null default 'competitive',
                 formation_date date not null,
                 generation_run_id bigint,
                 foreign key(generation_run_id) references generation_runs(id)

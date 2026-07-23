@@ -138,6 +138,7 @@ def session_factory():
             CREATE TABLE teams (
                 id integer primary key,
                 team_type varchar(50) not null,
+                team_identity_type varchar(30) not null default 'competitive',
                 team_status varchar(30),
                 country_code varchar(2),
                 formation_date date not null,

@@ -176,6 +176,7 @@ EXPECTED_PUBLIC_INDEXES = {
     "idx_team_lifecycle_events_team",
     "idx_teams_country",
     "idx_teams_formation_date",
+    "idx_teams_identity_type",
     "idx_teams_status",
     "idx_teams_type",
     "idx_tournaments_region",
@@ -306,6 +307,7 @@ EXPECTED_CHECK_CONSTRAINTS = {
     "teams": {
         "chk_team_country",
         "chk_team_dates",
+        "chk_team_identity_type",
         "chk_team_status",
         "chk_team_type",
     },
@@ -554,6 +556,7 @@ EXPECTED_SERVER_DEFAULTS = {
         "batch_type": "'future_increment'",
         "processing_status": "'pending'",
     },
+    "teams": {"team_identity_type": "competitive"},
     "match_games": {
         "target_score": "11",
         "win_by": "2",

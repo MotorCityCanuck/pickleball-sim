@@ -14,6 +14,12 @@ class Team(Base, TimestampMixin):
     
     id = Column(BigInteger, primary_key=True)
     team_type = Column(String(50), nullable=False)
+    team_identity_type = Column(
+        String(30),
+        nullable=False,
+        default='competitive',
+        server_default='competitive',
+    )
     team_status = Column(String(30), default='active')
     country_code = Column(String(2))
     formation_date = Column(Date, nullable=False)
@@ -28,6 +34,7 @@ class Team(Base, TimestampMixin):
     
     __table_args__ = (
         Index('idx_teams_type', 'team_type'),
+        Index('idx_teams_identity_type', 'team_identity_type'),
         Index('idx_teams_status', 'team_status'),
         Index('idx_teams_country', 'country_code'),
         Index('idx_teams_formation_date', 'formation_date'),
@@ -38,6 +45,10 @@ class Team(Base, TimestampMixin):
         CheckConstraint(
             "team_type IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')",
             name='chk_team_type'
+        ),
+        CheckConstraint(
+            "team_identity_type IN ('competitive', 'ad_hoc')",
+            name='chk_team_identity_type',
         ),
         CheckConstraint("team_status IN ('active', 'dormant', 'retired')", name='chk_team_status'),
         CheckConstraint('dissolution_date IS NULL OR dissolution_date >= formation_date', name='chk_team_dates'),

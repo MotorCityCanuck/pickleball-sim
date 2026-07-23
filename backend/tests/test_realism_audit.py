@@ -156,6 +156,8 @@ def session():
             """
             CREATE TABLE teams (
                 id integer primary key,
+                team_type varchar(50) not null default 'open_doubles',
+                team_identity_type varchar(30) not null default 'competitive',
                 team_status varchar(30) not null,
                 formation_date date not null,
                 dissolution_date date,
