@@ -29,7 +29,7 @@ from .players import WeightedSampler, _decimal
 from .team_identity import TeamIdentityRegistry
 
 
-TEAM_TYPES = {"mens_doubles", "womens_doubles", "mixed_doubles", "open_doubles"}
+TEAM_DIVISIONS = {"mens_doubles", "womens_doubles", "mixed_doubles", "open_doubles"}
 
 
 @dataclass(frozen=True)
@@ -567,7 +567,7 @@ class TeamGenerator:
             )
 
         target_team_count = _target_team_count(config, len(candidates))
-        team_type_sampler = WeightedSampler(config.team_type_weights)
+        team_division_sampler = WeightedSampler(config.team_type_weights)
         team_registry = TeamIdentityRegistry.load(
             session,
             generation_run_id=generation_run_id,
@@ -581,15 +581,15 @@ class TeamGenerator:
         max_attempts = max(target_team_count * 20, 100)
         while len(teams) < target_team_count and attempts < max_attempts:
             attempts += 1
-            team_type = str(team_type_sampler.choose(rng))
-            first_player = candidate_pool.choose_first(rng, team_type)
+            team_division = str(team_division_sampler.choose(rng))
+            first_player = candidate_pool.choose_first(rng, team_division)
             if first_player is None:
                 continue
             partner = _choose_partner(
                 rng,
                 first_player=first_player,
                 candidate_pool=candidate_pool,
-                team_type=team_type,
+                team_type=team_division,
                 config=config,
             )
             if partner is None:
@@ -610,8 +610,8 @@ class TeamGenerator:
                     (first_player.id, 1),
                     (partner.id, 2),
                 ),
-                team_type=team_type,
-                team_identity_type="competitive",
+                team_type="competitive",
+                team_division=team_division,
                 country_code=first_player.country_code,
                 formation_date=batch.batch_month,
                 chemistry_score=_initial_chemistry(rng, config),
@@ -1032,7 +1032,7 @@ def _team_type_weights(value: dict[str, Any]) -> tuple[tuple[str, Decimal], ...]
     weights = tuple((team_type, _decimal(weight)) for team_type, weight in value.items())
     if not weights:
         raise ValueError("team_type_weights cannot be empty")
-    unknown = {team_type for team_type, _ in weights} - TEAM_TYPES
+    unknown = {team_type for team_type, _ in weights} - TEAM_DIVISIONS
     if unknown:
         raise ValueError(f"Unsupported team_type_weights keys: {sorted(unknown)}")
     total = sum(weight for _, weight in weights)

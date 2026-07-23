@@ -321,8 +321,8 @@ CREATE TABLE student_dataset_releases (
 
 CREATE TABLE teams (
 	id BIGSERIAL NOT NULL, 
-	team_type VARCHAR(50) NOT NULL, 
-	team_identity_type VARCHAR(30) DEFAULT 'competitive' NOT NULL, 
+	team_type VARCHAR(30) DEFAULT 'competitive' NOT NULL,
+	team_division VARCHAR(50) DEFAULT 'open_doubles' NOT NULL,
 	team_status VARCHAR(30), 
 	country_code VARCHAR(2), 
 	formation_date DATE NOT NULL, 
@@ -334,8 +334,8 @@ CREATE TABLE teams (
 	updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL, 
 	PRIMARY KEY (id), 
 	CONSTRAINT chk_team_country CHECK (country_code IS NULL OR country_code IN ('US', 'CA')), 
-	CONSTRAINT chk_team_type CHECK (team_type IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')), 
-	CONSTRAINT chk_team_identity_type CHECK (team_identity_type IN ('competitive', 'ad_hoc')), 
+	CONSTRAINT chk_team_type CHECK (team_type IN ('competitive', 'ad_hoc')),
+	CONSTRAINT chk_team_division CHECK (team_division IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles')),
 	CONSTRAINT chk_team_status CHECK (team_status IN ('active', 'dormant', 'retired')), 
 	CONSTRAINT chk_team_dates CHECK (dissolution_date IS NULL OR dissolution_date >= formation_date), 
 	FOREIGN KEY(generation_run_id) REFERENCES generation_runs (id)
@@ -1205,8 +1205,8 @@ CREATE INDEX idx_team_memberships_dates ON team_memberships (joined_date, left_d
 CREATE INDEX idx_team_memberships_player ON team_memberships (player_id);
 CREATE INDEX idx_team_memberships_team ON team_memberships (team_id);
 CREATE INDEX idx_teams_country ON teams (country_code);
+CREATE INDEX idx_teams_division ON teams (team_division);
 CREATE INDEX idx_teams_formation_date ON teams (formation_date);
-CREATE INDEX idx_teams_identity_type ON teams (team_identity_type);
 CREATE INDEX idx_teams_status ON teams (team_status);
 CREATE INDEX idx_teams_type ON teams (team_type);
 CREATE INDEX idx_tournament_division_results_division ON tournament_division_results (slot_country_code, slot_division);

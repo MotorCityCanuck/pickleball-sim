@@ -280,7 +280,8 @@ def _seed_valid_team(
     session.add(
         Team(
             id=team_id,
-            team_type=team_type,
+            team_type="competitive",
+            team_division=team_type,
             team_status=team_status,
             country_code=country_code,
             formation_date=date(2025, 1, 1),
@@ -450,8 +451,8 @@ def _schema_ddls() -> tuple[str, ...]:
         """
         CREATE TABLE teams (
             id integer primary key,
-            team_type varchar(50) not null,
-            team_identity_type varchar(30) not null default 'competitive',
+            team_type varchar(30) not null default 'competitive',
+            team_division varchar(50) not null default 'open_doubles',
             team_status varchar(30) default 'active',
             country_code varchar(2),
             formation_date date not null,

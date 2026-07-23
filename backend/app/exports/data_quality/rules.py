@@ -148,7 +148,14 @@ TABLE_REQUIRED_COLUMNS: Mapping[str, tuple[str, ...]] = {
     ),
     "regions": ("id", "country_code", "region_type", "region_name", "population"),
     "team_memberships": ("id", "team_id", "player_id", "player_position", "joined_date"),
-    "teams": ("id", "team_type", "team_status", "country_code", "formation_date"),
+    "teams": (
+        "id",
+        "team_type",
+        "team_division",
+        "team_status",
+        "country_code",
+        "formation_date",
+    ),
 }
 
 MISSING_VALUE_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
@@ -168,7 +175,7 @@ CATEGORICAL_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "player_master": ("gender", "dominant_hand", "player_status"),
     "player_registrations": ("registration_source",),
     "regions": ("region_type",),
-    "teams": ("team_type", "team_status"),
+    "teams": ("team_type", "team_division", "team_status"),
 }
 
 FORMATTING_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {

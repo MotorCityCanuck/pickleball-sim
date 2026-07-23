@@ -139,8 +139,8 @@ def session_factory():
             """
             CREATE TABLE teams (
                 id integer primary key autoincrement,
-                team_type varchar(50) not null,
-                team_identity_type varchar(30) not null default 'competitive',
+                team_type varchar(30) not null default 'competitive',
+                team_division varchar(50) not null default 'open_doubles',
                 team_status varchar(30) default 'active',
                 country_code varchar(2),
                 formation_date date not null,
@@ -344,7 +344,8 @@ def seed_match_data(session, *, payload=None, team_count=8):
 
     for index in range(team_count):
         team = Team(
-            team_type="mixed_doubles",
+            team_type="competitive",
+            team_division="mixed_doubles",
             team_status="active",
             formation_date=date(2024, 1, 1),
             generation_run_id=generation_run.id,
@@ -968,7 +969,14 @@ def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enab
         session.get(Team, match_team.source_team_id)
         for match_team in ad_hoc_match_teams
     }
-    assert {team.team_identity_type for team in ad_hoc_source_teams} == {"ad_hoc"}
+    assert {team.team_type for team in ad_hoc_source_teams} == {"ad_hoc"}
+    expected_divisions = {
+        "mens_doubles",
+        "womens_doubles",
+        "mixed_doubles",
+        "open_doubles",
+    }
+    assert all(team.team_division in expected_divisions for team in ad_hoc_source_teams)
     ad_hoc_player_ids = {
         player.player_id
         for match_team in ad_hoc_match_teams

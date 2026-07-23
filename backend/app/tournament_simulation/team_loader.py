@@ -338,14 +338,14 @@ def _load_team_entry(
                 ),
             )
         )
-    if team.team_type != submission.slot.division:
+    if team.team_division != submission.slot.division:
         issues.append(
             _issue(
                 submission,
                 field="division",
                 code="division_mismatch",
                 message=(
-                    f"Team {team.id} is {team.team_type}, not "
+                    f"Team {team.id} is {team.team_division}, not "
                     f"{submission.slot.division}."
                 ),
             )
@@ -421,7 +421,7 @@ def _load_team_entry(
     entry = TournamentTeamEntry(
         id=team.id,
         country_code=team.country_code,
-        division=team.team_type,
+        division=team.team_division,
         average_rating=average_rating,
         avg_age=_average_age(
             [row["birth_date"] for row in roster_rows],

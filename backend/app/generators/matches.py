@@ -405,15 +405,15 @@ class MatchGenerationProgress:
 class PairCandidate:
     """Two-player side candidate used by matchmaking and scoring.
 
-    Current candidates all come from persistent competitive teams. Later chunks
-    can add ad hoc candidates by setting ``pairing_source`` and leaving
-    ``source_team_id`` empty without changing scoring or persistence call sites.
+    Candidates come from persistent team identities. ``team_type`` captures
+    competitive/ad hoc identity; ``team_division`` captures doubles composition.
     """
 
     id: int
     pairing_source: str
     source_team_id: int | None
     team_type: str
+    team_division: str
     region_id: int | None
     average_rating: Decimal
     players: tuple[tuple[int, int, Decimal], ...]
@@ -536,11 +536,11 @@ class PairCandidatePool:
         self.by_id = {team.id: team for team in teams}
         self.all_ids = [team.id for team in teams]
         self.ids_by_region: dict[int, list[int]] = {}
-        self.ids_by_type: dict[str, list[int]] = {}
+        self.ids_by_division: dict[str, list[int]] = {}
         for team in teams:
             if team.region_id is not None:
                 self.ids_by_region.setdefault(team.region_id, []).append(team.id)
-            self.ids_by_type.setdefault(team.team_type, []).append(team.id)
+            self.ids_by_division.setdefault(team.team_division, []).append(team.id)
 
     def choose_team(
         self,
@@ -655,7 +655,7 @@ class PairCandidatePool:
                 filtered = self._filter_ids(region_ids, allowed_team_ids)
                 if filtered:
                     return filtered
-        type_ids = self.ids_by_type.get(first_team.team_type, self.all_ids)
+        type_ids = self.ids_by_division.get(first_team.team_division, self.all_ids)
         filtered = self._filter_ids(type_ids, allowed_team_ids)
         if filtered:
             return filtered
@@ -1274,32 +1274,33 @@ def _ad_hoc_pair_candidate(
     club_ids = frozenset(
         club_id for player in ordered_players for club_id in player.club_ids
     )
-    team_type = _ad_hoc_team_type(ordered_players)
+    team_division = _ad_hoc_team_division(ordered_players)
     source_team_id: int | None = None
     candidate_id = -(player_ids[0] * 1_000_000_000 + player_ids[1])
     pairing_source = "ad_hoc"
+    team_type = "ad_hoc"
     if team_registry is not None:
         resolution = team_registry.get_or_create_team(
             players=(
                 (ordered_players[0].id, 1),
                 (ordered_players[1].id, 2),
             ),
-            team_type=team_type,
-            team_identity_type="ad_hoc",
+            team_type="ad_hoc",
+            team_division=team_division,
             formation_date=match_date,
         )
         candidate_id = resolution.record.team_id
         source_team_id = resolution.record.team_id
         team_type = resolution.record.team_type
-        pairing_source = _pairing_source_for_team_identity(
-            resolution.record.team_identity_type
-        )
+        team_division = resolution.record.team_division
+        pairing_source = _pairing_source_for_team_type(resolution.record.team_type)
 
     return PairCandidate(
         id=candidate_id,
         pairing_source=pairing_source,
         source_team_id=source_team_id,
         team_type=team_type,
+        team_division=team_division,
         region_id=ordered_players[0].region_id or ordered_players[1].region_id,
         average_rating=_average_player_rating(ordered_players),
         players=(
@@ -1318,7 +1319,9 @@ def _ad_hoc_pair_candidate(
     )
 
 
-def _ad_hoc_team_type(players: tuple[ActivePlayerCandidate, ActivePlayerCandidate]) -> str:
+def _ad_hoc_team_division(
+    players: tuple[ActivePlayerCandidate, ActivePlayerCandidate],
+) -> str:
     genders = {player.gender for player in players}
     if genders == {"M"}:
         return "mens_doubles"
@@ -1449,8 +1452,8 @@ def _source_attempt_order(source: str) -> tuple[str, ...]:
     return ("competitive_team", "ad_hoc")
 
 
-def _pairing_source_for_team_identity(team_identity_type: str) -> str:
-    if team_identity_type == "competitive":
+def _pairing_source_for_team_type(team_type: str) -> str:
+    if team_type == "competitive":
         return "competitive_team"
     return "ad_hoc"
 
@@ -2403,6 +2406,7 @@ def _active_teams(
             select(
                 Team.id,
                 Team.team_type,
+                Team.team_division,
                 Team.formation_date,
                 TeamMembership.player_id,
                 TeamMembership.player_position,
@@ -2413,6 +2417,7 @@ def _active_teams(
             .join(Player, Player.id == TeamMembership.player_id)
             .where(
                 Team.generation_run_id == generation_run_id,
+                Team.team_type == "competitive",
                 Team.team_status == "active",
                 Team.formation_date <= batch_month,
                 or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
@@ -2430,6 +2435,7 @@ def _active_teams(
     for (
         team_id,
         team_type,
+        team_division,
         formation_date,
         player_id,
         player_position,
@@ -2440,6 +2446,7 @@ def _active_teams(
             team_id,
             {
                 "team_type": team_type,
+                "team_division": team_division,
                 "region_id": home_region_id,
                 "formation_date": formation_date,
                 "birth_dates": [],
@@ -2622,9 +2629,10 @@ def _active_teams(
             candidates.append(
                 PairCandidate(
                     id=team_id,
-                    pairing_source="competitive_team",
+                    pairing_source=_pairing_source_for_team_type(row["team_type"]),
                     source_team_id=team_id,
                     team_type=row["team_type"],
+                    team_division=row["team_division"],
                     region_id=row["region_id"],
                     average_rating=average_rating,
                     players=players,

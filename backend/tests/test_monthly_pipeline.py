@@ -137,8 +137,8 @@ def session_factory():
             """
             CREATE TABLE teams (
                 id integer primary key,
-                team_type varchar(50) not null,
-                team_identity_type varchar(30) not null default 'competitive',
+                team_type varchar(30) not null default 'competitive',
+                team_division varchar(50) not null default 'open_doubles',
                 team_status varchar(30),
                 country_code varchar(2),
                 formation_date date not null,
@@ -430,12 +430,13 @@ class FakeClubMembershipGenerator:
 class FakeTeamGenerator:
     def generate_for_batch(self, *, generation_run_id, batch_id, session):
         team = Team(
-                team_type="open_doubles",
-                team_status="active",
-                country_code="US",
-                formation_date=date(2024, 1, 1),
-                generation_run_id=generation_run_id,
-            )
+            team_type="competitive",
+            team_division="open_doubles",
+            team_status="active",
+            country_code="US",
+            formation_date=date(2024, 1, 1),
+            generation_run_id=generation_run_id,
+        )
         session.add(team)
         session.flush()
         session.add_all(

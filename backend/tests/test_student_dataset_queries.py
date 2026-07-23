@@ -258,17 +258,17 @@ def seed_snapshot_query_data(session):
         text(
             """
             INSERT INTO teams (
-                id, team_type, team_status, country_code, formation_date, dissolution_date,
+                id, team_type, team_division, team_status, country_code, formation_date, dissolution_date,
                 chemistry_score, persistence_probability, generation_run_id
             )
             VALUES
-                (1, 'mixed_doubles', 'retired', 'US', '2025-01-01', '2025-04-15',
+                (1, 'competitive', 'mixed_doubles', 'retired', 'US', '2025-01-01', '2025-04-15',
                  0.8, 0.9, 1),
-                (2, 'mixed_doubles', 'dormant', 'CA', '2025-01-01', '2025-01-15',
+                (2, 'competitive', 'mixed_doubles', 'dormant', 'CA', '2025-01-01', '2025-01-15',
                  0.7, 0.8, 1),
-                (3, 'mixed_doubles', 'active', 'US', '2025-03-01', NULL,
+                (3, 'competitive', 'mixed_doubles', 'active', 'US', '2025-03-01', NULL,
                  0.6, 0.7, 1),
-                (4, 'mixed_doubles', 'active', 'CA', '2025-01-01', NULL,
+                (4, 'competitive', 'mixed_doubles', 'active', 'CA', '2025-01-01', NULL,
                  0.5, 0.6, 2)
             """
         )
@@ -691,8 +691,8 @@ STUDENT_SOURCE_TABLES_SQL = (
     """
     CREATE TABLE teams (
         id integer primary key,
-        team_type varchar(50) not null,
-        team_identity_type varchar(30) not null default 'competitive',
+        team_type varchar(30) not null default 'competitive',
+        team_division varchar(50) not null default 'open_doubles',
         team_status varchar(30),
         country_code varchar(2),
         formation_date date not null,

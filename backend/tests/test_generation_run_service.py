@@ -189,8 +189,8 @@ def session():
             """
             CREATE TABLE teams (
                 id integer primary key,
-                team_type varchar(50) not null,
-                team_identity_type varchar(30) not null default 'competitive',
+                team_type varchar(30) not null default 'competitive',
+                team_division varchar(50) not null default 'open_doubles',
                 formation_date date not null,
                 generation_run_id bigint,
                 foreign key(generation_run_id) references generation_runs(id)
@@ -760,7 +760,7 @@ def _seed_old_generated_data(session):
         "INSERT INTO players (id, first_name, last_name, birth_date, registration_date, generation_run_id) VALUES (1, 'Old', 'Player', '1990-01-01', '2025-01-01', 1)",
         "INSERT INTO player_registrations (id, player_id, batch_id, registration_month) VALUES (1, 1, 1, '2025-01-01')",
         "INSERT INTO club_memberships (id, player_id, club_id, generation_run_id, start_date) VALUES (1, 1, 1, 1, '2025-01-01')",
-        "INSERT INTO teams (id, team_type, formation_date, generation_run_id) VALUES (1, 'open_doubles', '2025-01-01', 1)",
+        "INSERT INTO teams (id, team_type, team_division, formation_date, generation_run_id) VALUES (1, 'competitive', 'open_doubles', '2025-01-01', 1)",
         "INSERT INTO team_memberships (id, team_id, player_id, joined_date, player_position) VALUES (1, 1, 1, '2025-01-01', 1)",
         "INSERT INTO tournaments (id, tournament_name, tournament_start_date, tournament_end_date, generation_run_id) VALUES (1, 'Old Tournament', '2025-01-01', '2025-01-02', 1)",
         "INSERT INTO matches (id, tournament_id, match_date, match_type, batch_id) VALUES (1, 1, '2025-01-02', 'recreational', 1)",

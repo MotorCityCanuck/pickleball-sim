@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.models import Region, Team, TeamMembership
 
 
-TEAM_IDENTITY_TYPES = {"competitive", "ad_hoc"}
+TEAM_TYPES = {"competitive", "ad_hoc"}
+TEAM_DIVISIONS = {"mens_doubles", "womens_doubles", "mixed_doubles", "open_doubles"}
 
 
 def player_pair_key(first_player_id: int, second_player_id: int) -> tuple[int, int]:
@@ -29,7 +30,7 @@ class TeamIdentityRecord:
     team_id: int
     player_ids: tuple[int, int]
     team_type: str
-    team_identity_type: str
+    team_division: str
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ class TeamIdentityRegistry:
             select(
                 Team.id,
                 Team.team_type,
-                Team.team_identity_type,
+                Team.team_division,
                 TeamMembership.player_id,
             )
             .join(TeamMembership, TeamMembership.team_id == Team.id)
@@ -76,12 +77,12 @@ class TeamIdentityRegistry:
         )
 
         team_rows: dict[int, dict[str, object]] = {}
-        for team_id, team_type, team_identity_type, player_id in rows:
+        for team_id, team_type, team_division, player_id in rows:
             row = team_rows.setdefault(
                 int(team_id),
                 {
                     "team_type": str(team_type),
-                    "team_identity_type": str(team_identity_type),
+                    "team_division": str(team_division),
                     "player_ids": [],
                 },
             )
@@ -105,7 +106,7 @@ class TeamIdentityRegistry:
                 team_id=team_id,
                 player_ids=pair_key,
                 team_type=str(row["team_type"]),
-                team_identity_type=str(row["team_identity_type"]),
+                team_division=str(row["team_division"]),
             )
 
         return cls(
@@ -133,15 +134,17 @@ class TeamIdentityRegistry:
         *,
         players: tuple[tuple[int, int], tuple[int, int]],
         team_type: str,
-        team_identity_type: str,
+        team_division: str,
         formation_date: date,
         country_code: str | None = None,
         chemistry_score: Decimal | None = None,
         persistence_probability: Decimal | None = None,
     ) -> TeamIdentityResolution:
         """Resolve an existing team or create one persistent team for the pair."""
-        if team_identity_type not in TEAM_IDENTITY_TYPES:
-            raise ValueError(f"Unsupported team_identity_type: {team_identity_type}")
+        if team_type not in TEAM_TYPES:
+            raise ValueError(f"Unsupported team_type: {team_type}")
+        if team_division not in TEAM_DIVISIONS:
+            raise ValueError(f"Unsupported team_division: {team_division}")
 
         pair_key = player_pair_key(players[0][0], players[1][0])
         existing = self._records_by_pair.get(pair_key)
@@ -153,7 +156,7 @@ class TeamIdentityRegistry:
 
         team = Team(
             team_type=team_type,
-            team_identity_type=team_identity_type,
+            team_division=team_division,
             team_status="active",
             country_code=country_code,
             formation_date=formation_date,
@@ -180,7 +183,7 @@ class TeamIdentityRegistry:
             team_id=int(team.id),
             player_ids=pair_key,
             team_type=team_type,
-            team_identity_type=team_identity_type,
+            team_division=team_division,
         )
         self._records_by_pair[pair_key] = record
         return TeamIdentityResolution(record=record, team=team, created=True)

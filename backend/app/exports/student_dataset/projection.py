@@ -769,6 +769,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         source_columns=(
             "id",
             "team_type",
+            "team_division",
             "team_status",
             "country_code",
             "formation_date",
@@ -782,6 +783,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         included_columns=(
             "id",
             "team_type",
+            "team_division",
             "team_status",
             "country_code",
             "formation_date",

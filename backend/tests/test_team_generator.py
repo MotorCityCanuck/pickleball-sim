@@ -190,8 +190,8 @@ def session_factory():
             """
             CREATE TABLE teams (
                 id integer primary key autoincrement,
-                team_type varchar(50) not null,
-                team_identity_type varchar(30) not null default 'competitive',
+                team_type varchar(30) not null default 'competitive',
+                team_division varchar(50) not null default 'open_doubles',
                 team_status varchar(30) default 'active',
                 country_code varchar(2),
                 formation_date date not null,
@@ -390,15 +390,15 @@ def test_team_identity_registry_reuses_existing_pair(session):
 
     first = registry.get_or_create_team(
         players=((1, 1), (2, 2)),
-        team_type="mixed_doubles",
-        team_identity_type="ad_hoc",
+        team_type="ad_hoc",
+        team_division="mixed_doubles",
         country_code="US",
         formation_date=batch.batch_month,
     )
     second = registry.get_or_create_team(
         players=((2, 2), (1, 1)),
-        team_type="mixed_doubles",
-        team_identity_type="ad_hoc",
+        team_type="ad_hoc",
+        team_division="mixed_doubles",
         country_code="US",
         formation_date=batch.batch_month,
     )
@@ -409,8 +409,8 @@ def test_team_identity_registry_reuses_existing_pair(session):
     assert session.query(Team).count() == 1
     assert session.query(TeamMembership).count() == 2
     team = session.get(Team, first.record.team_id)
-    assert team.team_type == "mixed_doubles"
-    assert team.team_identity_type == "ad_hoc"
+    assert team.team_type == "ad_hoc"
+    assert team.team_division == "mixed_doubles"
 
 
 def test_generate_for_batch_enforces_team_type_gender_constraints(session):
@@ -434,7 +434,8 @@ def test_generate_for_batch_enforces_team_type_gender_constraints(session):
             session.get(Player, membership.player_id).gender
             for membership in team.memberships
         }
-        assert team.team_type == "mixed_doubles"
+        assert team.team_type == "competitive"
+        assert team.team_division == "mixed_doubles"
         assert genders == {"M", "F"}
 
 
@@ -833,6 +834,7 @@ def _team_snapshot(session):
     return [
         (
             team.team_type,
+            team.team_division,
             team.team_status,
             team.country_code,
             team.formation_date,
