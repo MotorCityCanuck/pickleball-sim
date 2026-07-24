@@ -1066,6 +1066,66 @@ def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enab
         }
 
 
+def test_generated_matches_preserve_persistent_team_identity_contract(session):
+    payload = test_payload()
+    payload["match_scheduling"]["matches_per_team_per_month"] = 2
+    payload["match_scheduling"]["max_daily_matches_per_team"] = 4
+    payload["matchmaking"]["pairing_source_overrides_by_type"] = {
+        "recreational": {
+            "competitive_team": 0.0,
+            "ad_hoc": 1.0,
+        },
+    }
+    generation_run, batch = seed_match_data(session, payload=payload, team_count=8)
+    add_unteamed_players(
+        session,
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        count=20,
+    )
+
+    MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    source_rosters = {
+        team.id: tuple(
+            membership.player_id
+            for membership in sorted(
+                team.memberships,
+                key=lambda membership: membership.player_position,
+            )
+        )
+        for team in session.query(Team)
+    }
+    matches = session.query(Match).where(Match.batch_id == batch.id).all()
+
+    assert matches
+    for match in matches:
+        match_teams = sorted(match.match_teams, key=lambda row: row.team_number)
+        assert len(match_teams) == 2
+        source_team_ids = {match_team.source_team_id for match_team in match_teams}
+        assert None not in source_team_ids
+        assert match.winning_team_id in source_team_ids
+
+        side_player_ids = [
+            {
+                player.player_id
+                for player in match_team.players
+            }
+            for match_team in match_teams
+        ]
+        assert side_player_ids[0].isdisjoint(side_player_ids[1])
+
+        for match_team in match_teams:
+            roster = tuple(
+                player.player_id
+                for player in sorted(
+                    match_team.players,
+                    key=lambda player: player.player_position,
+                )
+            )
+            assert roster == source_rosters[match_team.source_team_id]
+
+
 def test_generate_for_batch_applies_hidden_bias_to_prediction_only(session):
     payload = test_payload()
     payload["hidden_performance_bias"] = {

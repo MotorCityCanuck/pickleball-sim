@@ -369,6 +369,15 @@ def test_batch_tied_queries_use_included_batch_ids(session, query_context):
     ] == [1]
 
 
+def test_match_teams_export_team_id_is_fully_populated(session, query_context):
+    seed_snapshot_query_data(session)
+
+    match_team_rows = rows(session, "match_teams", query_context)
+
+    assert match_team_rows
+    assert all(row["team_id"] is not None for row in match_team_rows)
+
+
 def test_incremental_batch_tied_queries_use_fact_batch_ids(
     session,
     incremental_query_context,

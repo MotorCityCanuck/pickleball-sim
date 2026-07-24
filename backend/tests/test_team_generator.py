@@ -402,10 +402,21 @@ def test_team_identity_registry_reuses_existing_pair(session):
         country_code="US",
         formation_date=batch.batch_month,
     )
+    third = registry.get_or_create_team(
+        players=((1, 1), (2, 2)),
+        team_type="competitive",
+        team_division="mens_doubles",
+        country_code="US",
+        formation_date=batch.batch_month,
+    )
 
     assert first.created is True
     assert second.created is False
+    assert third.created is False
     assert second.record.team_id == first.record.team_id
+    assert third.record.team_id == first.record.team_id
+    assert first.record.player_ids == (1, 2)
+    assert second.record.player_ids == (1, 2)
     assert session.query(Team).count() == 1
     assert session.query(TeamMembership).count() == 2
     team = session.get(Team, first.record.team_id)
@@ -803,6 +814,8 @@ def test_generate_for_later_batch_records_reactivated_team_event(session):
         .one()
     )
     assert reactivation_event.event_date == date(2024, 3, 1)
+    session.refresh(team)
+    assert team.team_type == "competitive"
 
 
 def _all_teams_have_two_players(session):
