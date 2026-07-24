@@ -26,6 +26,7 @@ from app.generators.matches import (  # noqa: E402
     ActivePlayerPool,
     _active_player_pool,
     _active_teams,
+    _ad_hoc_pair_candidate,
     _ad_hoc_pair_weight,
     _expected_win_probability,
     _prior_player_pair_counts,
@@ -744,6 +745,38 @@ def test_ad_hoc_sampler_returns_two_unique_persisted_non_overlapping_sides(sessi
     assert first_side.average_rating == (
         sum(rating for _, _, rating in first_side.players) / Decimal("2")
     ).quantize(Decimal("0.001"))
+
+
+def test_ad_hoc_pair_candidate_backdates_persisted_team_when_reused_earlier(session):
+    registry = empty_team_registry(session)
+    players = (
+        active_player_candidate(1, rating=1500, gender="M"),
+        active_player_candidate(2, rating=1520, gender="F"),
+    )
+
+    later_candidate = _ad_hoc_pair_candidate(
+        players,
+        team_registry=registry,
+        match_date=date(2024, 2, 20),
+        prior_pair_counts={},
+    )
+    earlier_candidate = _ad_hoc_pair_candidate(
+        tuple(reversed(players)),
+        team_registry=registry,
+        match_date=date(2024, 2, 4),
+        prior_pair_counts={},
+    )
+
+    assert earlier_candidate.source_team_id == later_candidate.source_team_id
+    assert session.query(Team).count() == 1
+    team = session.get(Team, later_candidate.source_team_id)
+    assert team.team_type == "ad_hoc"
+    assert team.team_division == "mixed_doubles"
+    assert team.formation_date == date(2024, 2, 4)
+    assert {
+        membership.joined_date
+        for membership in session.query(TeamMembership).filter_by(team_id=team.id)
+    } == {date(2024, 2, 4)}
 
 
 def test_ad_hoc_sampler_respects_player_daily_caps(session):

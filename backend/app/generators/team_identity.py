@@ -152,6 +152,7 @@ class TeamIdentityRegistry:
             team = self.session.get(Team, existing.team_id)
             if team is None:
                 raise ValueError(f"Team identity {existing.team_id} no longer exists")
+            self._move_effective_dates_back_if_needed(team, formation_date)
             return TeamIdentityResolution(record=existing, team=team, created=False)
 
         team = Team(
@@ -187,6 +188,29 @@ class TeamIdentityRegistry:
         )
         self._records_by_pair[pair_key] = record
         return TeamIdentityResolution(record=record, team=team, created=True)
+
+    def _move_effective_dates_back_if_needed(
+        self,
+        team: Team,
+        requested_formation_date: date,
+    ) -> None:
+        """Keep ad hoc identities valid when planning reuses pairs out of date order."""
+        if team.team_type != "ad_hoc":
+            return
+        if (
+            team.formation_date is not None
+            and team.formation_date <= requested_formation_date
+        ):
+            return
+
+        team.formation_date = requested_formation_date
+        for membership in team.memberships:
+            if (
+                membership.joined_date is None
+                or membership.joined_date > requested_formation_date
+            ):
+                membership.joined_date = requested_formation_date
+        self.session.flush()
 
 
 def _ordered_membership_players(

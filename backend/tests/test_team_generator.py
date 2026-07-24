@@ -424,6 +424,79 @@ def test_team_identity_registry_reuses_existing_pair(session):
     assert team.team_division == "mixed_doubles"
 
 
+def test_team_identity_registry_backdates_reused_ad_hoc_pair(session):
+    generation_run, _ = seed_team_data(session, player_count=4)
+    registry = TeamIdentityRegistry.load(
+        session,
+        generation_run_id=generation_run.id,
+    )
+
+    first = registry.get_or_create_team(
+        players=((1, 1), (2, 2)),
+        team_type="ad_hoc",
+        team_division="mixed_doubles",
+        country_code="US",
+        formation_date=date(2024, 2, 20),
+    )
+    second = registry.get_or_create_team(
+        players=((2, 2), (1, 1)),
+        team_type="ad_hoc",
+        team_division="mixed_doubles",
+        country_code="US",
+        formation_date=date(2024, 2, 4),
+    )
+    third = registry.get_or_create_team(
+        players=((1, 1), (2, 2)),
+        team_type="ad_hoc",
+        team_division="mixed_doubles",
+        country_code="US",
+        formation_date=date(2024, 2, 28),
+    )
+
+    assert first.created is True
+    assert second.created is False
+    assert third.created is False
+    assert second.record.team_id == first.record.team_id
+    assert third.record.team_id == first.record.team_id
+    team = session.get(Team, first.record.team_id)
+    assert team.formation_date == date(2024, 2, 4)
+    assert {
+        membership.joined_date for membership in session.query(TeamMembership).all()
+    } == {date(2024, 2, 4)}
+    assert team.team_type == "ad_hoc"
+
+
+def test_team_identity_registry_does_not_backdate_competitive_pair(session):
+    generation_run, _ = seed_team_data(session, player_count=4)
+    registry = TeamIdentityRegistry.load(
+        session,
+        generation_run_id=generation_run.id,
+    )
+
+    first = registry.get_or_create_team(
+        players=((1, 1), (2, 2)),
+        team_type="competitive",
+        team_division="mixed_doubles",
+        country_code="US",
+        formation_date=date(2024, 2, 20),
+    )
+    second = registry.get_or_create_team(
+        players=((2, 2), (1, 1)),
+        team_type="competitive",
+        team_division="mixed_doubles",
+        country_code="US",
+        formation_date=date(2024, 2, 4),
+    )
+
+    assert first.created is True
+    assert second.created is False
+    team = session.get(Team, first.record.team_id)
+    assert team.formation_date == date(2024, 2, 20)
+    assert {
+        membership.joined_date for membership in session.query(TeamMembership).all()
+    } == {date(2024, 2, 20)}
+
+
 def test_generate_for_batch_enforces_team_type_gender_constraints(session):
     payload = test_payload(20)
     payload["team_formation"]["team_type_weights"] = {
