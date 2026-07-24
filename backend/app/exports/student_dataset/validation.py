@@ -337,9 +337,9 @@ def _validate_relationships(
     for projection in PROJECTION_BY_TABLE.values():
         for relationship in projection.relationship_validations:
             null_filter = (
-                ""
+                f' AND child."{relationship.child_column}" IS NOT NULL'
                 if relationship.nullable
-                else f' AND child."{relationship.child_column}" IS NOT NULL'
+                else ""
             )
             missing_count = _count(
                 connection,

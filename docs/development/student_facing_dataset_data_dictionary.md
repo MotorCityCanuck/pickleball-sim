@@ -49,9 +49,9 @@ absent.
 | `monthly_batches` | Parent of exported batch-tied fact tables. |
 | `player_master` | Parent of memberships, registrations, assessments, and match participation. |
 | `clubs` | Parent of `club_memberships`. |
-| `teams` | Parent of `team_memberships`. |
+| `teams` | Parent of `team_memberships`; referenced by match side `team_id` and match `winning_team_id`. |
 | `matches` | Parent of `match_teams` and `match_games`. |
-| `match_teams` | Parent of `match_team_players`; referenced by `matches.winning_team_id`. |
+| `match_teams` | Parent of `match_team_players`. |
 
 ## `regions`
 
@@ -198,7 +198,8 @@ Grain: one row per exported team.
 | Column | Type | Nullable | FK | Description |
 | --- | --- | --- | --- | --- |
 | `id` | BIGINT | no | none | Team identifier. |
-| `team_type` | VARCHAR | no | none | Team category. |
+| `team_type` | VARCHAR | no | none | Team identity type: `competitive` or `ad_hoc`. |
+| `team_division` | VARCHAR | no | none | Competition category, such as `mens_doubles`, `womens_doubles`, `mixed_doubles`, or `open_doubles`. |
 | `team_status` | VARCHAR | no | none | Team lifecycle status as of the snapshot. |
 | `country_code` | VARCHAR | yes | none | Team country code. |
 | `formation_date` | DATE | no | none | Team formation date. |
@@ -234,7 +235,7 @@ Grain: one row per exported match.
 | `match_type` | VARCHAR | no | none | Match classification. |
 | `court_type` | VARCHAR | yes | none | Court context. |
 | `match_format` | VARCHAR | yes | none | Match format descriptor. |
-| `winning_team_id` | BIGINT | yes | `match_teams.id` | Winning side within the match. |
+| `winning_team_id` | BIGINT | yes | `teams.id` | Persistent team id for the winning side; it must match one of the two `match_teams.team_id` values for the match. |
 | `total_points_played` | INTEGER | yes | none | Total points across all games in the match. |
 | `batch_id` | BIGINT | no | `monthly_batches.id` | Monthly batch for the match. |
 
@@ -249,6 +250,7 @@ Grain: one row per exported match side.
 | `id` | BIGINT | no | none | Match team identifier. |
 | `match_id` | BIGINT | no | `matches.id` | Match containing this side. |
 | `team_number` | INTEGER | no | none | Side number within the match. |
+| `team_id` | BIGINT | no | `teams.id` | Persistent team id for this match side. |
 | `team_score` | INTEGER | no | none | Match-level score for the side. |
 | `average_team_rating` | DECIMAL(8,3) | yes | none | Average public rating for players on the side. |
 

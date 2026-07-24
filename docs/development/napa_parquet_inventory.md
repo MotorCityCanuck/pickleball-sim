@@ -9,7 +9,7 @@ student dataset export code in:
 - [backend/app/exports/student_dataset/queries.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/queries.py)
 - [backend/app/exports/student_dataset/writer.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/writer.py)
 
-The active export contract is schema version `1.4`, with 13 student-facing
+The active export contract is schema version `1.5`, with 13 student-facing
 Parquet files per release folder.
 
 Record counts, physical paths, schemas, and example rows below were taken from
@@ -23,7 +23,7 @@ Release metadata for the analyzed artifact:
 - `release_type`: `historical_baseline`
 - `build_timestamp`: `2026-06-17T11:37:18Z`
 - `parquet_compression`: `snappy`
-- `student_dataset_schema_version`: `1.4`
+- `student_dataset_schema_version`: `1.5`
 
 ## Partitioning Strategy
 
@@ -174,7 +174,7 @@ The current code emits exactly these student-facing Parquet files per release:
 - Alternate key candidate: `(match_id, team_number)`
 - Foreign key relationships:
   - `match_id -> matches.id`
-  - `team_id -> teams.id` when populated
+  - `team_id -> teams.id`
 - Partitioning: single unpartitioned file within the release folder.
 - Columns and data types:
   - `id: int64`
@@ -198,7 +198,7 @@ The current code emits exactly these student-facing Parquet files per release:
 - Primary key candidate: `id`
 - Foreign key relationships:
   - `region_id -> regions.id`
-  - `winning_team_id -> match_teams.id`
+  - `winning_team_id -> teams.id`
   - `batch_id -> monthly_batches.id`
 - Partitioning: single unpartitioned file within the release folder.
 - Columns and data types:
@@ -411,9 +411,10 @@ The active export contract preserves these foreign key relationships:
 - `club_memberships.club_id -> clubs.id`
 - `matches.region_id -> regions.id`
 - `matches.batch_id -> monthly_batches.id`
-- `matches.winning_team_id -> match_teams.id`
+- `matches.winning_team_id -> teams.id`
 - `match_games.match_id -> matches.id`
 - `match_teams.match_id -> matches.id`
+- `match_teams.team_id -> teams.id`
 - `match_team_players.match_team_id -> match_teams.id`
 - `match_team_players.player_id -> player_master.player_id`
 - `player_assessment_history.player_id -> player_master.player_id`

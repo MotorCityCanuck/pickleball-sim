@@ -29,7 +29,7 @@ from app.models import (
 )
 
 
-STUDENT_DATASET_SCHEMA_VERSION = "1.4"
+STUDENT_DATASET_SCHEMA_VERSION = "1.5"
 
 STUDENT_TABLE_ORDER: tuple[str, ...] = (
     "clubs",
@@ -406,6 +406,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         source_filter_description="Match teams whose match_id belongs to included matches.",
         relationship_validations=(
             RelationshipValidation("match_teams", "match_id", "matches"),
+            RelationshipValidation("match_teams", "team_id", "teams"),
         ),
     ),
     _projection(
@@ -457,8 +458,7 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             RelationshipValidation(
                 "matches",
                 "winning_team_id",
-                "match_teams",
-                parent_column="team_id",
+                "teams",
                 nullable=True,
             ),
         ),

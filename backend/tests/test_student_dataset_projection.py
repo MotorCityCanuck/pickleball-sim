@@ -24,7 +24,7 @@ from schema_expectations import EXPECTED_TABLES  # noqa: E402
 
 
 def test_student_dataset_schema_version_tracks_current_projection_contract():
-    assert STUDENT_DATASET_SCHEMA_VERSION == "1.4"
+    assert STUDENT_DATASET_SCHEMA_VERSION == "1.5"
 
 
 def test_projection_table_order_matches_documented_release_files():
@@ -67,6 +67,20 @@ def test_each_projection_has_explicit_filter_and_output_file():
         assert projection.source_filter.key
         assert projection.source_filter.description
         assert projection.included_columns
+
+
+def test_match_identity_relationships_use_persistent_team_ids():
+    match_teams_relationships = {
+        (relationship.child_column, relationship.parent_table, relationship.parent_column)
+        for relationship in PROJECTION_BY_TABLE["match_teams"].relationship_validations
+    }
+    matches_relationships = {
+        (relationship.child_column, relationship.parent_table, relationship.parent_column)
+        for relationship in PROJECTION_BY_TABLE["matches"].relationship_validations
+    }
+
+    assert ("team_id", "teams", "id") in match_teams_relationships
+    assert ("winning_team_id", "teams", "id") in matches_relationships
 
 
 def test_projection_columns_fail_closed_against_privileged_metadata():

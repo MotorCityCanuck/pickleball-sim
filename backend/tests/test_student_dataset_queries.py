@@ -440,6 +440,34 @@ def test_incremental_dimension_queries_remain_snapshot_scoped(
     assert [row["id"] for row in rows(session, "regions", incremental_query_context)] == [1, 2, 3, 4]
 
 
+def test_incremental_team_dimensions_include_fact_referenced_existing_teams(
+    session,
+    incremental_query_context,
+):
+    seed_snapshot_query_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO match_teams (
+                id, match_id, team_number, team_score, expected_win_probability,
+                average_team_rating, source_team_id
+            )
+            VALUES (21, 2, 2, 1, 0.3, 1450.0, 2)
+            """
+        )
+    )
+    session.commit()
+
+    assert [row["id"] for row in rows(session, "teams", incremental_query_context)] == [
+        1,
+        2,
+        3,
+    ]
+    assert [
+        row["id"] for row in rows(session, "team_memberships", incremental_query_context)
+    ] == [2, 3, 4]
+
+
 def test_players_query_uses_latest_snapshot_scope_rating(session, query_context):
     seed_snapshot_query_data(session)
 

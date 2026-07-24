@@ -52,8 +52,7 @@ for the current student-facing contract used by the newer
 
 Important compatibility note:
 
-- schema version `1.3` appears in both the legacy and current checked-in
-  sample families,
+- schema version `1.3` appears in older checked-in sample families,
 - file inventory and manifest shape, not schema version alone, determine which
   contract a checked-in sample follows.
 
@@ -342,9 +341,10 @@ The exported Parquet files must preserve these relationships:
 | `club_memberships` | `club_id` | `clubs` | `id` |
 | `matches` | `region_id` | `regions` | `id` |
 | `matches` | `batch_id` | `monthly_batches` | `id` |
-| `matches` | `winning_team_id` | `match_teams` | `id` |
+| `matches` | `winning_team_id` | `teams` | `id` |
 | `match_games` | `match_id` | `matches` | `id` |
 | `match_teams` | `match_id` | `matches` | `id` |
+| `match_teams` | `team_id` | `teams` | `id` |
 | `match_team_players` | `match_team_id` | `match_teams` | `id` |
 | `match_team_players` | `player_id` | `player_master` | `player_id` |
 | `player_assessment_history` | `player_id` | `player_master` | `player_id` |
@@ -375,7 +375,7 @@ Partial final releases must not appear in the destination root.
 Current schema version:
 
 ```text
-student_dataset_schema_version = 1.3
+student_dataset_schema_version = 1.5
 ```
 
 Any change to exported tables, column names, column order, meanings, filter

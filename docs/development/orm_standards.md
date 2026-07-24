@@ -369,5 +369,5 @@ These items should be resolved before major implementation work:
 - Whether `generation_parameters` is still required as a separate table, or
   whether `generation_runs.parameter_snapshot` fully replaces it.
 - Whether `matches.winning_team_id` should remain a plain integer or become a
-  foreign key to `match_teams.id`.
+  foreign key to `teams.id`.
 - Whether all relationship pairs should be normalized to `back_populates`.

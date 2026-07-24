@@ -314,7 +314,7 @@ def _teams_query(context: StudentDatasetQueryContext) -> Select:
     return query
 
 
-def _team_memberships_query(context: StudentDatasetQueryContext) -> Select:
+def _team_memberships_snapshot_query(context: StudentDatasetQueryContext) -> Select:
     projection = PROJECTION_BY_TABLE["team_memberships"]
     overrides = {
         "left_date": case(
@@ -322,15 +322,28 @@ def _team_memberships_query(context: StudentDatasetQueryContext) -> Select:
             else_=TeamMembership.left_date,
         ).label("left_date")
     }
+    membership_predicate = and_(
+        TeamMembership.team_id.in_(_included_team_ids(context)),
+        TeamMembership.player_id.in_(_included_player_ids(context)),
+        TeamMembership.joined_date < context.snapshot_end_exclusive,
+    )
     return (
         _select_projection(projection, overrides)
-        .where(
-            TeamMembership.team_id.in_(_included_team_ids(context)),
-            TeamMembership.player_id.in_(_included_player_ids(context)),
-            TeamMembership.joined_date < context.snapshot_end_exclusive,
-        )
+        .where(membership_predicate)
         .order_by(TeamMembership.id)
     )
+
+
+def _team_memberships_query(context: StudentDatasetQueryContext) -> Select:
+    query = _team_memberships_snapshot_query(context)
+    if context.is_incremental and context.has_prior_snapshot:
+        query = query.where(
+            or_(
+                TeamMembership.id.in_(_delta_primary_keys("team_memberships", context)),
+                TeamMembership.team_id.in_(_fact_match_team_source_team_ids(context)),
+            )
+        )
+    return query
 
 
 def _clubs_snapshot_query(context: StudentDatasetQueryContext) -> Select:
@@ -559,7 +572,16 @@ def _incremental_team_ids(context: StudentDatasetQueryContext) -> Select:
     membership_team_ids = select(TeamMembership.team_id).where(
         TeamMembership.id.in_(_delta_primary_keys("team_memberships", context))
     )
-    return changed_team_ids.union(membership_team_ids)
+    return changed_team_ids.union(
+        membership_team_ids,
+        _fact_match_team_source_team_ids(context),
+    )
+
+
+def _fact_match_team_source_team_ids(context: StudentDatasetQueryContext) -> Select:
+    return select(MatchTeam.source_team_id).where(
+        MatchTeam.match_id.in_(_included_match_ids(context))
+    )
 
 
 def _incremental_club_ids(context: StudentDatasetQueryContext) -> Select:
@@ -610,7 +632,6 @@ def _export_primary_key_column(table_name: str) -> str:
 _INCREMENTAL_DELTA_TABLES = frozenset(
     {
         "club_memberships",
-        "team_memberships",
     }
 )
 
@@ -639,5 +660,6 @@ _SNAPSHOT_QUERY_BUILDERS = {
     **_QUERY_BUILDERS,
     "clubs": _clubs_snapshot_query,
     "player_master": _player_master_snapshot_query,
+    "team_memberships": _team_memberships_snapshot_query,
     "teams": _teams_snapshot_query,
 }

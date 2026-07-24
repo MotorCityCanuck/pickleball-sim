@@ -897,7 +897,7 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["release_month"] is None
     assert manifest["included_months"] == [1, 2]
     assert manifest["load_strategy"] == "full_load"
-    assert manifest["student_dataset_schema_version"] == "1.4"
+    assert manifest["student_dataset_schema_version"] == "1.5"
     assert manifest["included_batch_sequences"] == [1, 2]
     assert manifest["included_batch_months"] == ["2025-01-01", "2025-02-01"]
     assert manifest["snapshot_batch_sequences"] == [1, 2]
@@ -1246,6 +1246,51 @@ def test_validate_staged_incremental_release_allows_empty_clubs_and_memberships(
     validation_result = validate_staged_release(
         release_dir=release.release_dir,
         release_window=incremental_release_window,
+        manifest_row_counts=row_counts,
+    )
+
+    assert validation_result.status == "passed"
+
+
+def test_validate_staged_release_allows_null_nullable_relationships(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+    release = result.releases[0]
+    row_counts = {file.table_name: file.row_count for file in release.files}
+    matches_file = release.release_dir / "matches.parquet"
+    matches_table = pq.read_table(matches_file)
+    winning_team_index = matches_table.schema.get_field_index("winning_team_id")
+    matches_table = matches_table.set_column(
+        winning_team_index,
+        "winning_team_id",
+        pa.nulls(
+            matches_table.num_rows,
+            type=matches_table.schema.field(winning_team_index).type,
+        ),
+    )
+    pq.write_table(matches_table, matches_file)
+
+    validation_result = validate_staged_release(
+        release_dir=release.release_dir,
+        release_window=release_window,
         manifest_row_counts=row_counts,
     )
 
