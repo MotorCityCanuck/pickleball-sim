@@ -1495,11 +1495,18 @@ def _default_export_config(snapshot: ControlPanelSnapshot) -> dict[str, object]:
 def _default_export_comparison_config(snapshot: ControlPanelSnapshot) -> dict[str, str]:
     clean_path = ""
     tainted_path = ""
-    for release in snapshot.student_dataset_export_summary.latest_releases:
-        if release.data_quality_level == "none" and not clean_path:
-            clean_path = str(Path(release.output_path).parent)
-        elif release.data_quality_level not in {None, "none"} and not tainted_path:
-            tainted_path = str(Path(release.output_path).parent)
+    current_package = snapshot.student_dataset_export_summary.current_release_package
+    if current_package is not None:
+        if current_package.clean_variant is not None:
+            clean_path = current_package.clean_variant.output_path
+        if current_package.tainted_variant is not None:
+            tainted_path = current_package.tainted_variant.output_path
+    if not clean_path or not tainted_path:
+        for release in snapshot.student_dataset_export_summary.latest_releases:
+            if release.data_quality_level == "none" and not clean_path:
+                clean_path = str(Path(release.output_path).parent)
+            elif release.data_quality_level not in {None, "none"} and not tainted_path:
+                tainted_path = str(Path(release.output_path).parent)
     export_path, clean_subfolder, tainted_subfolder = _comparison_config_from_paths(
         clean_path=clean_path,
         tainted_path=tainted_path,

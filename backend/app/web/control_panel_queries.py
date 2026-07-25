@@ -220,6 +220,36 @@ class StudentDatasetReleaseSummary:
 
 
 @dataclass(frozen=True)
+class StudentDatasetReleasePackageVariantSummary:
+    """UI-ready summary for one variant inside a release package."""
+
+    label: str
+    variant_key: str
+    data_quality_level: str | None
+    output_path: str
+    release_count: int
+    file_count: int
+    total_row_count: int
+    latest_release_month: date | None
+    latest_completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class StudentDatasetReleasePackageSummary:
+    """UI-ready summary for one release package root."""
+
+    package_root: str
+    package_label: str
+    latest_completed_at: datetime | None
+    clean_variant: StudentDatasetReleasePackageVariantSummary | None
+    tainted_variant: StudentDatasetReleasePackageVariantSummary | None
+
+    @property
+    def variant_count(self) -> int:
+        return int(self.clean_variant is not None) + int(self.tainted_variant is not None)
+
+
+@dataclass(frozen=True)
 class StudentDatasetExportCompletionGroupSummary:
     """Compact completion totals for one clean or tainted export group."""
 
@@ -274,6 +304,8 @@ class StudentDatasetExportSummary:
     clearable_job: JobSummary | None
     latest_export_stage_progress: tuple[StageProgressSummary, ...]
     latest_releases: tuple[StudentDatasetReleaseSummary, ...]
+    current_release_package: StudentDatasetReleasePackageSummary | None
+    historical_release_packages: tuple[StudentDatasetReleasePackageSummary, ...]
     latest_completion: StudentDatasetExportCompletionSummary | None
     comparison_history: tuple[StudentDatasetComparisonSummary, ...]
 
@@ -795,6 +827,12 @@ class ControlPanelQueries:
         )
         release_rows = _catalog_release_rows(release_rows, limit=30)
         file_counts = _student_release_file_counts(session, release_rows)
+        current_release_package, historical_release_packages = (
+            _student_release_package_summaries(
+                release_rows=release_rows,
+                file_counts=file_counts,
+            )
+        )
         comparison_rows: list[StudentDatasetComparison] = []
         if _table_exists(session, StudentDatasetComparison.__tablename__):
             comparison_rows = list(
@@ -828,6 +866,8 @@ class ControlPanelQueries:
                 )
                 for release in release_rows
             ),
+            current_release_package=current_release_package,
+            historical_release_packages=historical_release_packages,
             latest_completion=_student_export_completion_summary(
                 session,
                 latest_job=latest_job,
@@ -2226,6 +2266,42 @@ def _catalog_release_rows(
     return ordered[:limit]
 
 
+def _student_release_package_summaries(
+    *,
+    release_rows: list[StudentDatasetRelease],
+    file_counts: dict[int, tuple[int, int]],
+) -> tuple[
+    StudentDatasetReleasePackageSummary | None,
+    tuple[StudentDatasetReleasePackageSummary, ...],
+]:
+    db_packages = _package_variants_from_release_rows(
+        release_rows=release_rows,
+        file_counts=file_counts,
+    )
+    filesystem_packages = _package_variants_from_filesystem(release_rows=release_rows)
+    package_keys = list(filesystem_packages.keys() or db_packages.keys())
+    if filesystem_packages:
+        for package_key in db_packages.keys():
+            if package_key not in filesystem_packages:
+                package_keys.append(package_key)
+    package_summaries = [
+        _merge_release_package_summary(
+            package_key=package_key,
+            db_variants=db_packages.get(package_key, {}),
+            filesystem_variants=filesystem_packages.get(package_key, {}),
+        )
+        for package_key in package_keys
+    ]
+    package_summaries = [summary for summary in package_summaries if summary is not None]
+    package_summaries.sort(
+        key=lambda summary: _release_package_sort_key(summary),
+        reverse=True,
+    )
+    if not package_summaries:
+        return None, ()
+    return package_summaries[0], tuple(package_summaries[1:])
+
+
 def _release_catalog_sort_key(
     release: StudentDatasetRelease,
 ) -> tuple[datetime, datetime, int]:
@@ -2251,6 +2327,304 @@ def _release_catalog_display_key(
         completed_at,
         int(release.id or 0),
     )
+
+
+def _package_variants_from_release_rows(
+    *,
+    release_rows: list[StudentDatasetRelease],
+    file_counts: dict[int, tuple[int, int]],
+) -> dict[str, dict[str, StudentDatasetReleasePackageVariantSummary]]:
+    grouped: dict[str, dict[str, list[StudentDatasetRelease]]] = {}
+    for release in release_rows:
+        package_root, variant_key = _release_package_root_and_variant(
+            output_path=Path(release.output_path),
+            data_quality_level=release.data_quality_level,
+        )
+        grouped.setdefault(package_root.as_posix(), {}).setdefault(variant_key, []).append(
+            release
+        )
+
+    summaries: dict[str, dict[str, StudentDatasetReleasePackageVariantSummary]] = {}
+    for package_key, variants in grouped.items():
+        variant_summaries: dict[str, StudentDatasetReleasePackageVariantSummary] = {}
+        for variant_key, releases in variants.items():
+            variant_summaries[variant_key] = StudentDatasetReleasePackageVariantSummary(
+                label="Clean" if variant_key == "clean" else "Tainted",
+                variant_key=variant_key,
+                data_quality_level=_variant_data_quality_level(variant_key, releases),
+                output_path=_variant_output_path_from_releases(
+                    package_key=package_key,
+                    variant_key=variant_key,
+                    releases=releases,
+                ),
+                release_count=len(releases),
+                file_count=sum(file_counts.get(release.id, (0, 0))[0] for release in releases),
+                total_row_count=sum(
+                    file_counts.get(release.id, (0, 0))[1] for release in releases
+                ),
+                latest_release_month=max(
+                    (release.release_month for release in releases if release.release_month is not None),
+                    default=None,
+                ),
+                latest_completed_at=max(
+                    (
+                        release.completed_at or release.created_at or datetime.min
+                        for release in releases
+                    ),
+                    default=None,
+                ),
+            )
+        summaries[package_key] = variant_summaries
+    return summaries
+
+
+def _package_variants_from_filesystem(
+    *,
+    release_rows: list[StudentDatasetRelease],
+) -> dict[str, dict[str, StudentDatasetReleasePackageVariantSummary]]:
+    manifest_records: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for manifest_path in _discover_release_manifests(release_rows=release_rows):
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        release_dir = manifest_path.parent
+        package_root, variant_key = _release_package_root_and_variant_from_path(release_dir)
+        record_key = (package_root.as_posix(), variant_key)
+        manifest_records.setdefault(record_key, []).append(
+            {
+                "manifest_path": manifest_path,
+                "release_name": str(payload.get("release_name") or release_dir.name),
+                "release_month": _parse_iso_date(payload.get("release_month")),
+                "snapshot_month": _parse_iso_date(payload.get("snapshot_month")),
+                "build_timestamp": _parse_iso_datetime(payload.get("build_timestamp")),
+                "output_path": str(package_root / variant_key)
+                if variant_key in {"clean", "tainted"}
+                else str(package_root),
+                "file_count": len(payload.get("output_files", []))
+                if isinstance(payload.get("output_files"), list)
+                else 0,
+                "total_row_count": sum(
+                    int(value)
+                    for value in payload.get("row_counts", {}).values()
+                    if isinstance(value, int)
+                )
+                if isinstance(payload.get("row_counts"), dict)
+                else 0,
+            }
+        )
+
+    summaries: dict[str, dict[str, StudentDatasetReleasePackageVariantSummary]] = {}
+    for (package_key, variant_key), records in manifest_records.items():
+        latest_month = max(
+            (
+                record["release_month"] or record["snapshot_month"]
+                for record in records
+                if isinstance(record["release_month"] or record["snapshot_month"], date)
+            ),
+            default=None,
+        )
+        latest_completed_at = max(
+            (
+                record["build_timestamp"]
+                for record in records
+                if isinstance(record["build_timestamp"], datetime)
+            ),
+            default=None,
+        )
+        summaries.setdefault(package_key, {})[variant_key] = (
+            StudentDatasetReleasePackageVariantSummary(
+                label="Clean" if variant_key == "clean" else "Tainted",
+                variant_key=variant_key,
+                data_quality_level=None if variant_key == "clean" else "filesystem",
+                output_path=str(records[0]["output_path"]),
+                release_count=len(records),
+                file_count=sum(
+                    int(record["file_count"]) for record in records if isinstance(record["file_count"], int)
+                ),
+                total_row_count=sum(
+                    int(record["total_row_count"])
+                    for record in records
+                    if isinstance(record["total_row_count"], int)
+                ),
+                latest_release_month=latest_month,
+                latest_completed_at=latest_completed_at,
+            )
+        )
+    return summaries
+
+
+def _discover_release_manifests(
+    *,
+    release_rows: list[StudentDatasetRelease],
+) -> list[Path]:
+    if not release_rows:
+        roots = {Path("data/student_dataset_exports")}
+    else:
+        roots: set[Path] = set()
+    for release in release_rows:
+        output_path = Path(release.output_path)
+        package_root, _ = _release_package_root_and_variant(
+            output_path,
+            release.data_quality_level,
+        )
+        roots.add(_release_package_search_root(package_root))
+
+    manifests: dict[str, Path] = {}
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for manifest_path in root.rglob("manifest.json"):
+            manifests.setdefault(manifest_path.as_posix(), manifest_path)
+    return sorted(manifests.values())
+
+
+def _merge_release_package_summary(
+    *,
+    package_key: str,
+    db_variants: dict[str, StudentDatasetReleasePackageVariantSummary],
+    filesystem_variants: dict[str, StudentDatasetReleasePackageVariantSummary],
+) -> StudentDatasetReleasePackageSummary | None:
+    clean_variant = _merge_release_package_variant(
+        db_variant=db_variants.get("clean"),
+        filesystem_variant=filesystem_variants.get("clean"),
+    )
+    tainted_variant = _merge_release_package_variant(
+        db_variant=db_variants.get("tainted"),
+        filesystem_variant=filesystem_variants.get("tainted"),
+    )
+    if clean_variant is None and tainted_variant is None:
+        return None
+    latest_completed_at = max(
+        (
+            variant.latest_completed_at
+            for variant in (clean_variant, tainted_variant)
+            if variant is not None and variant.latest_completed_at is not None
+        ),
+        default=None,
+    )
+    package_root = Path(package_key)
+    return StudentDatasetReleasePackageSummary(
+        package_root=package_key,
+        package_label=_display_release_package_label(package_root),
+        latest_completed_at=latest_completed_at,
+        clean_variant=clean_variant,
+        tainted_variant=tainted_variant,
+    )
+
+
+def _merge_release_package_variant(
+    *,
+    db_variant: StudentDatasetReleasePackageVariantSummary | None,
+    filesystem_variant: StudentDatasetReleasePackageVariantSummary | None,
+) -> StudentDatasetReleasePackageVariantSummary | None:
+    if db_variant is None:
+        return filesystem_variant
+    if filesystem_variant is None:
+        return db_variant
+    return StudentDatasetReleasePackageVariantSummary(
+        label=db_variant.label,
+        variant_key=db_variant.variant_key,
+        data_quality_level=db_variant.data_quality_level,
+        output_path=db_variant.output_path or filesystem_variant.output_path,
+        release_count=max(db_variant.release_count, filesystem_variant.release_count),
+        file_count=db_variant.file_count or filesystem_variant.file_count,
+        total_row_count=db_variant.total_row_count or filesystem_variant.total_row_count,
+        latest_release_month=db_variant.latest_release_month or filesystem_variant.latest_release_month,
+        latest_completed_at=db_variant.latest_completed_at or filesystem_variant.latest_completed_at,
+    )
+
+
+def _release_package_sort_key(
+    summary: StudentDatasetReleasePackageSummary,
+) -> tuple[datetime, str]:
+    return (
+        summary.latest_completed_at or datetime.min,
+        summary.package_root,
+    )
+
+
+def _release_package_root_and_variant(
+    output_path: Path,
+    data_quality_level: str | None,
+) -> tuple[Path, str]:
+    parent_name = output_path.parent.name.lower()
+    if parent_name in {"clean", "tainted"}:
+        return output_path.parent.parent, parent_name
+    return (
+        output_path.parent,
+        "clean" if (data_quality_level or "none") == "none" else "tainted",
+    )
+
+
+def _release_package_root_and_variant_from_path(output_path: Path) -> tuple[Path, str]:
+    parent_name = output_path.parent.name.lower()
+    if parent_name in {"clean", "tainted"}:
+        return output_path.parent.parent, parent_name
+    return output_path.parent, "clean"
+
+
+def _display_release_package_label(package_root: Path) -> str:
+    parts = package_root.parts
+    if len(parts) >= 3 and parts[-1].endswith("Z") and parts[-2].isdigit():
+        return f"{parts[-3]} {parts[-2]} {parts[-1]}"
+    return package_root.name or package_root.as_posix()
+
+
+def _release_package_search_root(package_root: Path) -> Path:
+    if (
+        package_root.name.endswith("Z")
+        and package_root.parent.name.isdigit()
+        and len(package_root.parent.name) == 8
+    ):
+        return package_root.parent.parent
+    return package_root
+
+
+def _variant_data_quality_level(
+    variant_key: str,
+    releases: list[StudentDatasetRelease],
+) -> str | None:
+    if variant_key == "clean":
+        return "none"
+    for release in releases:
+        if release.data_quality_level not in {None, "none"}:
+            return release.data_quality_level
+    return None
+
+
+def _variant_output_path_from_releases(
+    *,
+    package_key: str,
+    variant_key: str,
+    releases: list[StudentDatasetRelease],
+) -> str:
+    if variant_key in {"clean", "tainted"}:
+        candidate = Path(package_key) / variant_key
+        return candidate.as_posix()
+    return releases[0].output_path
+
+
+def _parse_iso_date(value: object) -> date | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo is not None else parsed
 
 
 def _coerce_int(value: object, default: int | None = None) -> int | None:

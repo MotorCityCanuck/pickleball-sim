@@ -125,7 +125,7 @@ Several fields should be documented as intentionally unavailable from source:
 
 ## Detailed Field Analysis and Recommended Actions
 
-### 1. `teams.country_code`
+### 1. `teams.country_code`- fixed in Generator
 
 | Item | Finding |
 |---|---|
@@ -136,7 +136,7 @@ Several fields should be documented as intentionally unavailable from source:
 | 250K comparator | Run `88`: `competitive` 591,206 rows, 0 null; `ad_hoc` 3,556,007 rows, 100% null |
 | Expected null behavior | Not expected for ad hoc teams; country is inferable from players/regions |
 | Classification | Confirmed source-generation bug |
-
+we
 Root cause:
 
 - Competitive teams are created in `backend/app/generators/teams.py` with
@@ -176,7 +176,7 @@ Recommended actions:
    join ad hoc teams through `team_memberships -> players -> regions` and set
    `teams.country_code` when all member regions agree.
 
-### 2. `team_memberships.membership_start_date`
+### 2. `team_memberships.membership_start_date` - Fixed in pipeline
 
 | Item | Finding |
 |---|---|
@@ -225,7 +225,7 @@ Recommended actions:
 4. Do not request a source generator change for this field unless the target
    canonical source contract is intentionally renamed.
 
-### 3. `club_memberships.membership_end_date`
+### 3. `club_memberships.membership_end_date` - fixed in pipeline
 
 | Item | Finding |
 |---|---|
@@ -265,7 +265,7 @@ Recommended actions:
 4. Document that 5K, 50K, and 250K current-generation behavior may produce
    100% null `end_date` when no club membership churn is modeled.
 
-### 4. `club_memberships.membership_duration_days`
+### 4. `club_memberships.membership_duration_days` - resolved in pipeline
 
 | Item | Finding |
 |---|---|
@@ -289,7 +289,7 @@ Recommended actions:
 3. Add a test case for open-ended memberships so duration is not accidentally
    left null unless that is the intended semantic.
 
-### 5. `player_registrations.effective_start_date`
+### 5. `player_registrations.effective_start_date` - fixed in the pipelines
 
 | Item | Finding |
 |---|---|
@@ -298,7 +298,7 @@ Recommended actions:
 | Exported source-file column | `registration_month` |
 | 5K export behavior | `registration_month`: 6,229 non-null / 6,229 rows |
 | Expected null behavior | Silver field should be populated if it maps from `registration_month` |
-| Classification | Bronze-to-Silver transform naming issue |
+| Classification | Bronze-to-Silver transform naming issue |  effective_start_date should be the first day of the registration_month
 
 Recommended actions:
 
@@ -312,7 +312,7 @@ Recommended actions:
 3. Add transform tests that fail if `effective_start_date` is null while
    `registration_month` is populated.
 
-### 6. `player_registrations.effective_end_date`
+### 6. `player_registrations.effective_end_date` - fixed in pipeline
 
 | Item | Finding |
 |---|---|
@@ -332,12 +332,12 @@ Recommended actions:
 1. Do not expect this field from source.
 2. If Silver requires interval semantics, derive them downstream from player
    lifecycle/status logic, not from `player_registrations`.
-3. Consider leaving `effective_end_date` null by design for current active
+3. Leave `effective_end_date` null by design for current active
    registration events.
 4. Document that registration rows are event-like, not slowly changing
    dimensions.
 
-### 7. `player_registrations.registration_duration_days`
+### 7. `player_registrations.registration_duration_days` - resolved in the pipeline
 
 | Item | Finding |
 |---|---|
@@ -360,7 +360,7 @@ Recommended actions:
 3. Document whether this duration means age of the registration record, active
    player tenure, or something else.
 
-### 8. `player_registrations.registration_status`
+### 8. `player_registrations.registration_status` - fixed in the pipeline
 
 | Item | Finding |
 |---|---|
@@ -377,11 +377,11 @@ Recommended actions:
    different things.
 2. If a registration status is required, derive it downstream using explicit
    rules, likely from `players.player_status` and registration date.
-3. Document `registration_source` as the source field that exists.
-4. Consider dropping `registration_status` from Silver if no downstream
-   consumer needs it.
+3. if end date is null or in the future as of the snapshot, registration status is active, otherwise it's inactive
+4. Document `registration_source` as the source field that exists.
 
-### 9. `players.preferred_side`
+
+### 9. `players.preferred_side` - resolved in the pipelines - removed from silver and gold
 
 | Item | Finding |
 |---|---|
@@ -402,7 +402,7 @@ Recommended actions:
    transform default.
 4. If Silver keeps the column, mark it as nullable placeholder.
 
-### 10. `regions.active_flag`
+### 10. `regions.active_flag` - resolved in the pipeline - removed from silver and gold
 
 | Item | Finding |
 |---|---|
@@ -426,7 +426,7 @@ Recommended actions:
    to the release snapshot.
 3. Document this as a downstream convenience flag, not source data.
 
-### 11. `clubs.active_flag`
+### 11. `clubs.active_flag`- resolved in the pipeline - removed from silver and gold
 
 | Item | Finding |
 |---|---|
@@ -444,7 +444,7 @@ Recommended actions:
 3. If future club lifecycle modeling is needed, add explicit source fields such
    as `closure_date` or `club_status`.
 
-### 12. `clubs.country_code`
+### 12. `clubs.country_code` - resolved in the pipelines
 
 | Item | Finding |
 |---|---|
@@ -465,13 +465,12 @@ Recommended actions:
    clubs.country_code = regions.country_code
    ```
 
-2. Keep `clubs.parquet` source contract unchanged unless there is a strong
-   reason to denormalize country into the export.
+2. Keep `clubs.parquet` source contract unchanged 
 3. Add a transform test that all Silver clubs with valid `region_id` receive a
    non-null `country_code`.
 4. Document that club country is region-derived.
 
-### 13. `teams.team_name`
+### 13. `teams.team_name` - resolved - removed from silver and gold - not needed
 
 | Item | Finding |
 |---|---|
@@ -493,7 +492,7 @@ Recommended actions:
 3. Avoid adding a synthetic source column unless team naming is required by a
    product-facing use case.
 
-### 14. `matches.competition_category`
+### 14. `matches.competition_category` - resolved in the pipeline
 
 | Item | Finding |
 |---|---|
@@ -525,11 +524,10 @@ Recommended actions:
    competition_category = match_type
    ```
 
-3. If not, keep it nullable and document it as a non-source placeholder.
-4. Add an audit rule that distinguishes missing source fields from intentionally
+3. Add an audit rule that distinguishes missing source fields from intentionally
    unmapped placeholders.
 
-### 15. `matches.match_status`
+### 15. `matches.match_status` -  removed from the pipelines - complete
 
 | Item | Finding |
 |---|---|
@@ -556,7 +554,7 @@ Recommended actions:
 3. Add source modeling only if future pipelines include non-completed match
    states.
 
-### 16. `match_teams.pre_match_team_rating`
+### 16. `match_teams.pre_match_team_rating` - resolved in the pipelines
 
 | Item | Finding |
 |---|---|
@@ -575,7 +573,7 @@ rating, but the source does not name it that way.
 
 Recommended actions:
 
-1. If Silver `pre_match_team_rating` means the average team rating at match
+1. Silver `pre_match_team_rating` means the average team rating at match
    time, map:
 
    ```text
@@ -587,7 +585,7 @@ Recommended actions:
 3. Keep original `average_team_rating` available for lineage or rename with
    explicit documentation.
 
-### 17. `match_teams.post_match_team_rating`
+### 17. `match_teams.post_match_team_rating` - resolved in pipelines
 
 | Item | Finding |
 |---|---|
@@ -605,13 +603,13 @@ team-level pre/post ratings.
 Recommended actions:
 
 1. Do not expect this field from source.
-2. If required, derive downstream by joining match participants to
+2. Derive downstream by joining match participants to
    player-level rating history after the match and averaging player post-match
    ratings.
 3. Document derived semantics carefully, including timing and whether rating
    rows are selected by `match_date`, `batch_id`, or rating sequence.
 
-### 18. `match_teams.rating_change`
+### 18. `match_teams.rating_change` - resolved in pipelines
 
 | Item | Finding |
 |---|---|
@@ -633,7 +631,7 @@ Recommended actions:
 2. Do not flag this as a source export issue.
 3. Add derivation tests using a small known match/player-rating fixture.
 
-### 19. `player_assessment_history.assessment_confidence`
+### 19. `player_assessment_history.assessment_confidence` - resolved in pipelines
 
 | Item | Finding |
 |---|---|
@@ -656,7 +654,7 @@ Recommended actions:
 3. Add audit coverage that fails when `assessment_confidence` is null while
    source `confidence_score` is populated.
 
-### 20. `player_assessment_history.assessor_source`
+### 20. `player_assessment_history.assessor_source`  - removed from silver and Gold
 
 | Item | Finding |
 |---|---|

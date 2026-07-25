@@ -880,6 +880,13 @@ def test_student_dataset_export_summary_deduplicates_and_orders_release_catalog(
         "2026-07-01",
     ]
     assert releases[-1].release_id == 187
+    assert summary.current_release_package is not None
+    assert summary.current_release_package.package_root == "data/student_dataset_exports/run"
+    assert summary.current_release_package.clean_variant is not None
+    assert summary.current_release_package.clean_variant.release_count == 3
+    assert summary.current_release_package.tainted_variant is not None
+    assert summary.current_release_package.tainted_variant.release_count == 3
+    assert summary.historical_release_packages == ()
 
 
 def test_get_control_panel_snapshot_includes_student_dataset_comparison_history(session):

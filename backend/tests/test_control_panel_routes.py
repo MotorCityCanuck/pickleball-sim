@@ -2389,6 +2389,7 @@ def test_export_progress_renders_release_actions(session_factory):
     assert "Open Folder" in body
     assert "Run QC" in body
     assert "Copy Path" in body
+    assert "Current published dataset set" in body
 
 
 def test_export_progress_deduplicates_and_orders_release_cards(session_factory):
@@ -2433,11 +2434,12 @@ def test_export_progress_deduplicates_and_orders_release_cards(session_factory):
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Published releases" in body
-    assert "Each card is one published release folder" in body
-    assert body.count("2 published releases") == 2
+    assert "Current release package" in body
+    assert "These cards represent the current published dataset package variants" in body
+    assert "Historical release packages" not in body
     assert body.find(">Clean</div>") < body.find(">Tainted</div>")
-    assert body.find("student_release_initial_history") < body.find("student_release_snapshot_2026_06")
+    assert body.find("Through 2026-06-01") != -1
+    assert body.find("Release folders") != -1
 
 
 def test_export_progress_renders_refresh_and_clear_stalled_controls(session_factory):
