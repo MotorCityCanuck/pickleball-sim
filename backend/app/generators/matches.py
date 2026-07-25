@@ -12,7 +12,7 @@ import random
 from time import perf_counter
 from typing import Any, Callable, ContextManager, Mapping
 
-from sqlalchemy import func, insert, inspect, or_, select
+from sqlalchemy import func, insert, inspect, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
@@ -438,6 +438,7 @@ class ActivePlayerCandidate:
     id: int
     gender: str | None
     region_id: int | None
+    country_code: str | None
     rating: Decimal
     club_ids: frozenset[int]
     primary_club_ids: frozenset[int]
@@ -1022,6 +1023,8 @@ def _bounded_ad_hoc_player_pairs(
             continue
         if require_rating_band and abs(anchor.rating - partner.rating) > band:
             continue
+        if not _ad_hoc_pair_countries_compatible(anchor, partner):
+            continue
         pair_key = _player_pair_key(anchor.id, partner.id)
         candidate_pairs[pair_key] = (anchor, partner)
 
@@ -1169,8 +1172,30 @@ def _ad_hoc_player_pairs(
                 and abs(first_player.rating - second_player.rating) > band
             ):
                 continue
+            if not _ad_hoc_pair_countries_compatible(first_player, second_player):
+                continue
             pairs.append((first_player, second_player))
     return pairs
+
+
+def _ad_hoc_pair_countries_compatible(
+    first_player: ActivePlayerCandidate,
+    second_player: ActivePlayerCandidate,
+) -> bool:
+    if first_player.country_code is None or second_player.country_code is None:
+        return True
+    return first_player.country_code == second_player.country_code
+
+
+def _ad_hoc_pair_country_code(
+    first_player: ActivePlayerCandidate,
+    second_player: ActivePlayerCandidate,
+) -> str | None:
+    if not _ad_hoc_pair_countries_compatible(first_player, second_player):
+        raise ValueError(
+            "Ad hoc team candidates must share a country when both players have one"
+        )
+    return first_player.country_code or second_player.country_code
 
 
 def _choose_weighted_ad_hoc_player_pair(
@@ -1275,6 +1300,7 @@ def _ad_hoc_pair_candidate(
         club_id for player in ordered_players for club_id in player.club_ids
     )
     team_division = _ad_hoc_team_division(ordered_players)
+    country_code = _ad_hoc_pair_country_code(ordered_players[0], ordered_players[1])
     resolution = team_registry.get_or_create_team(
         players=(
             (ordered_players[0].id, 1),
@@ -1283,6 +1309,7 @@ def _ad_hoc_pair_candidate(
         team_type="ad_hoc",
         team_division=team_division,
         formation_date=match_date,
+        country_code=country_code,
     )
     candidate_id = resolution.record.team_id
     source_team_id = resolution.record.team_id
@@ -2714,20 +2741,38 @@ def _active_player_pool(
     config: MatchGenerationConfig | None = None,
     runtime_recorder: Any | None = None,
 ) -> ActivePlayerPool:
-    player_rows = session.execute(
-        select(
-            Player.id,
-            Player.gender,
-            Player.home_region_id,
-        )
-        .where(
-            Player.generation_run_id == generation_run_id,
-            Player.player_status == "ACTIVE",
-            Player.registration_date <= batch_month,
-        )
-        .order_by(Player.id)
-    ).all()
-    player_ids = {player_id for player_id, _, _ in player_rows}
+    if _table_exists(session, "regions"):
+        player_rows = session.execute(
+            select(
+                Player.id,
+                Player.gender,
+                Player.home_region_id,
+                Region.country_code,
+            )
+            .outerjoin(Region, Region.id == Player.home_region_id)
+            .where(
+                Player.generation_run_id == generation_run_id,
+                Player.player_status == "ACTIVE",
+                Player.registration_date <= batch_month,
+            )
+            .order_by(Player.id)
+        ).all()
+    else:
+        player_rows = session.execute(
+            select(
+                Player.id,
+                Player.gender,
+                Player.home_region_id,
+                literal(None),
+            )
+            .where(
+                Player.generation_run_id == generation_run_id,
+                Player.player_status == "ACTIVE",
+                Player.registration_date <= batch_month,
+            )
+            .order_by(Player.id)
+        ).all()
+    player_ids = {player_id for player_id, _, _, _ in player_rows}
     latest_ratings_by_player = _latest_player_ratings(
         session,
         player_ids=player_ids,
@@ -2774,7 +2819,7 @@ def _active_player_pool(
         metric["metadata"]["recent_game_count_entries"] = len(recent_game_counts)
 
     candidates: list[ActivePlayerCandidate] = []
-    for player_id, gender, region_id in player_rows:
+    for player_id, gender, region_id, country_code in player_rows:
         rating = latest_ratings_by_player.get(player_id)
         if rating is None:
             continue
@@ -2784,6 +2829,7 @@ def _active_player_pool(
                 id=player_id,
                 gender=gender,
                 region_id=region_id,
+                country_code=country_code,
                 rating=rating,
                 club_ids=club_ids_by_player.get(player_id, frozenset()),
                 primary_club_ids=primary_club_ids_by_player.get(

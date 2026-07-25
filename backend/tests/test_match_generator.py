@@ -139,6 +139,24 @@ def session_factory():
         )
         conn.exec_driver_sql(
             """
+            CREATE TABLE regions (
+                id integer primary key autoincrement,
+                country_code varchar(10) not null,
+                region_type varchar(20),
+                region_name varchar(255) not null,
+                state_province_code varchar(10),
+                population bigint,
+                selection_probability numeric(12, 8),
+                competitiveness_multiplier numeric(8, 4),
+                latitude numeric(10, 6),
+                longitude numeric(10, 6),
+                created_at datetime default current_timestamp not null,
+                updated_at datetime default current_timestamp not null
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
             CREATE TABLE teams (
                 id integer primary key autoincrement,
                 team_type varchar(30) not null default 'competitive',
@@ -315,6 +333,14 @@ def seed_match_data(session, *, payload=None, team_count=8):
     )
     session.add(batch)
     session.flush()
+    session.connection().exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO regions (id, country_code, region_name, state_province_code)
+        VALUES
+            (1, 'US', 'Region 1', 'CA'),
+            (2, 'CA', 'Region 2', 'ON')
+        """
+    )
 
     players = []
     for index in range(team_count * 2):
@@ -476,6 +502,7 @@ def active_player_candidate(
     *,
     rating,
     region_id=1,
+    country_code="US",
     gender="M",
     recent_match_count=0,
     recent_game_count=0,
@@ -484,6 +511,7 @@ def active_player_candidate(
         id=player_id,
         gender=gender,
         region_id=region_id,
+        country_code=country_code,
         rating=Decimal(str(rating)),
         club_ids=frozenset({region_id}),
         primary_club_ids=frozenset({region_id}),
@@ -607,7 +635,7 @@ def test_active_teams_include_hidden_bias_context_fields(session):
     assert first_team.formation_date == date(2024, 1, 1)
     assert first_team.club_ids == frozenset()
     assert first_team.primary_club_ids == frozenset()
-    assert first_team.region_name is None
+    assert first_team.region_name == "Region 1"
     assert first_team.team_total_prior_matches == 1
     assert first_team.recent_game_count == 1
     assert first_team.recent_pair_counts == {(1, 2): 1}
@@ -665,6 +693,7 @@ def test_active_player_pool_includes_unteamed_active_players(session):
     candidate = pool.by_id[unteamed_player.id]
     assert candidate.gender == "F"
     assert candidate.region_id == 2
+    assert candidate.country_code == "CA"
     assert candidate.rating == Decimal("1550")
     assert candidate.active_team_ids == ()
     assert candidate.is_teamed is False
@@ -741,6 +770,7 @@ def test_ad_hoc_sampler_returns_two_unique_persisted_non_overlapping_sides(sessi
     assert set(first_side.player_ids).isdisjoint(second_side.player_ids)
     persisted_teams = session.query(Team).order_by(Team.id).all()
     assert {team.team_type for team in persisted_teams} == {"ad_hoc"}
+    assert {team.country_code for team in persisted_teams} == {"US"}
     assert session.query(TeamMembership).count() == 4
     assert first_side.average_rating == (
         sum(rating for _, _, rating in first_side.players) / Decimal("2")
@@ -772,11 +802,27 @@ def test_ad_hoc_pair_candidate_backdates_persisted_team_when_reused_earlier(sess
     team = session.get(Team, later_candidate.source_team_id)
     assert team.team_type == "ad_hoc"
     assert team.team_division == "mixed_doubles"
+    assert team.country_code == "US"
     assert team.formation_date == date(2024, 2, 4)
     assert {
         membership.joined_date
         for membership in session.query(TeamMembership).filter_by(team_id=team.id)
     } == {date(2024, 2, 4)}
+
+
+def test_ad_hoc_pair_candidate_rejects_mixed_country_pair(session):
+    registry = empty_team_registry(session)
+
+    with pytest.raises(ValueError, match="share a country"):
+        _ad_hoc_pair_candidate(
+            (
+                active_player_candidate(1, rating=1500, region_id=1, country_code="US"),
+                active_player_candidate(2, rating=1520, region_id=2, country_code="CA"),
+            ),
+            team_registry=registry,
+            match_date=date(2024, 2, 20),
+            prior_pair_counts={},
+        )
 
 
 def test_ad_hoc_sampler_respects_player_daily_caps(session):
@@ -1056,6 +1102,7 @@ def test_generate_for_batch_assigns_unteamed_players_to_ad_hoc_matches_when_enab
         for match_team in ad_hoc_match_teams
     }
     assert {team.team_type for team in ad_hoc_source_teams} == {"ad_hoc"}
+    assert all(team.country_code is not None for team in ad_hoc_source_teams)
     expected_divisions = {
         "mens_doubles",
         "womens_doubles",
