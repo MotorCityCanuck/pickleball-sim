@@ -759,7 +759,7 @@ def test_generate_for_later_batch_adds_teams_for_new_uncovered_players(session):
     }
 
 
-def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecycle(session):
+def test_generate_for_later_batch_does_not_inactivate_by_persistence_probability(session):
     payload = test_payload(4)
     payload["team_formation"]["player_team_participation_rate"] = 1.0
     payload["team_formation"]["competitive_team_rate"] = 0.0
@@ -805,24 +805,22 @@ def test_generate_for_later_batch_uses_stored_persistence_probability_for_lifecy
     assert result.rows_loaded == 0
     assert teams[0].team_status == "active"
     assert teams[0].dissolution_date is None
-    assert teams[1].team_status == "dormant"
-    assert teams[1].dissolution_date == date(2024, 2, 1)
+    assert teams[1].team_status == "active"
+    assert teams[1].dissolution_date is None
     lifecycle_events = (
         session.query(TeamLifecycleEvent)
         .filter(TeamLifecycleEvent.batch_id == second_batch.id)
         .order_by(TeamLifecycleEvent.team_id, TeamLifecycleEvent.id)
         .all()
     )
-    assert [(event.team_id, event.event_type) for event in lifecycle_events] == [
-        (teams[1].id, "dormant"),
-    ]
+    assert lifecycle_events == []
 
 
-def test_generate_for_later_batch_records_reactivated_team_event(session):
+def test_generate_for_later_batch_marks_team_dormant_when_member_is_injured(session):
     payload = test_payload(4)
     payload["team_formation"]["player_team_participation_rate"] = 1.0
     payload["team_formation"]["competitive_team_rate"] = 0.0
-    payload["team_formation"]["dormant_team_reactivation_rate"] = 1.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
     payload["team_formation"]["retired_team_rate_on_dissolution"] = 0.0
     payload["team_formation"]["team_type_weights"] = {
         "mens_doubles": 0.0,
@@ -839,28 +837,68 @@ def test_generate_for_later_batch_records_reactivated_team_event(session):
     )
 
     team = session.query(Team).order_by(Team.id).first()
-    team.team_status = "dormant"
-    team.dissolution_date = date(2024, 2, 1)
-    dormant_batch = MonthlyBatch(
+    injured_player = team.memberships[0].player
+    injured_player.player_status = "INJURED"
+    second_batch = MonthlyBatch(
         generation_run_id=generation_run.id,
         batch_month=date(2024, 2, 1),
         batch_sequence=2,
         batch_type="future_increment",
-        processing_status="succeeded",
+        processing_status="pending",
     )
-    session.add(dormant_batch)
-    session.flush()
-    session.add(
-        TeamLifecycleEvent(
-            generation_run_id=generation_run.id,
-            batch_id=dormant_batch.id,
-            team_id=team.id,
-            event_date=date(2024, 2, 1),
-            event_type="dormant",
-        )
-    )
+    session.add(second_batch)
     session.commit()
 
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    dormant_event = (
+        session.query(TeamLifecycleEvent)
+        .filter(
+            TeamLifecycleEvent.batch_id == second_batch.id,
+            TeamLifecycleEvent.team_id == team.id,
+            TeamLifecycleEvent.event_type == "dormant",
+        )
+        .one()
+    )
+    assert dormant_event.event_date == date(2024, 2, 1)
+    session.refresh(team)
+    assert team.team_status == "dormant"
+    assert team.dissolution_date is None
+    assert {membership.left_date for membership in team.memberships} == {None}
+
+
+def test_generate_for_later_batch_reactivates_team_when_injured_member_recovers(session):
+    payload = test_payload(4)
+    payload["team_formation"]["player_team_participation_rate"] = 1.0
+    payload["team_formation"]["competitive_team_rate"] = 0.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    payload["team_formation"]["retired_team_rate_on_dissolution"] = 0.0
+    payload["team_formation"]["team_type_weights"] = {
+        "mens_doubles": 0.0,
+        "womens_doubles": 0.0,
+        "mixed_doubles": 0.0,
+        "open_doubles": 1.0,
+    }
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=4)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    team = session.query(Team).order_by(Team.id).first()
+    injured_player = team.memberships[0].player
+    injured_player.player_status = "INJURED"
+    team.team_status = "dormant"
+    team.dissolution_date = None
+    session.commit()
+
+    injured_player.player_status = "ACTIVE"
     reactivation_batch = MonthlyBatch(
         generation_run_id=generation_run.id,
         batch_month=date(2024, 3, 1),
@@ -888,7 +926,65 @@ def test_generate_for_later_batch_records_reactivated_team_event(session):
     )
     assert reactivation_event.event_date == date(2024, 3, 1)
     session.refresh(team)
-    assert team.team_type == "competitive"
+    assert team.team_status == "active"
+    assert team.dissolution_date is None
+
+
+def test_generate_for_later_batch_retires_team_when_member_is_retired(session):
+    payload = test_payload(4)
+    payload["team_formation"]["player_team_participation_rate"] = 1.0
+    payload["team_formation"]["competitive_team_rate"] = 0.0
+    payload["team_formation"]["dormant_team_reactivation_rate"] = 0.0
+    payload["team_formation"]["retired_team_rate_on_dissolution"] = 0.0
+    payload["team_formation"]["team_type_weights"] = {
+        "mens_doubles": 0.0,
+        "womens_doubles": 0.0,
+        "mixed_doubles": 0.0,
+        "open_doubles": 1.0,
+    }
+    generation_run, batch = seed_team_data(session, payload=payload, player_count=4)
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=batch.id,
+        session=session,
+    )
+
+    team = session.query(Team).order_by(Team.id).first()
+    retired_player = team.memberships[0].player
+    retired_player.player_status = "RETIRED"
+    second_batch = MonthlyBatch(
+        generation_run_id=generation_run.id,
+        batch_month=date(2024, 2, 1),
+        batch_sequence=2,
+        batch_type="future_increment",
+        processing_status="pending",
+    )
+    session.add(second_batch)
+    session.commit()
+
+    TeamGenerator().generate_for_batch(
+        generation_run_id=generation_run.id,
+        batch_id=second_batch.id,
+        session=session,
+    )
+
+    retired_event = (
+        session.query(TeamLifecycleEvent)
+        .filter(
+            TeamLifecycleEvent.batch_id == second_batch.id,
+            TeamLifecycleEvent.team_id == team.id,
+            TeamLifecycleEvent.event_type == "retired",
+        )
+        .one()
+    )
+    assert retired_event.event_date == date(2024, 2, 1)
+    session.refresh(team)
+    assert team.team_status == "retired"
+    assert team.dissolution_date == date(2024, 2, 1)
+    assert {membership.left_date for membership in team.memberships} == {
+        date(2024, 2, 1)
+    }
 
 
 def _all_teams_have_two_players(session):

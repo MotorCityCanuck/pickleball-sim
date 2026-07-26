@@ -552,7 +552,7 @@ class TeamGenerator:
             session,
             generation_run_id,
             batch.batch_month,
-            exclude_player_ids=covered_player_ids,
+            exclude_player_ids=covered_player_ids or None,
         )
         if len(candidates) < 2:
             return TeamGenerationResult(
@@ -738,31 +738,45 @@ def _apply_monthly_team_lifecycle(
     config: TeamFormationConfig,
     rng: random.Random,
 ) -> None:
+    del config, rng
     status_changes: list[tuple[Team, str]] = []
-    active_teams = tuple(
-        session.scalars(
-            select(Team)
-            .where(
-                Team.generation_run_id == generation_run_id,
-                Team.team_status == "active",
-                Team.formation_date < batch_month,
-                or_(Team.dissolution_date.is_(None), Team.dissolution_date > batch_month),
-            )
-            .order_by(Team.id)
+    team_statuses: dict[int, set[str]] = {}
+    teams_by_id: dict[int, Team] = {}
+
+    for team, player_status in session.execute(
+        select(Team, Player.player_status)
+        .join(TeamMembership, TeamMembership.team_id == Team.id)
+        .join(Player, Player.id == TeamMembership.player_id)
+        .where(
+            Team.generation_run_id == generation_run_id,
+            Team.formation_date < batch_month,
         )
-    )
-    for team in active_teams:
-        persistence = float(team.persistence_probability or Decimal("0"))
-        if rng.random() < persistence:
+        .order_by(Team.id, TeamMembership.player_position)
+    ):
+        team_id = int(team.id)
+        teams_by_id[team_id] = team
+        team_statuses.setdefault(team_id, set()).add(str(player_status))
+
+    for team_id in sorted(team_statuses):
+        team = teams_by_id[team_id]
+        new_status = _team_status_from_member_statuses(team_statuses[team_id])
+        if team.team_status == new_status and (
+            new_status != "active" or team.dissolution_date is None
+        ):
             continue
-        new_status = (
-            "retired"
-            if rng.random() < float(config.retired_team_rate_on_dissolution)
-            else "dormant"
-        )
+
+        event_type = "reactivated" if new_status == "active" else new_status
         team.team_status = new_status
-        team.dissolution_date = batch_month
-        status_changes.append((team, new_status))
+        if new_status == "retired":
+            if team.dissolution_date is None:
+                team.dissolution_date = batch_month
+            _close_active_team_memberships(
+                team,
+                left_date=team.dissolution_date,
+            )
+        else:
+            team.dissolution_date = None
+        status_changes.append((team, event_type))
     session.flush()
     _record_team_lifecycle_events(
         session,
@@ -773,46 +787,19 @@ def _apply_monthly_team_lifecycle(
         event_type_by_team_id={team.id: event_type for team, event_type in status_changes},
     )
 
-    if config.dormant_team_reactivation_rate <= 0:
-        return
 
-    covered_player_ids = _active_team_player_ids(
-        session,
-        generation_run_id=generation_run_id,
-        batch_month=batch_month,
-    )
-    eligible_player_ids = {
-        candidate.id
-        for candidate in _eligible_players(
-            session,
-            generation_run_id,
-            batch_month,
-            exclude_player_ids=None,
-        )
-    }
-    for team, player_ids in _reactivable_dormant_teams(
-        session,
-        generation_run_id=generation_run_id,
-        batch_month=batch_month,
-        eligible_player_ids=eligible_player_ids,
-    ):
-        if covered_player_ids.intersection(player_ids):
-            continue
-        if rng.random() >= float(config.dormant_team_reactivation_rate):
-            continue
-        team.team_status = "active"
-        team.dissolution_date = None
-        covered_player_ids.update(player_ids)
-        status_changes.append((team, "reactivated"))
-    session.flush()
-    _record_team_lifecycle_events(
-        session,
-        generation_run_id=generation_run_id,
-        batch_id=batch_id,
-        event_date=batch_month,
-        teams=[team for team, event_type in status_changes if event_type == "reactivated"],
-        event_type="reactivated",
-    )
+def _team_status_from_member_statuses(member_statuses: set[str]) -> str:
+    if "RETIRED" in member_statuses:
+        return "retired"
+    if "INJURED" in member_statuses:
+        return "dormant"
+    return "active"
+
+
+def _close_active_team_memberships(team: Team, *, left_date: date) -> None:
+    for membership in team.memberships:
+        if membership.left_date is None or membership.left_date > left_date:
+            membership.left_date = left_date
 
 
 def _record_team_lifecycle_events(
@@ -865,41 +852,6 @@ def _active_team_player_ids(
             )
         )
     }
-
-
-def _reactivable_dormant_teams(
-    session: Session,
-    *,
-    generation_run_id: int,
-    batch_month: date,
-    eligible_player_ids: set[int],
-) -> tuple[tuple[Team, tuple[int, int]], ...]:
-    team_rows: dict[int, list[int]] = {}
-    teams_by_id: dict[int, Team] = {}
-    for team, player_id in session.execute(
-        select(Team, TeamMembership.player_id)
-        .join(TeamMembership, TeamMembership.team_id == Team.id)
-        .join(Player, Player.id == TeamMembership.player_id)
-        .where(
-            Team.generation_run_id == generation_run_id,
-            Team.team_status == "dormant",
-            Team.dissolution_date.is_not(None),
-            Team.dissolution_date < batch_month,
-            TeamMembership.joined_date <= batch_month,
-            or_(TeamMembership.left_date.is_(None), TeamMembership.left_date > batch_month),
-            Player.player_status == "ACTIVE",
-            Player.registration_date <= batch_month,
-        )
-        .order_by(Team.id, TeamMembership.player_position)
-    ):
-        teams_by_id[int(team.id)] = team
-        team_rows.setdefault(int(team.id), []).append(int(player_id))
-
-    return tuple(
-        (teams_by_id[team_id], (player_ids[0], player_ids[1]))
-        for team_id, player_ids in sorted(team_rows.items())
-        if len(player_ids) == 2 and all(player_id in eligible_player_ids for player_id in player_ids)
-    )
 
 
 def _target_team_count(config: TeamFormationConfig, eligible_player_count: int) -> int:
