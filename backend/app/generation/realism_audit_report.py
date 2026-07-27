@@ -163,6 +163,9 @@ def _executive_summary_markdown_lines(
         f"- Certification score: {_display_markdown_value(assessment.get('certification_score'))}"
     )
     lines.append(
+        f"- Policy version: {_display_markdown_value(assessment.get('policy_version'))}"
+    )
+    lines.append(
         f"- Overall status: {_display_markdown_value(assessment.get('overall_status'))}"
     )
     lines.append(
@@ -401,6 +404,11 @@ def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
                 for severity, count in sorted(severity_counts.items())
             )
         )
+    policy_reasons = assessment.get("policy_reasons")
+    if isinstance(policy_reasons, list) and policy_reasons:
+        lines.append("- Policy reasons:")
+        for reason in policy_reasons:
+            lines.append(f"  - {_display_markdown_value(reason)}")
     lines.append("")
 
     findings = assessment.get("findings")

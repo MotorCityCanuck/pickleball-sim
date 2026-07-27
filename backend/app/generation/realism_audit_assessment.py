@@ -20,7 +20,22 @@ DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
 }
 
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "blocker": 3}
-_SEVERITY_PENALTY = {"info": 0.0, "warning": 10.0, "error": 25.0, "blocker": 50.0}
+_SEVERITY_PENALTY = {"info": 0.0, "warning": 10.0, "error": 25.0, "blocker": 25.0}
+_CERTIFICATION_POLICY_VERSION = "2026-07-27"
+_PASS_SCORE_MIN = 95.0
+_PASS_WITH_WARNINGS_SCORE_MIN = 80.0
+_REQUIRED_PASS_PILLARS = ("structural_integrity", "export_readiness")
+_BLOCKER_QUERIES = frozenset(
+    {
+        "club_primary_membership_integrity",
+        "team_current_roster_integrity",
+        "team_membership_date_integrity",
+        "match_winner_integrity",
+        "match_game_score_integrity",
+        "daily_team_match_cap_violations",
+        "missing_gold_inputs",
+    }
+)
 
 
 def default_realism_audit_assessment_thresholds() -> dict[str, float]:
@@ -52,6 +67,10 @@ def assess_realism_audit_payload(
         _assess_query_result(result, active_thresholds)
         for result in _iter_query_results(payload.get("results"))
     ]
+    query_assessments = [
+        _apply_query_policy(assessment)
+        for assessment in query_assessments
+    ]
     pillar_assessments = _build_pillar_assessments(query_assessments)
     findings = [
         assessment
@@ -72,15 +91,17 @@ def assess_realism_audit_payload(
             category_counts[category] = category_counts.get(category, 0) + 1
             finding_pillar_counts[pillar] = finding_pillar_counts.get(pillar, 0) + 1
 
-    max_severity = _max_severity(query_assessments)
     certification_score = _overall_certification_score(pillar_assessments)
-    certification_decision = _certification_decision_for_severity(max_severity)
+    certification_decision, policy_reasons = _certification_decision_from_policy(
+        pillar_assessments,
+        query_assessments,
+        certification_score,
+    )
     overall_status = {
-        "blocker": "significant_realism_concerns",
-        "error": "significant_realism_concerns",
-        "warning": "review_recommended",
-        "info": "no_material_issues",
-    }[max_severity]
+        "FAIL": "significant_realism_concerns",
+        "PASS_WITH_WARNINGS": "review_recommended",
+        "PASS": "no_material_issues",
+    }[certification_decision]
     return {
         "overall_status": overall_status,
         "finding_count": len(findings),
@@ -91,6 +112,10 @@ def assess_realism_audit_payload(
         "pillar_assessments": pillar_assessments,
         "certification_score": certification_score,
         "certification_decision": certification_decision,
+        "policy_version": _CERTIFICATION_POLICY_VERSION,
+        "required_pass_pillars": list(_REQUIRED_PASS_PILLARS),
+        "blocker_queries": sorted(_BLOCKER_QUERIES),
+        "policy_reasons": policy_reasons,
         "thresholds": active_thresholds,
         "findings": findings,
         "query_assessments": query_assessments,
@@ -207,6 +232,7 @@ def _build_pillar_assessments(
                 "pillar": pillar_key,
                 "label": pillar.label,
                 "implementation_status": pillar.implementation_status,
+                "required_for_pass": pillar_key in _REQUIRED_PASS_PILLARS,
                 "query_count": len(pillar_query_assessments),
                 "finding_count": finding_count,
                 "severity_counts": severity_counts,
@@ -258,6 +284,111 @@ def _certification_decision_for_severity(max_severity: str) -> str:
         "error": "FAIL",
         "blocker": "FAIL",
     }[max_severity]
+
+
+def _certification_decision_from_policy(
+    pillar_assessments: Sequence[Mapping[str, Any]],
+    query_assessments: Sequence[Mapping[str, Any]],
+    certification_score: float | None,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    decision = "PASS"
+
+    blocker_findings = [
+        str(assessment.get("query") or "")
+        for assessment in query_assessments
+        if str(assessment.get("severity") or "info") == "blocker"
+    ]
+    if blocker_findings:
+        reasons.append(
+            "Blocker findings were detected in: " + ", ".join(sorted(blocker_findings)) + "."
+        )
+        decision = "FAIL"
+
+    assessments_by_pillar = {
+        str(assessment.get("pillar") or ""): assessment for assessment in pillar_assessments
+    }
+    failing_pillars = [
+        str(assessment.get("label") or assessment.get("pillar") or "")
+        for assessment in pillar_assessments
+        if str(assessment.get("implementation_status") or "planned") == "implemented"
+        and str(assessment.get("decision") or "NOT_ASSESSED") == "FAIL"
+    ]
+    if failing_pillars:
+        reasons.append(
+            "Implemented certification pillars failed: " + ", ".join(sorted(failing_pillars)) + "."
+        )
+        decision = "FAIL"
+
+    if certification_score is not None and certification_score < _PASS_WITH_WARNINGS_SCORE_MIN:
+        reasons.append(
+            f"Certification score {certification_score:.1f} is below the fail threshold of {_PASS_WITH_WARNINGS_SCORE_MIN:.1f}."
+        )
+        decision = "FAIL"
+
+    required_warning = False
+    for pillar_key in _REQUIRED_PASS_PILLARS:
+        assessment = assessments_by_pillar.get(pillar_key)
+        if assessment is None:
+            continue
+        if int(assessment.get("query_count") or 0) <= 0:
+            continue
+        pillar_decision = str(assessment.get("decision") or "NOT_ASSESSED")
+        label = str(assessment.get("label") or pillar_key)
+        if pillar_decision == "FAIL":
+            reasons.append(f"Required pillar {label} failed.")
+            return "FAIL", reasons
+        if pillar_decision != "PASS":
+            required_warning = True
+            reasons.append(f"Required pillar {label} did not achieve a clean pass.")
+
+    if certification_score is not None and certification_score < _PASS_SCORE_MIN:
+        reasons.append(
+            f"Certification score {certification_score:.1f} is below the clean pass threshold of {_PASS_SCORE_MIN:.1f}."
+        )
+        if decision != "FAIL":
+            decision = "PASS_WITH_WARNINGS"
+
+    if any(str(assessment.get("severity") or "info") != "info" for assessment in query_assessments):
+        reasons.append("One or more non-blocker findings require operator review.")
+        if decision != "FAIL":
+            decision = "PASS_WITH_WARNINGS"
+
+    if required_warning:
+        if decision != "FAIL":
+            decision = "PASS_WITH_WARNINGS"
+
+    if not reasons:
+        reasons.append("All implemented pillars passed and no blocking findings were detected.")
+    return decision, reasons
+
+
+def _apply_query_policy(assessment: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(assessment)
+    query_name = str(normalized.get("query") or "")
+    severity = str(normalized.get("severity") or "info")
+    if query_name not in _BLOCKER_QUERIES or severity not in {"warning", "error"}:
+        return normalized
+
+    normalized["severity"] = "blocker"
+    normalized["status"] = "review"
+    normalized["policy_blocker"] = True
+
+    summary = str(normalized.get("summary") or "").rstrip()
+    if summary:
+        normalized["summary"] = (
+            summary + " This query is release-blocking under the certification policy."
+        )
+
+    recommendation = str(normalized.get("recommendation") or "").rstrip()
+    blocker_recommendation = "Resolve this issue before certifying the release."
+    if recommendation:
+        if blocker_recommendation not in recommendation:
+            normalized["recommendation"] = recommendation + " " + blocker_recommendation
+    else:
+        normalized["recommendation"] = blocker_recommendation
+
+    return normalized
 
 
 def _assess_drift(

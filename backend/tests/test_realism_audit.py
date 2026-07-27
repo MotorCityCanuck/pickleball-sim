@@ -2117,6 +2117,7 @@ def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
         "PASS_WITH_WARNINGS",
         "FAIL",
     }
+    assert payload["assessment"]["policy_version"] == "2026-07-27"
     assert isinstance(payload["assessment"]["certification_score"], float)
     assert payload["assessment"]["pillar_counts"]["operational_realism"] == 1
 
@@ -2151,8 +2152,10 @@ def test_realism_audit_assessment_flags_threshold_findings():
     assert assessment["overall_status"] == "significant_realism_concerns"
     assert assessment["certification_decision"] == "FAIL"
     assert assessment["certification_score"] == 75.0
+    assert assessment["policy_reasons"]
     assert assessment["finding_count"] == 2
-    assert assessment["severity_counts"]["error"] == 2
+    assert assessment["severity_counts"]["blocker"] == 1
+    assert assessment["severity_counts"]["error"] == 1
     assert assessment["pillar_counts"]["operational_realism"] == 2
     assert assessment["finding_pillar_counts"]["operational_realism"] == 2
     operational_realism = next(
@@ -2210,7 +2213,7 @@ def test_realism_audit_assessment_allows_unaffiliated_zero_primary_players():
 
     assert multi_primary_assessment["overall_status"] == "significant_realism_concerns"
     assert multi_primary_assessment["finding_count"] == 1
-    assert multi_primary_assessment["findings"][0]["severity"] == "error"
+    assert multi_primary_assessment["findings"][0]["severity"] == "blocker"
 
 
 def test_realism_audit_assessment_computes_cross_pillar_certification_score():
@@ -2379,7 +2382,7 @@ def test_realism_audit_assessment_expands_simulation_assignment_export_and_regre
 
     assert by_query["chemistry_effectiveness"]["severity"] == "error"
     assert by_query["candidate_depth_by_country_division"]["severity"] == "warning"
-    assert by_query["missing_gold_inputs"]["severity"] == "error"
+    assert by_query["missing_gold_inputs"]["severity"] == "blocker"
     assert by_query["historical_run_size_regression"]["severity"] == "error"
     assert assessment["certification_decision"] == "FAIL"
     assert assessment["finding_count"] == 4
@@ -2440,6 +2443,7 @@ def test_realism_audit_assessment_expands_additional_phase3_query_coverage():
     assert by_query["student_candidate_availability"]["severity"] == "warning"
     assert by_query["historical_release_file_coverage"]["severity"] == "error"
     assert assessment["certification_decision"] == "FAIL"
+    assert any("clean pass threshold" in reason for reason in assessment["policy_reasons"])
 
 
 def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pillars():
@@ -2541,6 +2545,7 @@ def test_realism_audit_markdown_includes_assessment_findings():
     assert "## Assessment Summary" in markdown
     assert "Certification decision" in markdown
     assert "Certification score" in markdown
+    assert "Policy version" in markdown
     assert "## Assessment Findings" in markdown
     assert "Previous approved release" in markdown
     assert "Club Fill Ratio Summary" in markdown
