@@ -32,28 +32,28 @@ SIMULATION_FIDELITY_PILLAR = ReleaseCertificationPillar(
     key="simulation_fidelity",
     label="Simulation Fidelity",
     description="Validate that hidden simulation mechanisms produce measurable downstream effects.",
-    implementation_status="planned",
+    implementation_status="implemented",
 )
 
 ASSIGNMENT_READINESS_PILLAR = ReleaseCertificationPillar(
     key="assignment_readiness",
     label="Assignment Readiness",
     description="Validate that the generated population supports Olympic candidate and team-selection workflows.",
-    implementation_status="planned",
+    implementation_status="implemented",
 )
 
 EXPORT_READINESS_PILLAR = ReleaseCertificationPillar(
     key="export_readiness",
     label="Export Readiness",
     description="Validate that release inputs and student-facing export prerequisites are complete.",
-    implementation_status="planned",
+    implementation_status="implemented",
 )
 
 HISTORICAL_REGRESSION_PILLAR = ReleaseCertificationPillar(
     key="historical_regression",
     label="Historical Regression",
     description="Compare current release behavior against previous approved releases and scale targets.",
-    implementation_status="planned",
+    implementation_status="implemented",
 )
 
 RELEASE_CERTIFICATION_PILLARS: tuple[ReleaseCertificationPillar, ...] = (

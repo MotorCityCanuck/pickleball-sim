@@ -1972,7 +1972,14 @@ def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
     assert payload["batch_month"] == "2026-01-01"
     assert payload["executed_at"].endswith("+00:00")
     assert payload["process_type"] == "release_certification"
-    assert payload["implemented_pillars"] == ["operational_realism"]
+    assert set(payload["implemented_pillars"]) == {
+        "operational_realism",
+        "simulation_fidelity",
+        "assignment_readiness",
+        "export_readiness",
+        "historical_regression",
+    }
+    assert payload["planned_pillars"] == ["structural_integrity"]
     assert payload["results"][0]["pillar"] == "operational_realism"
     assert payload["results"][0]["query"] == "weekend_match_share"
     assert payload["assessment"]["overall_status"] in {
@@ -1980,6 +1987,12 @@ def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
         "review_recommended",
         "significant_realism_concerns",
     }
+    assert payload["assessment"]["certification_decision"] in {
+        "PASS",
+        "PASS_WITH_WARNINGS",
+        "FAIL",
+    }
+    assert isinstance(payload["assessment"]["certification_score"], float)
     assert payload["assessment"]["pillar_counts"]["operational_realism"] == 1
 
 
@@ -2011,10 +2024,19 @@ def test_realism_audit_assessment_flags_threshold_findings():
     assessment = assess_realism_audit_payload(payload)
 
     assert assessment["overall_status"] == "significant_realism_concerns"
+    assert assessment["certification_decision"] == "FAIL"
+    assert assessment["certification_score"] == 75.0
     assert assessment["finding_count"] == 2
     assert assessment["severity_counts"]["error"] == 2
     assert assessment["pillar_counts"]["operational_realism"] == 2
     assert assessment["finding_pillar_counts"]["operational_realism"] == 2
+    operational_realism = next(
+        pillar
+        for pillar in assessment["pillar_assessments"]
+        if pillar["pillar"] == "operational_realism"
+    )
+    assert operational_realism["score"] == 75.0
+    assert operational_realism["decision"] == "FAIL"
     assert [finding["query"] for finding in assessment["findings"]] == [
         "player_gender_distribution",
         "daily_team_match_cap_violations",
@@ -2128,6 +2150,9 @@ def test_realism_audit_markdown_includes_assessment_findings():
     assert "### Pillar Coverage" in markdown
     assert "Operational Realism" in markdown
     assert "## Assessment Summary" in markdown
+    assert "Certification decision" in markdown
+    assert "Certification score" in markdown
+    assert "## Pillar Scores" in markdown
     assert "## Assessment Findings" in markdown
     assert "Club Fill Ratio Summary" in markdown
     assert "over capacity" in markdown

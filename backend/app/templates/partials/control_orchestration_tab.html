@@ -533,6 +533,14 @@
                     </div>
                     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
                         <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Certification Decision</div>
+                            <div style="margin-top:6px;">{{ snapshot.realism_audit_summary.latest_snapshot.certification_decision or "not assessed" }}</div>
+                        </div>
+                        <div class="metric-card">
+                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Certification Score</div>
+                            <div style="margin-top:6px;">{% if snapshot.realism_audit_summary.latest_snapshot.certification_score is not none %}{{ snapshot.realism_audit_summary.latest_snapshot.certification_score }}{% else %}n/a{% endif %}</div>
+                        </div>
+                        <div class="metric-card">
                             <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Assessment Status</div>
                             <div style="margin-top:6px;">{{ snapshot.realism_audit_summary.latest_snapshot.overall_status or "not assessed" }}</div>
                         </div>
@@ -570,12 +578,13 @@
                     {% endif %}
                     {% if snapshot.realism_audit_summary.latest_snapshot.pillar_counts %}
                         <div>
-                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Pillar Coverage</div>
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Pillar Scores</div>
                             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-top:8px;">
-                                {% for pillar, count in snapshot.realism_audit_summary.latest_snapshot.pillar_counts %}
+                                {% for pillar, decision, score, query_count, finding_count in snapshot.realism_audit_summary.latest_snapshot.pillar_assessments %}
                                     <div class="metric-card">
                                         <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ pillar }}</div>
-                                        <div style="margin-top:6px;">{{ count }}</div>
+                                        <div style="margin-top:6px;">{% if score is not none %}{{ score }}{% else %}n/a{% endif %}</div>
+                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ decision }} | {{ query_count }} queries | {{ finding_count }} findings</div>
                                     </div>
                                 {% endfor %}
                             </div>

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from .release_certification_pillars import RELEASE_CERTIFICATION_PILLAR_MAP
+
 
 DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
     "distribution_drift_warning_pct_points": 5.0,
@@ -18,6 +20,7 @@ DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
 }
 
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "blocker": 3}
+_SEVERITY_PENALTY = {"info": 0.0, "warning": 10.0, "error": 25.0, "blocker": 50.0}
 
 
 def default_realism_audit_assessment_thresholds() -> dict[str, float]:
@@ -49,6 +52,7 @@ def assess_realism_audit_payload(
         _assess_query_result(result, active_thresholds)
         for result in _iter_query_results(payload.get("results"))
     ]
+    pillar_assessments = _build_pillar_assessments(query_assessments)
     findings = [
         assessment
         for assessment in query_assessments
@@ -69,6 +73,8 @@ def assess_realism_audit_payload(
             finding_pillar_counts[pillar] = finding_pillar_counts.get(pillar, 0) + 1
 
     max_severity = _max_severity(query_assessments)
+    certification_score = _overall_certification_score(pillar_assessments)
+    certification_decision = _certification_decision_for_severity(max_severity)
     overall_status = {
         "blocker": "significant_realism_concerns",
         "error": "significant_realism_concerns",
@@ -82,6 +88,9 @@ def assess_realism_audit_payload(
         "pillar_counts": dict(sorted(pillar_counts.items())),
         "finding_pillar_counts": dict(sorted(finding_pillar_counts.items())),
         "category_counts": dict(sorted(category_counts.items())),
+        "pillar_assessments": pillar_assessments,
+        "certification_score": certification_score,
+        "certification_decision": certification_decision,
         "thresholds": active_thresholds,
         "findings": findings,
         "query_assessments": query_assessments,
@@ -147,6 +156,84 @@ def _assess_query_result(
         "evidence": evidence,
         "recommendation": recommendation,
     }
+
+
+def _build_pillar_assessments(
+    query_assessments: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    assessments_by_pillar: dict[str, list[Mapping[str, Any]]] = {}
+    for assessment in query_assessments:
+        pillar_key = str(assessment.get("pillar") or "operational_realism")
+        assessments_by_pillar.setdefault(pillar_key, []).append(assessment)
+
+    serialized: list[dict[str, Any]] = []
+    for pillar_key, pillar in RELEASE_CERTIFICATION_PILLAR_MAP.items():
+        pillar_query_assessments = assessments_by_pillar.get(pillar_key, [])
+        severity_counts = {"info": 0, "warning": 0, "error": 0, "blocker": 0}
+        finding_count = 0
+        for assessment in pillar_query_assessments:
+            severity = str(assessment.get("severity") or "info")
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+            if severity != "info":
+                finding_count += 1
+        max_severity = _max_severity(pillar_query_assessments)
+        score = _pillar_score(pillar_query_assessments)
+        serialized.append(
+            {
+                "pillar": pillar_key,
+                "label": pillar.label,
+                "implementation_status": pillar.implementation_status,
+                "query_count": len(pillar_query_assessments),
+                "finding_count": finding_count,
+                "severity_counts": severity_counts,
+                "max_severity": max_severity,
+                "score": score,
+                "decision": (
+                    _certification_decision_for_severity(max_severity)
+                    if pillar_query_assessments
+                    else "NOT_ASSESSED"
+                ),
+            }
+        )
+    return serialized
+
+
+def _pillar_score(query_assessments: Sequence[Mapping[str, Any]]) -> float | None:
+    if not query_assessments:
+        return None
+    total_penalty = 0.0
+    for assessment in query_assessments:
+        severity = str(assessment.get("severity") or "info")
+        total_penalty += _SEVERITY_PENALTY.get(severity, 0.0)
+    average_penalty = total_penalty / len(query_assessments)
+    return round(max(0.0, 100.0 - average_penalty), 1)
+
+
+def _overall_certification_score(
+    pillar_assessments: Sequence[Mapping[str, Any]],
+) -> float | None:
+    weighted_score_total = 0.0
+    weighted_query_total = 0
+    for assessment in pillar_assessments:
+        query_count = int(assessment.get("query_count") or 0)
+        score = assessment.get("score")
+        implementation_status = str(assessment.get("implementation_status") or "planned")
+        if implementation_status != "implemented" or query_count <= 0 or score is None:
+            continue
+        weighted_score_total += float(score) * query_count
+        weighted_query_total += query_count
+    if weighted_query_total <= 0:
+        return None
+    return round(weighted_score_total / weighted_query_total, 1)
+
+
+def _certification_decision_for_severity(max_severity: str) -> str:
+    return {
+        "info": "PASS",
+        "warning": "PASS_WITH_WARNINGS",
+        "error": "FAIL",
+        "blocker": "FAIL",
+    }[max_severity]
 
 
 def _assess_drift(

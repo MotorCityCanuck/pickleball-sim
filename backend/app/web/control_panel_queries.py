@@ -337,6 +337,9 @@ class RealismAuditSnapshotSummary:
     total_row_count: int
     pillar_counts: tuple[tuple[str, int], ...]
     category_counts: tuple[tuple[str, int], ...]
+    certification_score: float | None
+    certification_decision: str | None
+    pillar_assessments: tuple[tuple[str, str, float | None, int, int], ...]
     overall_status: str | None
     finding_count: int
     severity_counts: tuple[tuple[str, int], ...]
@@ -1104,6 +1107,16 @@ class ControlPanelQueries:
                     )
                 ),
                 category_counts=tuple(sorted(category_counts.items())),
+                certification_score=_coerce_float(
+                    _coerce_mapping(payload.get("assessment")).get("certification_score")
+                ),
+                certification_decision=(
+                    str(_coerce_mapping(payload.get("assessment")).get("certification_decision"))
+                    if _coerce_mapping(payload.get("assessment")).get("certification_decision")
+                    is not None
+                    else None
+                ),
+                pillar_assessments=_realism_assessment_pillar_scores(payload),
                 overall_status=_realism_assessment_status(payload),
                 finding_count=_realism_assessment_finding_count(payload),
                 severity_counts=_realism_assessment_severity_counts(payload),
@@ -2157,6 +2170,30 @@ def _realism_assessment_top_findings(
     return tuple(summaries)
 
 
+def _realism_assessment_pillar_scores(
+    payload: dict[str, object],
+) -> tuple[tuple[str, str, float | None, int, int], ...]:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    pillar_assessments = assessment.get("pillar_assessments")
+    if not isinstance(pillar_assessments, list):
+        return ()
+    serialized: list[tuple[str, str, float | None, int, int]] = []
+    for pillar_assessment in pillar_assessments:
+        mapping = _coerce_mapping(pillar_assessment)
+        if not mapping:
+            continue
+        serialized.append(
+            (
+                str(mapping.get("label") or mapping.get("pillar") or "Unknown"),
+                str(mapping.get("decision") or "NOT_ASSESSED"),
+                _coerce_float(mapping.get("score")),
+                _coerce_int(mapping.get("query_count"), default=0) or 0,
+                _coerce_int(mapping.get("finding_count"), default=0) or 0,
+            )
+        )
+    return tuple(serialized)
+
+
 def _display_release_certification_pillar(pillar_key: str) -> str:
     pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
     return pillar.label if pillar is not None else pillar_key
@@ -2656,6 +2693,14 @@ def _coerce_int(value: object, default: int | None = None) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return default
     return value
+
+
+def _coerce_float(value: object, default: float | None = None) -> float | None:
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
 
 
 def _coerce_str(value: object) -> str | None:
