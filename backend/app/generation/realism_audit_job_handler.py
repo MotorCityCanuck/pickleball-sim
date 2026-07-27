@@ -344,12 +344,12 @@ class RealismAuditJobHandler:
         stage_row.progress_current = total_queries
         stage_row.progress_total = total_queries
         stage_row.progress_percent = Decimal("100.00")
-        stage_row.progress_message = "Realism audit completed successfully."
+        stage_row.progress_message = "Release certification completed successfully."
         job_status.status = "succeeded"
         job_status.current_phase = "completed"
         job_status.completed_at = completed_at
         job_status.percent_complete = Decimal("100.00")
-        job_status.current_message = "Realism audit completed successfully."
+        job_status.current_message = "Release certification completed successfully."
         self.session.flush()
 
     def _mark_job_failed(

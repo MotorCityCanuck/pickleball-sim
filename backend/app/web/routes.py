@@ -85,6 +85,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_CONFIG_SCOPE = "seed"
 DEFAULT_REALISM_AUDIT_REPORT_DIR = Path("data/realism_audit_reports")
+DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR = DEFAULT_REALISM_AUDIT_REPORT_DIR
 REALISM_AUDIT_STAGE_NAME = "run_realism_audit"
 TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="CA", division="mens_doubles"),
@@ -782,10 +783,11 @@ def build_control_panel_router() -> APIRouter:
             ),
         )
 
+    @router.post("/control/release-certification/run", response_class=HTMLResponse)
     @router.post("/control/realism-audit/run", response_class=HTMLResponse)
-    def control_panel_realism_audit_run(
+    def control_panel_release_certification_run(
         request: Request,
-        report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
+        report_output_dir: str = Form(str(DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR)),
         distribution_drift_warning_pct_points: str = Form("5.0"),
         distribution_drift_error_pct_points: str = Form("10.0"),
         summary_drift_warning_pct_points: str = Form("5.0"),
@@ -818,7 +820,7 @@ def build_control_panel_router() -> APIRouter:
         )
         realism_audit_config = {
             "report_output_dir": report_output_dir.strip()
-            or str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+            or str(DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR),
             "assessment_thresholds": assessment_thresholds,
         }
 
@@ -826,7 +828,7 @@ def build_control_panel_router() -> APIRouter:
             realism_audit_error = (
                 snapshot.allowed_actions.realism_audit_blockers[0]
                 if snapshot.allowed_actions.realism_audit_blockers
-                else "Realism audit cannot be started."
+                else "Release certification cannot be started."
             )
         else:
             try:
@@ -849,7 +851,7 @@ def build_control_panel_router() -> APIRouter:
                 session.commit()
                 snapshot = queries.get_control_panel_snapshot(session)
                 realism_audit_message = (
-                    "Realism audit queued for durable worker."
+                    "Release certification queued for durable worker."
                 )
             except Exception as exc:
                 session.rollback()
@@ -867,9 +869,10 @@ def build_control_panel_router() -> APIRouter:
             ),
         )
 
+    @router.post("/control/release-certification/download", response_class=FileResponse)
     @router.post("/control/realism-audit/download", response_class=FileResponse)
-    def control_panel_realism_audit_download(
-        report_output_dir: str = Form(str(DEFAULT_REALISM_AUDIT_REPORT_DIR)),
+    def control_panel_release_certification_download(
+        report_output_dir: str = Form(str(DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR)),
         session: Session = Depends(get_session),
         queries: ControlPanelQueries = Depends(get_control_panel_queries),
     ) -> FileResponse:
@@ -878,7 +881,7 @@ def build_control_panel_router() -> APIRouter:
             blocker = (
                 snapshot.allowed_actions.realism_audit_blockers[0]
                 if snapshot.allowed_actions.realism_audit_blockers
-                else "Realism audit report cannot be downloaded."
+                else "Release certification report cannot be downloaded."
             )
             raise HTTPException(status_code=409, detail=blocker)
         payload = latest_realism_audit_snapshot_payload(
@@ -896,14 +899,14 @@ def build_control_panel_router() -> APIRouter:
         if payload is None:
             raise HTTPException(
                 status_code=404,
-                detail="Run realism audit before downloading the markdown report.",
+                detail="Run release certification before downloading the markdown report.",
             )
 
         output_dir = _resolve_control_panel_path(
-            report_output_dir.strip() or str(DEFAULT_REALISM_AUDIT_REPORT_DIR)
+            report_output_dir.strip() or str(DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR)
         )
         output_dir.mkdir(parents=True, exist_ok=True)
-        report_path = output_dir / _realism_audit_markdown_filename(payload)
+        report_path = output_dir / _release_certification_markdown_filename(payload)
         report_path.write_text(
             snapshot_payload_to_markdown(payload),
             encoding="utf-8",
@@ -1667,7 +1670,7 @@ def _register_realism_audit_job(
         status="pending",
         current_phase="queued",
         percent_complete=Decimal("0.00"),
-        current_message="Queued realism audit.",
+        current_message="Queued release certification.",
     )
     session.add(job_status)
     session.flush()
@@ -1683,7 +1686,7 @@ def _register_realism_audit_job(
             progress_total=query_count,
             progress_unit="query",
             progress_percent=Decimal("0.00"),
-            progress_message="Queued realism audit.",
+            progress_message="Queued release certification.",
             metadata_json={"assessment_thresholds": normalized_thresholds},
         )
     )
@@ -1903,7 +1906,7 @@ def _build_orchestration_template_context(
         "realism_audit_config": (
             realism_audit_config
             or {
-                "report_output_dir": str(DEFAULT_REALISM_AUDIT_REPORT_DIR),
+                "report_output_dir": str(DEFAULT_RELEASE_CERTIFICATION_REPORT_DIR),
                 "assessment_thresholds": default_realism_audit_assessment_thresholds(),
             }
         ),
@@ -1930,7 +1933,7 @@ def _safe_release_name(value: str) -> str:
     return "_".join(parts) or "student_dataset_release"
 
 
-def _realism_audit_markdown_filename(payload: dict[str, object]) -> str:
+def _release_certification_markdown_filename(payload: dict[str, object]) -> str:
     run_id = payload.get("generation_run_id")
     batch_id = payload.get("batch_id")
     executed_at = str(payload.get("executed_at") or "")
@@ -1949,7 +1952,7 @@ def _realism_audit_markdown_filename(payload: dict[str, object]) -> str:
         if isinstance(batch_id, int)
         else "batch_unknown"
     )
-    return f"realism_audit_{run_token}_{batch_token}_{timestamp or 'latest'}.md"
+    return f"release_certification_{run_token}_{batch_token}_{timestamp or 'latest'}.md"
 
 
 def _coerce_dict(value: object) -> dict[str, object]:

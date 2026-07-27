@@ -1,4 +1,4 @@
-"""Output shaping helpers for realism audit results."""
+"""Output shaping helpers for realism audit and release certification results."""
 from __future__ import annotations
 
 from typing import Any, Sequence
@@ -13,8 +13,19 @@ def execution_to_json_ready(
     *,
     assessment_thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Serialize one realism-audit execution with scope metadata."""
+    """Serialize one release-certification execution with scope metadata."""
     payload = {
+        "process_type": "release_certification",
+        "framework_name": "NAPA Release Certification Framework",
+        "framework_version": "2.0",
+        "implemented_pillars": ["operational_realism"],
+        "planned_pillars": [
+            "structural_integrity",
+            "simulation_fidelity",
+            "assignment_readiness",
+            "export_readiness",
+            "historical_regression",
+        ],
         "executed_at": execution.executed_at.isoformat(),
         "generation_run_id": execution.generation_run_id,
         "batch_id": execution.batch_id,
@@ -57,7 +68,7 @@ def execution_to_markdown(
     *,
     assessment_thresholds: dict[str, Any] | None = None,
 ) -> str:
-    """Render one realism-audit execution as a markdown report."""
+    """Render one release-certification execution as a markdown report."""
     return snapshot_payload_to_markdown(
         execution_to_json_ready(
             execution,
@@ -67,10 +78,13 @@ def execution_to_markdown(
 
 
 def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
-    """Render a JSON-ready realism-audit payload as a markdown report."""
+    """Render a JSON-ready release-certification payload as a markdown report."""
     lines = [
-        "# Realism Audit Report",
+        "# Release Certification Report",
         "",
+        f"- Framework: {_display_markdown_value(payload.get('framework_name') or 'NAPA Release Certification Framework')}",
+        f"- Framework version: {_display_markdown_value(payload.get('framework_version') or '2.0')}",
+        f"- Process type: {_display_markdown_value(payload.get('process_type') or 'release_certification')}",
         f"- Executed at: {_display_markdown_value(payload.get('executed_at'))}",
         f"- Generation run ID: {_display_markdown_value(payload.get('generation_run_id'))}",
         f"- Batch ID: {_display_markdown_value(payload.get('batch_id'))}",
@@ -80,11 +94,23 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
     snapshot_path = payload.get("snapshot_path")
     if snapshot_path:
         lines.append(f"- Source snapshot: `{snapshot_path}`")
+    implemented_pillars = payload.get("implemented_pillars")
+    if isinstance(implemented_pillars, list) and implemented_pillars:
+        lines.append(
+            "- Implemented pillars: "
+            + ", ".join(str(pillar) for pillar in implemented_pillars)
+        )
+    planned_pillars = payload.get("planned_pillars")
+    if isinstance(planned_pillars, list) and planned_pillars:
+        lines.append(
+            "- Planned pillars: "
+            + ", ".join(str(pillar) for pillar in planned_pillars)
+        )
     lines.append("")
 
     results = payload.get("results") or []
     if not results:
-        lines.extend(["No audit results were found.", ""])
+        lines.extend(["No certification results were found.", ""])
         return "\n".join(lines).rstrip() + "\n"
 
     category_counts: dict[str, int] = {}
@@ -92,7 +118,7 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         category = str(result.get("category") or "general")
         category_counts[category] = category_counts.get(category, 0) + 1
 
-    lines.append("## Summary")
+    lines.append("## Certification Summary")
     lines.append("")
     for category, count in sorted(category_counts.items()):
         lines.append(f"- {category}: {count} query{'ies' if count != 1 else ''}")

@@ -1,4 +1,4 @@
-"""Run reusable realism-audit SQL checks against generated data."""
+"""Run the legacy realism-audit entry point for release certification."""
 from __future__ import annotations
 
 import argparse
@@ -25,14 +25,14 @@ from app.generation import (  # noqa: E402
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run named realism-audit SQL checks against generated pickleball data."
+            "Run named release-certification SQL checks against generated pickleball data."
         )
     )
     parser.add_argument(
         "--query",
         action="append",
         dest="queries",
-        help="Named audit query to run. Repeat to run multiple named queries.",
+        help="Named certification query to run. Repeat to run multiple named queries.",
     )
     parser.add_argument(
         "--format",
@@ -43,20 +43,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--list-queries",
         action="store_true",
-        help="List available audit queries and exit.",
+        help="List available certification queries and exit.",
     )
     parser.add_argument(
         "--snapshot-dir",
         default=str(DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR),
         help=(
-            "Directory where JSON realism-audit snapshots should be saved. "
+            "Directory where JSON release-certification snapshots should be saved. "
             "Defaults to data/realism_audit_snapshots."
         ),
     )
     parser.add_argument(
         "--no-save-snapshot",
         action="store_true",
-        help="Run the audit without persisting a JSON snapshot to disk.",
+        help="Run certification without persisting a JSON snapshot to disk.",
     )
     return parser.parse_args(argv)
 
@@ -90,7 +90,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
             )
             if snapshot_path is not None:
-                print(f"[realism-audit] snapshot saved to {snapshot_path}", file=sys.stderr)
+                print(
+                    f"[release-certification] snapshot saved to {snapshot_path}",
+                    file=sys.stderr,
+                )
             return
 
         for result in execution.results:
@@ -101,7 +104,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(format_table(result.rows))
             print("")
         if snapshot_path is not None:
-            print(f"[realism-audit] snapshot saved to {snapshot_path}", file=sys.stderr)
+            print(
+                f"[release-certification] snapshot saved to {snapshot_path}",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

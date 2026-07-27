@@ -1195,11 +1195,11 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert orchestration.status_code == 200
     assert "Raw Ingest &amp; Normalization" in orchestration.body.decode()
     assert "Player &amp; Match Generation" in orchestration.body.decode()
-    assert "Realism Audit" in orchestration.body.decode()
+    assert "Release Certification" in orchestration.body.decode()
     assert "Last current run:" in orchestration.body.decode()
     assert "UI run" in orchestration.body.decode()
     assert "running" in orchestration.body.decode()
-    assert "Run Realism Audit - Not Available" in orchestration.body.decode()
+    assert "Run Release Certification - Not Available" in orchestration.body.decode()
     assert "Not Available" in orchestration.body.decode()
     assert "Data Export" in orchestration.body.decode()
     assert "Data Quality Comparison" in orchestration.body.decode()
@@ -1233,15 +1233,15 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
         'data-orchestration-section="player-match-generation"'
         in orchestration.body.decode()
     )
-    assert 'data-orchestration-section="realism-audit"' in orchestration.body.decode()
+    assert 'data-orchestration-section="release-certification"' in orchestration.body.decode()
     assert 'data-orchestration-section="data-export"' in orchestration.body.decode()
     assert 'data-orchestration-section="data-quality-compare"' in orchestration.body.decode()
     assert 'id="generation-run-name"' in orchestration.body.decode()
     assert 'id="export-config-form"' in orchestration.body.decode()
     assert 'hx-post="/control/export/student-dataset/start"' in orchestration.body.decode()
-    assert 'hx-post="/control/realism-audit/run"' in orchestration.body.decode()
-    assert 'action="/control/realism-audit/download"' in orchestration.body.decode()
-    assert 'id="realism-audit-report-output-dir"' in orchestration.body.decode()
+    assert 'hx-post="/control/release-certification/run"' in orchestration.body.decode()
+    assert 'action="/control/release-certification/download"' in orchestration.body.decode()
+    assert 'id="release-certification-report-output-dir"' in orchestration.body.decode()
     assert 'name="distribution_drift_warning_pct_points"' in orchestration.body.decode()
     assert 'name="rating_large_delta_error_pct"' in orchestration.body.decode()
     assert "Assessment Thresholds" in orchestration.body.decode()
@@ -1783,7 +1783,7 @@ def test_completed_generation_run_marks_student_dataset_export_ready(session_fac
     assert "Data Export" in body
     assert "Completed UI run" in body
     assert "succeeded" in body
-    assert "Run Realism Audit - Available" in body
+    assert "Run Release Certification - Available" in body
     assert "Available" in body
     assert "Ready to export" in body
     assert "Open Export Configuration" not in body
@@ -1792,7 +1792,7 @@ def test_completed_generation_run_marks_student_dataset_export_ready(session_fac
     assert "Generate Student Dataset (coming soon)" not in body
 
 
-def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
+def test_release_certification_run_route_saves_snapshot_and_downloads_markdown(
     session_factory,
     tmp_path,
     monkeypatch,
@@ -1815,8 +1815,8 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     routes = _route_map(app)
     session = session_factory()
     try:
-        response = routes["/control/realism-audit/run"](
-            request=_request("/control/realism-audit/run", method="POST"),
+        response = routes["/control/release-certification/run"](
+            request=_request("/control/release-certification/run", method="POST"),
             report_output_dir=str(report_root),
             session=session,
             queries=ControlPanelQueries(),
@@ -1860,7 +1860,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
                 SET status = 'succeeded',
                     current_phase = 'completed',
                     percent_complete = 100.00,
-                    current_message = 'Realism audit completed successfully.',
+                    current_message = 'Release certification completed successfully.',
                     started_at = '2026-06-18 12:00:00',
                     completed_at = '2026-06-18 12:01:00'
                 WHERE job_type = 'realism_audit'
@@ -1893,7 +1893,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
                     progress_total = 1,
                     progress_unit = 'query',
                     progress_percent = 100.00,
-                    progress_message = 'Realism audit completed successfully.',
+                    progress_message = 'Release certification completed successfully.',
                     started_at = '2026-06-18 12:00:00',
                     completed_at = '2026-06-18 12:01:00',
                     last_heartbeat_at = '2026-06-18 12:01:00'
@@ -1902,7 +1902,7 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
             )
         )
         session.commit()
-        download = routes["/control/realism-audit/download"](
+        download = routes["/control/release-certification/download"](
             report_output_dir=str(report_root),
             session=session,
             queries=ControlPanelQueries(),
@@ -1913,17 +1913,17 @@ def test_realism_audit_run_route_saves_snapshot_and_downloads_markdown(
     body = response.body.decode()
     assert response.status_code == 200
     assert checkpoint_count > 0
-    assert "Realism audit queued for durable worker." in body
-    assert "Audit queued" in body
-    assert "Audit Progress" in body
-    assert "Run Realism Audit - Not Available" in body
+    assert "Release certification queued for durable worker." in body
+    assert "Certification queued" in body
+    assert "Certification Progress" in body
+    assert "Run Release Certification - Not Available" in body
     assert "Assessment Thresholds" in body
 
     report_path = Path(download.path)
     assert download.status_code == 200
     assert report_path.parent == report_root
     report_text = report_path.read_text(encoding="utf-8")
-    assert "# Realism Audit Report" in report_text
+    assert "# Release Certification Report" in report_text
     assert "player_roster_summary" in report_text
     assert "player_count" in report_text
 
@@ -1990,9 +1990,9 @@ def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Audit completed" in body
+    assert "Certification completed" in body
     assert "Clear stalled job" not in body
-    assert "Audit recoverable" not in body
+    assert "Certification recoverable" not in body
 
 
 def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
@@ -2060,8 +2060,8 @@ def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
     body = response.body.decode()
     assert response.status_code == 200
     assert "Clear stalled job" in body
-    assert "Audit recoverable" in body
-    assert "Audit completed successfully." not in body
+    assert "Certification recoverable" in body
+    assert "Release certification completed successfully." not in body
 
 
 def test_student_dataset_export_start_route_queues_background_job(session_factory):

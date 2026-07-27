@@ -1068,7 +1068,7 @@ def test_realism_audit_summary_reports_active_lease_and_last_completed_query(ses
 
     assert summary.latest_incomplete_job_is_active is True
     assert summary.display_state == "running"
-    assert summary.display_label == "Audit running"
+    assert summary.display_label == "Certification running"
     assert summary.clearable_job is None
     assert summary.lease_state is not None
     assert summary.lease_state.active_worker_id == "realism-worker-1"
@@ -1088,7 +1088,7 @@ def test_realism_audit_summary_reports_recoverable_expired_lease(session):
                 current_message, started_at, created_at, updated_at
             ) VALUES (
                 702, 'realism_audit', 'realism-audit-702', 'running',
-                'run_realism_audit', 53.33, 'Audit worker lease expired.',
+                'run_realism_audit', 53.33, 'Certification worker lease expired.',
                 '2026-06-21 11:55:00', '2026-06-21 11:55:00', '2026-06-21 11:55:00'
             )
             """
@@ -1118,7 +1118,7 @@ def test_realism_audit_summary_reports_recoverable_expired_lease(session):
 
     assert summary.latest_incomplete_job_is_active is False
     assert summary.display_state == "recoverable"
-    assert summary.display_label == "Audit recoverable"
+    assert summary.display_label == "Certification recoverable"
     assert summary.clearable_job is not None
     assert summary.lease_state is not None
     assert summary.lease_state.lease_is_active is False
@@ -1134,7 +1134,7 @@ def test_realism_audit_summary_reports_queued_pending_job(session):
                 current_message, created_at, updated_at
             ) VALUES (
                 703, 'realism_audit', 'realism-audit-703', 'pending',
-                'queued', 0.00, 'Audit queued for durable worker.',
+                'queued', 0.00, 'Release certification queued for durable worker.',
                 '2026-06-21 12:00:00', '2026-06-21 12:00:00'
             )
             """
@@ -1152,7 +1152,7 @@ def test_realism_audit_summary_reports_queued_pending_job(session):
 
     assert summary.latest_incomplete_job_is_active is True
     assert summary.display_state == "queued"
-    assert summary.display_label == "Audit queued"
+    assert summary.display_label == "Certification queued"
     assert summary.lease_state is not None
     assert summary.lease_state.recoverable_stale_job is False
 

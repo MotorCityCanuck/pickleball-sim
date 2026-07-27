@@ -1028,28 +1028,28 @@ class ControlPanelQueries:
         ):
             clearable_job = latest_incomplete_job
         display_state = "idle"
-        display_label = "No realism audit currently running."
+        display_label = "No release certification currently running."
         if latest_incomplete_job is not None and (
             latest_incomplete_job_is_active or clearable_job is not None
         ):
             if latest_incomplete_job.status == "pending":
                 display_state = "queued"
-                display_label = "Audit queued"
+                display_label = "Certification queued"
             elif lease_state is not None and lease_state.recoverable_stale_job:
                 display_state = "recoverable"
-                display_label = "Audit recoverable"
+                display_label = "Certification recoverable"
             elif latest_incomplete_job_is_active:
                 display_state = "running"
-                display_label = "Audit running"
+                display_label = "Certification running"
             else:
                 display_state = "recoverable"
-                display_label = "Audit recoverable"
+                display_label = "Certification recoverable"
         elif latest_completed_job is not None and latest_completed_job.status == "failed":
             display_state = "failed"
-            display_label = "Audit failed"
+            display_label = "Certification failed"
         elif latest_completed_job is not None and latest_completed_job.status == "succeeded":
             display_state = "completed"
-            display_label = "Audit completed"
+            display_label = "Certification completed"
         if not latest_incomplete_job_is_active and clearable_job is None:
             stage_progress = ()
         payload = latest_realism_audit_snapshot_payload(
