@@ -3990,36 +3990,40 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         pillar=SIMULATION_FIDELITY_PILLAR.key,
         description="Distribution of repeated opponent matchups across the generation run.",
         sql="""
-            WITH team_rosters AS (
-                SELECT
-                    mt.match_id,
-                    mt.team_number,
-                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
-                FROM match_teams mt
-                JOIN matches m
-                    ON m.id = mt.match_id
-                JOIN monthly_batches b
-                    ON b.id = m.batch_id
-                JOIN match_team_players mtp
-                    ON mtp.match_team_id = mt.id
-                WHERE b.generation_run_id = :generation_run_id
-                GROUP BY mt.match_id, mt.team_number
-                HAVING COUNT(*) = 2
-            ),
-            matchup_counts AS (
+            WITH matchup_counts AS (
                 SELECT
                     CASE
-                        WHEN one.roster_key < two.roster_key
-                            THEN one.roster_key || ' vs ' || two.roster_key
-                        ELSE two.roster_key || ' vs ' || one.roster_key
-                    END AS matchup_key,
+                        WHEN team_one.source_team_id <= team_two.source_team_id
+                            THEN team_one.source_team_id
+                        ELSE team_two.source_team_id
+                    END AS first_team_id,
+                    CASE
+                        WHEN team_one.source_team_id <= team_two.source_team_id
+                            THEN team_two.source_team_id
+                        ELSE team_one.source_team_id
+                    END AS second_team_id,
                     COUNT(*) AS meeting_count
-                FROM team_rosters one
-                JOIN team_rosters two
-                    ON two.match_id = one.match_id
-                    AND two.team_number = 2
-                WHERE one.team_number = 1
-                GROUP BY matchup_key
+                FROM matches m
+                JOIN monthly_batches b
+                    ON b.id = m.batch_id
+                JOIN match_teams team_one
+                    ON team_one.match_id = m.id
+                    AND team_one.team_number = 1
+                JOIN match_teams team_two
+                    ON team_two.match_id = m.id
+                    AND team_two.team_number = 2
+                WHERE b.generation_run_id = :generation_run_id
+                GROUP BY
+                    CASE
+                        WHEN team_one.source_team_id <= team_two.source_team_id
+                            THEN team_one.source_team_id
+                        ELSE team_two.source_team_id
+                    END,
+                    CASE
+                        WHEN team_one.source_team_id <= team_two.source_team_id
+                            THEN team_two.source_team_id
+                        ELSE team_one.source_team_id
+                    END
             )
             SELECT
                 meeting_count,

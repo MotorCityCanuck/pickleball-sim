@@ -28,6 +28,7 @@ class MatchTeam(Base, TimestampMixin):
     
     __table_args__ = (
         Index('idx_match_teams_match', 'match_id'),
+        Index('idx_match_teams_match_number_source', 'match_id', 'team_number', 'source_team_id'),
         CheckConstraint('team_number IN (1, 2)', name='chk_team_number'),
         CheckConstraint(
             "pairing_source IS NULL OR pairing_source IN ('competitive_team', 'ad_hoc')",

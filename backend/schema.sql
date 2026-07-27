@@ -1146,6 +1146,7 @@ CREATE INDEX idx_match_games_winner ON match_games (winning_team_number);
 CREATE INDEX idx_match_team_players_player ON match_team_players (player_id);
 CREATE INDEX idx_match_team_players_team ON match_team_players (match_team_id);
 CREATE INDEX idx_match_teams_match ON match_teams (match_id);
+CREATE INDEX idx_match_teams_match_number_source ON match_teams (match_id, team_number, source_team_id);
 CREATE INDEX idx_matches_batch ON matches (batch_id);
 CREATE INDEX idx_matches_date ON matches (match_date);
 CREATE INDEX idx_matches_region ON matches (region_id);

@@ -119,6 +119,7 @@ EXPECTED_PUBLIC_INDEXES = {
     "idx_match_team_players_player",
     "idx_match_team_players_team",
     "idx_match_teams_match",
+    "idx_match_teams_match_number_source",
     "idx_matches_batch",
     "idx_matches_date",
     "idx_matches_region",
