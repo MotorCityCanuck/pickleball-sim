@@ -2313,6 +2313,135 @@ def test_realism_audit_assessment_scores_structural_integrity_findings():
     assert assessment["certification_decision"] == "FAIL"
 
 
+def test_realism_audit_assessment_expands_simulation_assignment_export_and_regression_rules():
+    payload = {
+        "results": [
+            {
+                "query": "chemistry_effectiveness",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {
+                        "chemistry_band": "high",
+                        "team_match_count": 12,
+                        "avg_chemistry_score": 0.82,
+                        "avg_expected_win_probability": 0.70,
+                        "actual_win_rate": 0.25,
+                        "win_rate_minus_expected": -0.45,
+                    }
+                ],
+            },
+            {
+                "query": "candidate_depth_by_country_division",
+                "category": "assignment_readiness",
+                "pillar": "assignment_readiness",
+                "rows": [
+                    {
+                        "country_code": "US",
+                        "team_division": "mens_doubles",
+                        "candidate_team_count": 1,
+                        "candidate_player_count": 2,
+                        "avg_team_rating": 1600.0,
+                    }
+                ],
+            },
+            {
+                "query": "missing_gold_inputs",
+                "category": "export_readiness",
+                "pillar": "export_readiness",
+                "rows": [
+                    {"table_name": "players", "row_count": 1000, "missing_flag": 0},
+                    {"table_name": "matches", "row_count": 0, "missing_flag": 1},
+                ],
+            },
+            {
+                "query": "historical_run_size_regression",
+                "category": "historical_regression",
+                "pillar": "historical_regression",
+                "rows": [
+                    {
+                        "generation_run_id": 10,
+                        "generation_name": "Current",
+                        "player_count": 1000,
+                        "team_count": 500,
+                        "match_count": 3000,
+                        "player_growth_pct": 55.0,
+                        "team_growth_pct": 20.0,
+                        "match_growth_pct": 10.0,
+                    }
+                ],
+            },
+        ]
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+    by_query = {finding["query"]: finding for finding in assessment["findings"]}
+
+    assert by_query["chemistry_effectiveness"]["severity"] == "error"
+    assert by_query["candidate_depth_by_country_division"]["severity"] == "warning"
+    assert by_query["missing_gold_inputs"]["severity"] == "error"
+    assert by_query["historical_run_size_regression"]["severity"] == "error"
+    assert assessment["certification_decision"] == "FAIL"
+    assert assessment["finding_count"] == 4
+
+
+def test_realism_audit_assessment_expands_additional_phase3_query_coverage():
+    payload = {
+        "results": [
+            {
+                "query": "fatigue_effectiveness",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {"workload_band": "0", "avg_score_share_delta": -0.01, "met_or_exceeded_expected_rate": 0.51},
+                    {"workload_band": "2_plus", "avg_score_share_delta": 0.08, "met_or_exceeded_expected_rate": 0.62},
+                ],
+            },
+            {
+                "query": "elite_team_depth",
+                "category": "assignment_readiness",
+                "pillar": "assignment_readiness",
+                "rows": [
+                    {"country_code": "US", "team_division": "mens_doubles", "candidate_team_count": 3, "elite_team_count": 0, "elite_team_pct": 0.0},
+                ],
+            },
+            {
+                "query": "student_candidate_availability",
+                "category": "export_readiness",
+                "pillar": "export_readiness",
+                "rows": [
+                    {"country_code": "US", "team_division": "mens_doubles", "candidate_team_count": 3, "fully_rated_team_count": 2, "fully_rated_team_pct": 66.67},
+                ],
+            },
+            {
+                "query": "historical_release_file_coverage",
+                "category": "historical_regression",
+                "pillar": "historical_regression",
+                "rows": [
+                    {
+                        "generation_run_id": 1,
+                        "release_name": "baseline",
+                        "release_type": "initial_snapshot",
+                        "data_quality_level": "none",
+                        "status": "failed",
+                        "file_count": 0,
+                        "total_row_count": 0,
+                    }
+                ],
+            },
+        ]
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+    by_query = {finding["query"]: finding for finding in assessment["findings"]}
+
+    assert by_query["fatigue_effectiveness"]["severity"] == "warning"
+    assert by_query["elite_team_depth"]["severity"] == "warning"
+    assert by_query["student_candidate_availability"]["severity"] == "warning"
+    assert by_query["historical_release_file_coverage"]["severity"] == "error"
+    assert assessment["certification_decision"] == "FAIL"
+
+
 def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pillars():
     pillar_map = {
         query.name: query.pillar

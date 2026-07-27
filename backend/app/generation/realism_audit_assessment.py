@@ -132,6 +132,30 @@ def _assess_query_result(
         team_assessment,
     )
 
+    simulation_assessment = _assess_simulation_fidelity(query_name, rows)
+    severity, summary, evidence, recommendation = _pick_assessment(
+        (severity, summary, evidence, recommendation),
+        simulation_assessment,
+    )
+
+    assignment_assessment = _assess_assignment_readiness(query_name, rows)
+    severity, summary, evidence, recommendation = _pick_assessment(
+        (severity, summary, evidence, recommendation),
+        assignment_assessment,
+    )
+
+    export_assessment = _assess_export_readiness(query_name, rows)
+    severity, summary, evidence, recommendation = _pick_assessment(
+        (severity, summary, evidence, recommendation),
+        export_assessment,
+    )
+
+    historical_assessment = _assess_historical_regression(query_name, rows)
+    severity, summary, evidence, recommendation = _pick_assessment(
+        (severity, summary, evidence, recommendation),
+        historical_assessment,
+    )
+
     rating_assessment = _assess_rating_movement(query_name, rows, thresholds)
     severity, summary, evidence, recommendation = _pick_assessment(
         (severity, summary, evidence, recommendation),
@@ -396,6 +420,318 @@ def _assess_team_readiness(
     return None
 
 
+def _assess_simulation_fidelity(
+    query_name: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, str, str] | None:
+    if query_name == "chemistry_effectiveness":
+        max_gap = max(
+            (abs(_to_float(row.get("win_rate_minus_expected")) or 0.0) for row in rows),
+            default=0.0,
+        )
+        severity = _severity_for_thresholds(max_gap, warning=0.25, error=0.40)
+        if severity != "info":
+            return (
+                severity,
+                "Observed chemistry effects diverge materially from expected match outcomes.",
+                f"Maximum absolute win-rate gap versus expectation is {max_gap:.3f}.",
+                "Review chemistry weighting and whether partnership effects are over- or under-expressed.",
+            )
+        return (
+            "info",
+            "Observed chemistry effects are directionally consistent with expected outcomes.",
+            f"Maximum absolute win-rate gap versus expectation is {max_gap:.3f}.",
+            "No action required.",
+        )
+    if query_name == "fatigue_effectiveness":
+        load_map = {str(row.get("workload_band")): _to_float(row.get("avg_score_share_delta")) for row in rows}
+        low = load_map.get("0")
+        high = load_map.get("2_plus")
+        if low is not None and high is not None:
+            reverse_gap = high - low
+            severity = _severity_for_thresholds(reverse_gap, warning=0.05, error=0.10)
+            if severity != "info":
+                return (
+                    severity,
+                    "Higher recent match load is not reducing performance as expected by the fatigue model.",
+                    f"High-load score-share delta exceeds zero-load delta by {reverse_gap:.4f}.",
+                    "Review fatigue penalties and recent-load lookback behavior.",
+                )
+        return None
+    if query_name == "confidence_stability":
+        delta_024 = _row_value_for_key(rows, "confidence_band", "0_24", "avg_abs_rating_delta")
+        delta_75 = _row_value_for_key(rows, "confidence_band", "75_plus", "avg_abs_rating_delta")
+        if delta_024 is not None and delta_75 is not None:
+            reverse_gap = delta_75 - delta_024
+            severity = _severity_for_thresholds(reverse_gap, warning=5.0, error=15.0)
+            if severity != "info":
+                return (
+                    severity,
+                    "High-confidence players are not showing more stable rating movement than low-confidence players.",
+                    f"High-confidence average absolute rating delta exceeds low-confidence delta by {reverse_gap:.3f}.",
+                    "Review confidence stabilization and rating-update damping behavior.",
+                )
+        return None
+    if query_name == "volatility_decay":
+        novice = _row_value_for_key(rows, "experience_band", "0_4", "avg_volatility_score")
+        veteran = _row_value_for_key(rows, "experience_band", "10_plus", "avg_volatility_score")
+        if novice is not None and veteran is not None:
+            reverse_gap = veteran - novice
+            severity = _severity_for_thresholds(reverse_gap, warning=0.01, error=0.05)
+            if severity != "info":
+                return (
+                    severity,
+                    "Observed volatility is not decaying with player experience.",
+                    f"Veteran volatility exceeds novice volatility by {reverse_gap:.4f}.",
+                    "Review volatility decay and match-count experience handling.",
+                )
+        return None
+    if query_name == "rating_predictiveness":
+        high_bucket = _row_value_for_key(rows, "prediction_bucket", "80_plus", "favorite_win_rate")
+        if high_bucket is not None:
+            if high_bucket < 0.55:
+                return (
+                    "error",
+                    "High-confidence rating predictions are performing poorly.",
+                    f"Favorite win rate in the 80+ bucket is {high_bucket:.3f}.",
+                    "Review prediction calibration and the rating-to-match simulation bridge.",
+                )
+            if high_bucket < 0.65:
+                return (
+                    "warning",
+                    "High-confidence rating predictions are weaker than expected.",
+                    f"Favorite win rate in the 80+ bucket is {high_bucket:.3f}.",
+                    "Review rating predictiveness and probability calibration.",
+                )
+        return None
+    if query_name == "regional_strength_balance":
+        avg_ratings = [
+            _to_float(row.get("avg_rating"))
+            for row in rows
+            if _to_float(row.get("avg_rating")) is not None
+        ]
+        if len(avg_ratings) >= 2:
+            spread = max(avg_ratings) - min(avg_ratings)
+            severity = _severity_for_thresholds(spread, warning=400.0, error=700.0)
+            if severity != "info":
+                return (
+                    severity,
+                    "Regional strength spread is wider than expected.",
+                    f"Average rating spread across rated regions is {spread:.1f}.",
+                    "Review regional multipliers and geographic strength calibration.",
+                )
+        return None
+    if query_name == "team_dissolution_rate":
+        max_event_pct = max(
+            (_to_float(row.get("event_pct_of_formed_teams")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        severity = _severity_for_thresholds(max_event_pct, warning=50.0, error=75.0)
+        if severity != "info":
+            return (
+                severity,
+                "Team lifecycle churn is unusually high relative to formed teams.",
+                f"Maximum lifecycle event rate is {max_event_pct:.2f}% of formed teams.",
+                "Review team persistence, dormancy, and retirement logic.",
+            )
+        return None
+    if query_name == "repeat_partner_frequency":
+        one_match_pct = _row_value_for_key(rows, "repeat_match_count", 1, "partnership_pct")
+        has_repeat_partnerships = any((_to_float(row.get("repeat_match_count")) or 0) > 1 for row in rows)
+        if one_match_pct is not None and one_match_pct >= 80.0 and not has_repeat_partnerships:
+            return (
+                "warning",
+                "Partnership continuity is low across the generated match set.",
+                f"{one_match_pct:.2f}% of partnerships appear only once and no repeat partnerships were observed.",
+                "Review persistence, partner selection, and candidate reuse behavior.",
+            )
+        return None
+    if query_name == "repeat_opponent_rate":
+        repeated_pct = sum(
+            _to_float(row.get("matchup_pair_pct")) or 0.0
+            for row in rows
+            if (_to_float(row.get("meeting_count")) or 0.0) >= 3
+        )
+        severity = _severity_for_thresholds(repeated_pct, warning=20.0, error=40.0)
+        if severity != "info":
+            return (
+                severity,
+                "Repeated opponent matchups are too concentrated.",
+                f"{repeated_pct:.2f}% of matchup pairs meet three or more times.",
+                "Review opponent selection and match-pairing variety.",
+            )
+        return None
+    return None
+
+
+def _assess_assignment_readiness(
+    query_name: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, str, str] | None:
+    if query_name == "candidate_depth_by_country_division":
+        min_depth = min(
+            (_to_float(row.get("candidate_team_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        if min_depth < 1:
+            return (
+                "error",
+                "At least one country/division candidate pool has no eligible teams.",
+                f"Minimum candidate-team depth is {min_depth:.0f}.",
+                "Review team generation and candidate eligibility before assignment workflows use this release.",
+            )
+        if min_depth < 2:
+            return (
+                "warning",
+                "At least one country/division candidate pool has shallow team depth.",
+                f"Minimum candidate-team depth is {min_depth:.0f}.",
+                "Review candidate-pool depth and whether alternates are sufficient.",
+            )
+        return None
+    if query_name == "elite_player_depth":
+        min_count = min(
+            (_to_float(row.get("elite_player_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        if min_count < 1:
+            return (
+                "warning",
+                "One or more country/division pools have no elite players.",
+                f"Minimum elite-player depth is {min_count:.0f}.",
+                "Review upper-tail player strength and roster depth for assignment use cases.",
+            )
+        return None
+    if query_name == "elite_team_depth":
+        min_count = min(
+            (_to_float(row.get("elite_team_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        if min_count < 1:
+            return (
+                "warning",
+                "One or more country/division pools have no elite teams.",
+                f"Minimum elite-team depth is {min_count:.0f}.",
+                "Review team-strength concentration and partnership formation quality.",
+            )
+        return None
+    if query_name == "alternate_candidate_depth":
+        min_count = min(
+            (_to_float(row.get("alternate_team_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        if min_count < 1:
+            return (
+                "warning",
+                "One or more country/division pools lack alternate teams beyond the top slot.",
+                f"Minimum alternate-team depth is {min_count:.0f}.",
+                "Review candidate depth and fallback coverage for assignment workflows.",
+            )
+        return None
+    return None
+
+
+def _assess_export_readiness(
+    query_name: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, str, str] | None:
+    if query_name == "missing_gold_inputs":
+        missing = [str(row.get("table_name")) for row in rows if _to_float(row.get("missing_flag")) == 1.0]
+        if missing:
+            return (
+                "error",
+                "Required Gold or export input tables are missing data.",
+                f"Missing coverage detected for: {', '.join(sorted(missing))}.",
+                "Complete source-data generation before treating this release as export-ready.",
+            )
+        return None
+    if query_name == "student_candidate_availability":
+        min_pct = min(
+            (_to_float(row.get("fully_rated_team_pct")) or 0.0 for row in rows),
+            default=100.0,
+        )
+        min_count = min(
+            (_to_float(row.get("fully_rated_team_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        if min_count < 1:
+            return (
+                "error",
+                "At least one country/division has no fully rated candidate teams for student release workflows.",
+                f"Minimum fully rated team count is {min_count:.0f}.",
+                "Review rating coverage and candidate roster completeness before export.",
+            )
+        if min_pct < 100.0:
+            return (
+                "warning",
+                "Some candidate pools are only partially rated for student release workflows.",
+                f"Minimum fully rated candidate-team coverage is {min_pct:.2f}%.",
+                "Review rating completeness for active candidate rosters.",
+            )
+        return None
+    if query_name == "division_balance":
+        max_share = max(
+            (_to_float(row.get("team_pct_within_country")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        severity = _severity_for_thresholds(max_share, warning=85.0, error=95.0)
+        if severity != "info":
+            return (
+                severity,
+                "Active-team distribution is heavily concentrated in a single division within at least one country.",
+                f"Maximum within-country division share is {max_share:.2f}%.",
+                "Review division balance before releasing the dataset to students.",
+            )
+        return None
+    return None
+
+
+def _assess_historical_regression(
+    query_name: str,
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, str, str] | None:
+    if query_name == "historical_run_size_regression":
+        growth_values: list[float] = []
+        for row in rows:
+            for key in ("player_growth_pct", "team_growth_pct", "match_growth_pct"):
+                value = _to_float(row.get(key))
+                if value is not None:
+                    growth_values.append(abs(value))
+        max_growth = max(growth_values, default=0.0)
+        severity = _severity_for_thresholds(max_growth, warning=25.0, error=50.0)
+        if severity != "info":
+            return (
+                severity,
+                "Current run size differs materially from prior runs.",
+                f"Maximum absolute growth across player, team, and match counts is {max_growth:.2f}%.",
+                "Review whether current release scale is intentionally different from the established baseline.",
+            )
+        return None
+    if query_name == "historical_release_file_coverage":
+        if any(str(row.get("status") or "") != "succeeded" for row in rows):
+            return (
+                "error",
+                "Historical release file coverage includes incomplete releases.",
+                "At least one historical release is not marked succeeded.",
+                "Review release history and baseline selection before using regression comparisons.",
+            )
+        if any((_to_float(row.get("file_count")) or 0.0) <= 0 for row in rows):
+            return (
+                "error",
+                "Historical release file coverage includes releases with no exported files.",
+                "At least one historical release has zero exported files.",
+                "Repair or exclude incomplete historical releases before regression comparisons.",
+            )
+        if any((_to_float(row.get("total_row_count")) or 0.0) <= 0 for row in rows):
+            return (
+                "error",
+                "Historical release file coverage includes releases with zero exported rows.",
+                "At least one historical release has zero total exported rows.",
+                "Repair or exclude incomplete historical releases before regression comparisons.",
+            )
+        return None
+    return None
+
+
 def _assess_rating_movement(
     query_name: str,
     rows: Sequence[Mapping[str, Any]],
@@ -523,6 +859,18 @@ def _alignment_reference_pct(rows: Sequence[Mapping[str, Any]]) -> float | None:
     if total > 0:
         return reference * 100.0 / total
     return reference if reference > 0 else None
+
+
+def _row_value_for_key(
+    rows: Sequence[Mapping[str, Any]],
+    key_field: str,
+    key_value: object,
+    value_field: str,
+) -> float | None:
+    for row in rows:
+        if row.get(key_field) == key_value:
+            return _to_float(row.get(value_field))
+    return None
 
 
 def _severity_for_thresholds(value: float, *, warning: float, error: float) -> str:
