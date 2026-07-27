@@ -598,6 +598,117 @@
                             </div>
                         {% endfor %}
                     </div>
+                    {% if snapshot.realism_audit_summary.pillar_drilldowns %}
+                        <div style="display:grid; gap:12px;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Pillar Drill-Down</div>
+                            <div style="display:grid; gap:12px;">
+                                {% for pillar in snapshot.realism_audit_summary.pillar_drilldowns %}
+                                    <div style="border:1px solid #d6d9df; border-radius:8px; padding:12px; display:grid; gap:8px;">
+                                        <div style="display:flex; gap:8px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
+                                            <div>
+                                                <div style="font-weight:bold;">{{ pillar.pillar }}</div>
+                                                {% if pillar.description %}
+                                                    <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ pillar.description }}</div>
+                                                {% endif %}
+                                            </div>
+                                            <div style="color:#5a6477; font-size:12px;">{{ pillar.decision }} | {% if pillar.score is not none %}{{ pillar.score }}{% else %}n/a{% endif %}</div>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">
+                                            <div class="metric-card">
+                                                <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Queries</div>
+                                                <div style="margin-top:6px;">{{ pillar.query_count }}</div>
+                                            </div>
+                                            <div class="metric-card">
+                                                <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Findings</div>
+                                                <div style="margin-top:6px;">{{ pillar.finding_count }}</div>
+                                            </div>
+                                            <div class="metric-card">
+                                                <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Implementation</div>
+                                                <div style="margin-top:6px;">{{ pillar.implementation_status }}</div>
+                                            </div>
+                                            {% for severity, count in pillar.severity_counts %}
+                                                <div class="metric-card">
+                                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ severity }}</div>
+                                                    <div style="margin-top:6px;">{{ count }}</div>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                        {% if pillar.findings %}
+                                            <div style="display:grid; gap:8px;">
+                                                {% for finding in pillar.findings %}
+                                                    <div style="border:1px solid #d6d9df; border-radius:8px; padding:10px 12px;">
+                                                        <div style="display:flex; gap:8px; justify-content:space-between; align-items:flex-start;">
+                                                            <div style="font-weight:bold;">{{ finding.title }}</div>
+                                                            <div style="font-size:11px; color:#5a6477;">{{ finding.severity }}</div>
+                                                        </div>
+                                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.category }}</div>
+                                                        <div style="margin-top:6px; color:#5a6477;">{{ finding.summary }}</div>
+                                                        {% if finding.evidence %}
+                                                            <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.evidence }}</div>
+                                                        {% endif %}
+                                                    </div>
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            <div style="color:#5a6477; font-size:12px;">No findings for this pillar in the latest snapshot.</div>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endif %}
+                    {% if snapshot.realism_audit_summary.regression_summary %}
+                        <div style="display:grid; gap:8px;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Regression Comparison</div>
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Previous Snapshot</div>
+                                    <div style="margin-top:6px;">{{ snapshot.realism_audit_summary.regression_summary.previous_generation_run_id or "n/a" }} / {{ snapshot.realism_audit_summary.regression_summary.previous_batch_id or "n/a" }}</div>
+                                    {% if snapshot.realism_audit_summary.regression_summary.previous_executed_at %}
+                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ snapshot.realism_audit_summary.regression_summary.previous_executed_at.replace("T", " ") }}</div>
+                                    {% endif %}
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Previous Decision</div>
+                                    <div style="margin-top:6px;">{{ snapshot.realism_audit_summary.regression_summary.previous_certification_decision or "n/a" }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Score Delta</div>
+                                    <div style="margin-top:6px;">{% if snapshot.realism_audit_summary.regression_summary.score_delta is not none %}{{ snapshot.realism_audit_summary.regression_summary.score_delta }}{% else %}n/a{% endif %}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Finding Delta</div>
+                                    <div style="margin-top:6px;">{% if snapshot.realism_audit_summary.regression_summary.finding_count_delta is not none %}{{ snapshot.realism_audit_summary.regression_summary.finding_count_delta }}{% else %}n/a{% endif %}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Query Delta</div>
+                                    <div style="margin-top:6px;">{% if snapshot.realism_audit_summary.regression_summary.query_count_delta is not none %}{{ snapshot.realism_audit_summary.regression_summary.query_count_delta }}{% else %}n/a{% endif %}</div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                    {% if snapshot.realism_audit_summary.certification_history %}
+                        <div style="display:grid; gap:8px;">
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Certification History</div>
+                            <div style="display:grid; gap:8px;">
+                                {% for entry in snapshot.realism_audit_summary.certification_history %}
+                                    <div style="border:1px solid #d6d9df; border-radius:8px; padding:10px 12px; display:grid; gap:4px;">
+                                        <div style="display:flex; gap:8px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
+                                            <div style="font-weight:bold;">Run {{ entry.generation_run_id or "n/a" }} | Batch {{ entry.batch_id or "n/a" }}</div>
+                                            <div style="font-size:12px; color:#5a6477;">{{ entry.certification_decision or "not assessed" }} | {% if entry.certification_score is not none %}{{ entry.certification_score }}{% else %}n/a{% endif %}</div>
+                                        </div>
+                                        {% if entry.executed_at %}
+                                            <div style="color:#5a6477; font-size:12px;">{{ entry.executed_at.replace("T", " ") }}</div>
+                                        {% endif %}
+                                        <div style="color:#5a6477; font-size:12px;">{{ entry.query_count }} queries | {{ entry.finding_count }} findings</div>
+                                        {% if entry.snapshot_path %}
+                                            <div style="color:#5a6477; font-size:12px;">{{ entry.snapshot_path }}</div>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endif %}
                 </section>
             {% endif %}
 

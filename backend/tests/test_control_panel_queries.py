@@ -15,6 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core import ConfigurationLifecycleService  # noqa: E402
 from app.web import ControlPanelQueries  # noqa: E402
+import app.web.control_panel_queries as queries_module  # noqa: E402
 
 
 @pytest.fixture()
@@ -1155,6 +1156,189 @@ def test_realism_audit_summary_reports_queued_pending_job(session):
     assert summary.display_label == "Certification queued"
     assert summary.lease_state is not None
     assert summary.lease_state.recoverable_stale_job is False
+
+
+def test_realism_audit_summary_includes_drilldown_regression_and_history(
+    session,
+    tmp_path,
+    monkeypatch,
+):
+    snapshot_root = tmp_path / "realism_audit_snapshots"
+    target_dir = snapshot_root / "generation_run_000002"
+    target_dir.mkdir(parents=True)
+
+    previous_path = target_dir / "run_000002_batch_000022_2026-02-01_previous.json"
+    previous_path.write_text(
+        json.dumps(
+            {
+                "executed_at": "2026-06-17T12:00:00+00:00",
+                "generation_run_id": 2,
+                "batch_id": 22,
+                "batch_month": "2026-02-01",
+                "query_count": 2,
+                "results": [
+                    {
+                        "query": "weekend_match_share",
+                        "category": "matches",
+                        "pillar": "operational_realism",
+                        "rows": [{"weekend_match_share": 0.61}],
+                    },
+                    {
+                        "query": "historical_run_size_regression",
+                        "category": "historical",
+                        "pillar": "historical_regression",
+                        "rows": [{"run_size_delta_pct": 12.0}],
+                    },
+                ],
+                "assessment": {
+                    "overall_status": "review_recommended",
+                    "finding_count": 2,
+                    "severity_counts": {"info": 0, "warning": 2, "error": 0, "blocker": 0},
+                    "certification_score": 90.0,
+                    "certification_decision": "PASS_WITH_WARNINGS",
+                    "findings": [
+                        {
+                            "query": "weekend_match_share",
+                            "pillar": "operational_realism",
+                            "category": "matches",
+                            "severity": "warning",
+                            "title": "Weekend Match Share",
+                            "summary": "Weekend concentration drifted high.",
+                            "evidence": "Observed share was 0.61.",
+                        },
+                        {
+                            "query": "historical_run_size_regression",
+                            "pillar": "historical_regression",
+                            "category": "historical",
+                            "severity": "warning",
+                            "title": "Historical Run Size Regression",
+                            "summary": "Current release differs from the previous scale target.",
+                            "evidence": "Run size delta was 12.0%.",
+                        },
+                    ],
+                    "pillar_assessments": [
+                        {
+                            "pillar": "operational_realism",
+                            "label": "Operational Realism",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 1,
+                            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                            "score": 90.0,
+                            "decision": "PASS_WITH_WARNINGS",
+                        },
+                        {
+                            "pillar": "historical_regression",
+                            "label": "Historical Regression",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 1,
+                            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                            "score": 90.0,
+                            "decision": "PASS_WITH_WARNINGS",
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    latest_path = target_dir / "run_000002_batch_000022_2026-02-01_latest.json"
+    latest_path.write_text(
+        json.dumps(
+            {
+                "executed_at": "2026-06-18T12:00:00+00:00",
+                "generation_run_id": 2,
+                "batch_id": 22,
+                "batch_month": "2026-02-01",
+                "query_count": 2,
+                "results": [
+                    {
+                        "query": "weekend_match_share",
+                        "category": "matches",
+                        "pillar": "operational_realism",
+                        "rows": [{"weekend_match_share": 0.58}],
+                    },
+                    {
+                        "query": "historical_run_size_regression",
+                        "category": "historical",
+                        "pillar": "historical_regression",
+                        "rows": [{"run_size_delta_pct": 4.0}],
+                    },
+                ],
+                "assessment": {
+                    "overall_status": "review_recommended",
+                    "finding_count": 1,
+                    "severity_counts": {"info": 1, "warning": 1, "error": 0, "blocker": 0},
+                    "certification_score": 95.0,
+                    "certification_decision": "PASS_WITH_WARNINGS",
+                    "findings": [
+                        {
+                            "query": "weekend_match_share",
+                            "pillar": "operational_realism",
+                            "category": "matches",
+                            "severity": "warning",
+                            "title": "Weekend Match Share",
+                            "summary": "Weekend concentration remained above target.",
+                            "evidence": "Observed share was 0.58.",
+                        }
+                    ],
+                    "pillar_assessments": [
+                        {
+                            "pillar": "operational_realism",
+                            "label": "Operational Realism",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 1,
+                            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                            "score": 90.0,
+                            "decision": "PASS_WITH_WARNINGS",
+                        },
+                        {
+                            "pillar": "historical_regression",
+                            "label": "Historical Regression",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 0,
+                            "severity_counts": {"info": 1, "warning": 0, "error": 0, "blocker": 0},
+                            "score": 100.0,
+                            "decision": "PASS",
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        queries_module,
+        "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
+        snapshot_root,
+    )
+
+    summary = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 6, 21, 12, 1, 0)
+    ).get_realism_audit_summary(
+        session,
+        generation_run_id=2,
+        batch_id=22,
+    )
+
+    assert summary.latest_snapshot is not None
+    assert summary.latest_snapshot.certification_score == 95.0
+    assert len(summary.pillar_drilldowns) == 2
+    assert summary.pillar_drilldowns[0].pillar in {
+        "Operational Realism",
+        "Historical Regression",
+    }
+    assert summary.regression_summary is not None
+    assert summary.regression_summary.score_delta == 5.0
+    assert summary.regression_summary.finding_count_delta == -1
+    assert len(summary.certification_history) == 2
+    assert summary.certification_history[0].executed_at == "2026-06-18T12:00:00+00:00"
+    assert summary.certification_history[1].executed_at == "2026-06-17T12:00:00+00:00"
 
 
 def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(session):

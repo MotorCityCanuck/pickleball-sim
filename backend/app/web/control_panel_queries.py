@@ -325,6 +325,21 @@ class RealismAuditFindingSummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditPillarDrilldownSummary:
+    """UI-ready pillar drill-down for the latest saved certification snapshot."""
+
+    pillar: str
+    description: str
+    implementation_status: str
+    decision: str
+    score: float | None
+    query_count: int
+    finding_count: int
+    severity_counts: tuple[tuple[str, int], ...]
+    findings: tuple[RealismAuditFindingSummary, ...]
+
+
+@dataclass(frozen=True)
 class RealismAuditSnapshotSummary:
     """UI-ready summary of the latest saved realism-audit snapshot."""
 
@@ -347,6 +362,34 @@ class RealismAuditSnapshotSummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditHistoryEntrySummary:
+    """UI-ready one-line summary of a saved certification snapshot."""
+
+    executed_at: str | None
+    generation_run_id: int | None
+    batch_id: int | None
+    certification_decision: str | None
+    certification_score: float | None
+    finding_count: int
+    query_count: int
+    snapshot_path: str
+
+
+@dataclass(frozen=True)
+class RealismAuditRegressionSummary:
+    """UI-ready latest-vs-previous certification comparison."""
+
+    previous_executed_at: str | None
+    previous_generation_run_id: int | None
+    previous_batch_id: int | None
+    previous_certification_decision: str | None
+    previous_certification_score: float | None
+    score_delta: float | None
+    finding_count_delta: int | None
+    query_count_delta: int | None
+
+
+@dataclass(frozen=True)
 class RealismAuditLeaseSummary:
     """UI-ready durable lease and checkpoint state for a realism audit job."""
 
@@ -363,6 +406,9 @@ class RealismAuditSummary:
     """UI-ready realism-audit state."""
 
     latest_snapshot: RealismAuditSnapshotSummary | None
+    pillar_drilldowns: tuple[RealismAuditPillarDrilldownSummary, ...]
+    regression_summary: RealismAuditRegressionSummary | None
+    certification_history: tuple[RealismAuditHistoryEntrySummary, ...]
     latest_completed_job: JobSummary | None
     latest_incomplete_job: JobSummary | None
     latest_incomplete_job_is_active: bool
@@ -1058,72 +1104,24 @@ class ControlPanelQueries:
             display_label = "Certification completed"
         if not latest_incomplete_job_is_active and clearable_job is None:
             stage_progress = ()
-        payload = latest_realism_audit_snapshot_payload(
+        snapshot_payloads = realism_audit_snapshot_payloads(
             generation_run_id=generation_run_id,
             batch_id=batch_id,
         )
+        payload = snapshot_payloads[0] if snapshot_payloads else None
         snapshot_summary = None
         if payload is not None:
-            results = payload.get("results") or []
-            pillar_counts: dict[str, int] = {}
-            category_counts: dict[str, int] = {}
-            total_row_count = 0
-            for result in results:
-                if not isinstance(result, dict):
-                    continue
-                pillar_key = str(result.get("pillar") or "operational_realism")
-                pillar_counts[pillar_key] = pillar_counts.get(pillar_key, 0) + 1
-                category = str(result.get("category") or "general")
-                category_counts[category] = category_counts.get(category, 0) + 1
-                rows = result.get("rows") or []
-                if isinstance(rows, list):
-                    total_row_count += len(rows)
-            snapshot_summary = RealismAuditSnapshotSummary(
-                snapshot_path=str(payload.get("snapshot_path") or ""),
-                generation_run_id=_coerce_int(payload.get("generation_run_id")),
-                batch_id=_coerce_int(payload.get("batch_id")),
-                batch_month=(
-                    str(payload.get("batch_month"))
-                    if payload.get("batch_month") is not None
-                    else None
-                ),
-                executed_at=(
-                    str(payload.get("executed_at"))
-                    if payload.get("executed_at") is not None
-                    else None
-                ),
-                query_count=_coerce_int(
-                    payload.get("query_count"),
-                    default=len(results),
-                ) or 0,
-                total_row_count=total_row_count,
-                pillar_counts=tuple(
-                    sorted(
-                        (
-                            _display_release_certification_pillar(pillar_key),
-                            count,
-                        )
-                        for pillar_key, count in pillar_counts.items()
-                    )
-                ),
-                category_counts=tuple(sorted(category_counts.items())),
-                certification_score=_coerce_float(
-                    _coerce_mapping(payload.get("assessment")).get("certification_score")
-                ),
-                certification_decision=(
-                    str(_coerce_mapping(payload.get("assessment")).get("certification_decision"))
-                    if _coerce_mapping(payload.get("assessment")).get("certification_decision")
-                    is not None
-                    else None
-                ),
-                pillar_assessments=_realism_assessment_pillar_scores(payload),
-                overall_status=_realism_assessment_status(payload),
-                finding_count=_realism_assessment_finding_count(payload),
-                severity_counts=_realism_assessment_severity_counts(payload),
-                top_findings=_realism_assessment_top_findings(payload),
-            )
+            snapshot_summary = _realism_audit_snapshot_summary(payload)
         return RealismAuditSummary(
             latest_snapshot=snapshot_summary,
+            pillar_drilldowns=(
+                _realism_assessment_pillar_drilldowns(payload) if payload is not None else ()
+            ),
+            regression_summary=_realism_audit_regression_summary(
+                snapshot_payloads[0] if len(snapshot_payloads) > 0 else None,
+                snapshot_payloads[1] if len(snapshot_payloads) > 1 else None,
+            ),
+            certification_history=_realism_audit_history_entries(snapshot_payloads),
             latest_completed_job=latest_completed_job,
             latest_incomplete_job=latest_incomplete_job,
             latest_incomplete_job_is_active=latest_incomplete_job_is_active,
@@ -2070,6 +2068,23 @@ def latest_realism_audit_snapshot_payload(
     snapshot_dir: str | Path | None = None,
 ) -> dict[str, object] | None:
     """Return the latest saved realism-audit snapshot for the current dataset."""
+    payloads = realism_audit_snapshot_payloads(
+        generation_run_id=generation_run_id,
+        batch_id=batch_id,
+        snapshot_dir=snapshot_dir,
+        limit=1,
+    )
+    return payloads[0] if payloads else None
+
+
+def realism_audit_snapshot_payloads(
+    *,
+    generation_run_id: int | None,
+    batch_id: int | None,
+    snapshot_dir: str | Path | None = None,
+    limit: int | None = None,
+) -> tuple[dict[str, object], ...]:
+    """Return saved realism-audit snapshots sorted newest-first."""
     base_dir = Path(snapshot_dir or DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR)
     if generation_run_id is not None:
         candidates = list(
@@ -2081,11 +2096,14 @@ def latest_realism_audit_snapshot_payload(
         _backend_realism_audit_snapshot_candidates(base_dir, generation_run_id)
     )
     if not candidates:
-        return None
+        return ()
 
-    latest_payload: dict[str, object] | None = None
-    latest_sort_key: tuple[str, float] | None = None
-    for path in candidates:
+    normalized_candidates: dict[Path, Path] = {}
+    for candidate in candidates:
+        normalized_candidates[candidate.resolve()] = candidate
+
+    serialized: list[tuple[tuple[str, float], dict[str, object]]] = []
+    for path in normalized_candidates.values():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -2101,14 +2119,84 @@ def latest_realism_audit_snapshot_payload(
             continue
         payload = dict(payload)
         payload["snapshot_path"] = str(payload.get("snapshot_path") or path)
-        sort_key = (
-            str(payload.get("executed_at") or ""),
-            path.stat().st_mtime,
+        serialized.append(
+            (
+                (
+                    str(payload.get("executed_at") or ""),
+                    path.stat().st_mtime,
+                ),
+                payload,
+            )
         )
-        if latest_sort_key is None or sort_key > latest_sort_key:
-            latest_payload = payload
-            latest_sort_key = sort_key
-    return latest_payload
+
+    serialized.sort(key=lambda item: item[0], reverse=True)
+    payloads = [payload for _, payload in serialized]
+    if limit is not None:
+        payloads = payloads[:limit]
+    return tuple(payloads)
+
+
+def _realism_audit_snapshot_summary(
+    payload: dict[str, object],
+) -> RealismAuditSnapshotSummary:
+    results = payload.get("results") or []
+    pillar_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    total_row_count = 0
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        pillar_key = str(result.get("pillar") or "operational_realism")
+        pillar_counts[pillar_key] = pillar_counts.get(pillar_key, 0) + 1
+        category = str(result.get("category") or "general")
+        category_counts[category] = category_counts.get(category, 0) + 1
+        rows = result.get("rows") or []
+        if isinstance(rows, list):
+            total_row_count += len(rows)
+    return RealismAuditSnapshotSummary(
+        snapshot_path=str(payload.get("snapshot_path") or ""),
+        generation_run_id=_coerce_int(payload.get("generation_run_id")),
+        batch_id=_coerce_int(payload.get("batch_id")),
+        batch_month=(
+            str(payload.get("batch_month"))
+            if payload.get("batch_month") is not None
+            else None
+        ),
+        executed_at=(
+            str(payload.get("executed_at"))
+            if payload.get("executed_at") is not None
+            else None
+        ),
+        query_count=_coerce_int(
+            payload.get("query_count"),
+            default=len(results),
+        ) or 0,
+        total_row_count=total_row_count,
+        pillar_counts=tuple(
+            sorted(
+                (
+                    _display_release_certification_pillar(pillar_key),
+                    count,
+                )
+                for pillar_key, count in pillar_counts.items()
+            )
+        ),
+        category_counts=tuple(sorted(category_counts.items())),
+        certification_score=_coerce_float(
+            _coerce_mapping(payload.get("assessment")).get("certification_score")
+        ),
+        certification_decision=(
+            str(_coerce_mapping(payload.get("assessment")).get("certification_decision"))
+            if _coerce_mapping(payload.get("assessment")).get("certification_decision")
+            is not None
+            else None
+        ),
+        pillar_assessments=_realism_assessment_pillar_scores(payload),
+        overall_status=_realism_assessment_status(payload),
+        finding_count=_realism_assessment_finding_count(payload),
+        severity_counts=_realism_assessment_severity_counts(payload),
+        top_findings=_realism_assessment_top_findings(payload),
+    )
 
 
 def _realism_assessment_status(payload: dict[str, object]) -> str | None:
@@ -2170,6 +2258,12 @@ def _realism_assessment_top_findings(
     return tuple(summaries)
 
 
+def _realism_assessment_findings(
+    payload: dict[str, object],
+) -> tuple[RealismAuditFindingSummary, ...]:
+    return _realism_assessment_top_findings(payload, limit=9999)
+
+
 def _realism_assessment_pillar_scores(
     payload: dict[str, object],
 ) -> tuple[tuple[str, str, float | None, int, int], ...]:
@@ -2194,9 +2288,112 @@ def _realism_assessment_pillar_scores(
     return tuple(serialized)
 
 
+def _realism_assessment_pillar_drilldowns(
+    payload: dict[str, object],
+) -> tuple[RealismAuditPillarDrilldownSummary, ...]:
+    assessment = _coerce_mapping(payload.get("assessment"))
+    pillar_assessments = assessment.get("pillar_assessments")
+    if not isinstance(pillar_assessments, list):
+        return ()
+
+    findings_by_pillar: dict[str, list[RealismAuditFindingSummary]] = {}
+    for finding in _realism_assessment_findings(payload):
+        findings_by_pillar.setdefault(_pillar_key_for_label(finding.pillar), []).append(finding)
+
+    serialized: list[RealismAuditPillarDrilldownSummary] = []
+    for pillar_assessment in pillar_assessments:
+        mapping = _coerce_mapping(pillar_assessment)
+        if not mapping:
+            continue
+        pillar_key = str(mapping.get("pillar") or "operational_realism")
+        pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
+        severity_counts = _coerce_mapping(mapping.get("severity_counts"))
+        serialized.append(
+            RealismAuditPillarDrilldownSummary(
+                pillar=(pillar.label if pillar is not None else pillar_key),
+                description=(pillar.description if pillar is not None else ""),
+                implementation_status=str(
+                    mapping.get("implementation_status")
+                    or (pillar.implementation_status if pillar is not None else "planned")
+                ),
+                decision=str(mapping.get("decision") or "NOT_ASSESSED"),
+                score=_coerce_float(mapping.get("score")),
+                query_count=_coerce_int(mapping.get("query_count"), default=0) or 0,
+                finding_count=_coerce_int(mapping.get("finding_count"), default=0) or 0,
+                severity_counts=tuple(
+                    sorted(
+                        (
+                            str(severity),
+                            _coerce_int(count, default=0) or 0,
+                        )
+                        for severity, count in severity_counts.items()
+                    )
+                ),
+                findings=tuple(findings_by_pillar.get(pillar_key, ())),
+            )
+        )
+    return tuple(serialized)
+
+
+def _realism_audit_regression_summary(
+    latest_payload: dict[str, object] | None,
+    previous_payload: dict[str, object] | None,
+) -> RealismAuditRegressionSummary | None:
+    if latest_payload is None or previous_payload is None:
+        return None
+    latest_summary = _realism_audit_snapshot_summary(latest_payload)
+    previous_summary = _realism_audit_snapshot_summary(previous_payload)
+    latest_score = latest_summary.certification_score
+    previous_score = previous_summary.certification_score
+    return RealismAuditRegressionSummary(
+        previous_executed_at=previous_summary.executed_at,
+        previous_generation_run_id=previous_summary.generation_run_id,
+        previous_batch_id=previous_summary.batch_id,
+        previous_certification_decision=previous_summary.certification_decision,
+        previous_certification_score=previous_score,
+        score_delta=(
+            round(latest_score - previous_score, 1)
+            if latest_score is not None and previous_score is not None
+            else None
+        ),
+        finding_count_delta=latest_summary.finding_count - previous_summary.finding_count,
+        query_count_delta=latest_summary.query_count - previous_summary.query_count,
+    )
+
+
+def _realism_audit_history_entries(
+    payloads: tuple[dict[str, object], ...],
+    *,
+    limit: int = 6,
+) -> tuple[RealismAuditHistoryEntrySummary, ...]:
+    entries: list[RealismAuditHistoryEntrySummary] = []
+    for payload in payloads[:limit]:
+        snapshot = _realism_audit_snapshot_summary(payload)
+        entries.append(
+            RealismAuditHistoryEntrySummary(
+                executed_at=snapshot.executed_at,
+                generation_run_id=snapshot.generation_run_id,
+                batch_id=snapshot.batch_id,
+                certification_decision=snapshot.certification_decision,
+                certification_score=snapshot.certification_score,
+                finding_count=snapshot.finding_count,
+                query_count=snapshot.query_count,
+                snapshot_path=snapshot.snapshot_path,
+            )
+        )
+    return tuple(entries)
+
+
 def _display_release_certification_pillar(pillar_key: str) -> str:
     pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
     return pillar.label if pillar is not None else pillar_key
+
+
+def _pillar_key_for_label(label: str) -> str:
+    for pillar_key, pillar in RELEASE_CERTIFICATION_PILLAR_MAP.items():
+        if pillar.label == label:
+            return pillar_key
+    return label
 
 
 def _backend_realism_audit_snapshot_candidates(

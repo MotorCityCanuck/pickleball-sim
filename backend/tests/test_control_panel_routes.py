@@ -1928,6 +1928,143 @@ def test_release_certification_run_route_saves_snapshot_and_downloads_markdown(
     assert "player_count" in report_text
 
 
+def test_orchestration_partial_renders_phase_6_release_certification_sections(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
+    _seed_completed_generation_state(session_factory)
+    snapshot_root = tmp_path / "realism_audit_snapshots"
+    monkeypatch.setattr(
+        queries_module,
+        "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
+        snapshot_root,
+    )
+    target_dir = snapshot_root / "generation_run_000002"
+    target_dir.mkdir(parents=True)
+    target_dir.joinpath("run_000002_batch_000022_previous.json").write_text(
+        json.dumps(
+            {
+                "executed_at": "2026-06-17T12:00:00+00:00",
+                "generation_run_id": 2,
+                "batch_id": 22,
+                "batch_month": "2026-02-01",
+                "query_count": 1,
+                "results": [
+                    {
+                        "query": "historical_run_size_regression",
+                        "category": "historical",
+                        "pillar": "historical_regression",
+                        "rows": [{"run_size_delta_pct": 12.0}],
+                    }
+                ],
+                "assessment": {
+                    "overall_status": "review_recommended",
+                    "finding_count": 1,
+                    "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                    "certification_score": 90.0,
+                    "certification_decision": "PASS_WITH_WARNINGS",
+                    "findings": [
+                        {
+                            "query": "historical_run_size_regression",
+                            "pillar": "historical_regression",
+                            "category": "historical",
+                            "severity": "warning",
+                            "title": "Historical Run Size Regression",
+                            "summary": "Current release differs from the previous scale target.",
+                            "evidence": "Run size delta was 12.0%.",
+                        }
+                    ],
+                    "pillar_assessments": [
+                        {
+                            "pillar": "historical_regression",
+                            "label": "Historical Regression",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 1,
+                            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                            "score": 90.0,
+                            "decision": "PASS_WITH_WARNINGS",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_dir.joinpath("run_000002_batch_000022_latest.json").write_text(
+        json.dumps(
+            {
+                "executed_at": "2026-06-18T12:00:00+00:00",
+                "generation_run_id": 2,
+                "batch_id": 22,
+                "batch_month": "2026-02-01",
+                "query_count": 1,
+                "results": [
+                    {
+                        "query": "weekend_match_share",
+                        "category": "matches",
+                        "pillar": "operational_realism",
+                        "rows": [{"weekend_match_share": 0.58}],
+                    }
+                ],
+                "assessment": {
+                    "overall_status": "review_recommended",
+                    "finding_count": 1,
+                    "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                    "certification_score": 95.0,
+                    "certification_decision": "PASS_WITH_WARNINGS",
+                    "findings": [
+                        {
+                            "query": "weekend_match_share",
+                            "pillar": "operational_realism",
+                            "category": "matches",
+                            "severity": "warning",
+                            "title": "Weekend Match Share",
+                            "summary": "Weekend concentration remained above target.",
+                            "evidence": "Observed share was 0.58.",
+                        }
+                    ],
+                    "pillar_assessments": [
+                        {
+                            "pillar": "operational_realism",
+                            "label": "Operational Realism",
+                            "implementation_status": "implemented",
+                            "query_count": 1,
+                            "finding_count": 1,
+                            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                            "score": 90.0,
+                            "decision": "PASS_WITH_WARNINGS",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        orchestration = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = orchestration.body.decode()
+    assert orchestration.status_code == 200
+    assert "Pillar Drill-Down" in body
+    assert "Regression Comparison" in body
+    assert "Certification History" in body
+    assert "Weekend Match Share" in body
+    assert "Previous Snapshot" in body
+    assert "Score Delta" in body
+
+
 def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
     _seed_completed_generation_state(session_factory)
     app = create_app()
