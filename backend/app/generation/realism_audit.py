@@ -829,17 +829,23 @@ TEAM_AGE_DISTRIBUTION_SQL = {
             FROM teams t
             CROSS JOIN reference_date rd
             WHERE t.generation_run_id = :generation_run_id
+        ),
+        bucketed AS (
+            SELECT
+                CASE
+                    WHEN team_age_days < 30 THEN '0_29'
+                    WHEN team_age_days < 90 THEN '30_89'
+                    WHEN team_age_days < 180 THEN '90_179'
+                    ELSE '180_plus'
+                END AS team_age_band,
+                team_age_days
+            FROM aged_teams
         )
         SELECT
-            CASE
-                WHEN team_age_days < 30 THEN '0_29'
-                WHEN team_age_days < 90 THEN '30_89'
-                WHEN team_age_days < 180 THEN '90_179'
-                ELSE '180_plus'
-            END AS team_age_band,
+            team_age_band,
             COUNT(*) AS team_count,
             ROUND(AVG(team_age_days), 1) AS avg_team_age_days
-        FROM aged_teams
+        FROM bucketed
         GROUP BY team_age_band
         ORDER BY
             CASE team_age_band
@@ -864,17 +870,23 @@ TEAM_AGE_DISTRIBUTION_SQL = {
             FROM teams t
             CROSS JOIN reference_date rd
             WHERE t.generation_run_id = :generation_run_id
+        ),
+        bucketed AS (
+            SELECT
+                CASE
+                    WHEN team_age_days < 30 THEN '0_29'
+                    WHEN team_age_days < 90 THEN '30_89'
+                    WHEN team_age_days < 180 THEN '90_179'
+                    ELSE '180_plus'
+                END AS team_age_band,
+                team_age_days
+            FROM aged_teams
         )
         SELECT
-            CASE
-                WHEN team_age_days < 30 THEN '0_29'
-                WHEN team_age_days < 90 THEN '30_89'
-                WHEN team_age_days < 180 THEN '90_179'
-                ELSE '180_plus'
-            END AS team_age_band,
+            team_age_band,
             COUNT(*) AS team_count,
             ROUND(AVG(team_age_days), 1) AS avg_team_age_days
-        FROM aged_teams
+        FROM bucketed
         GROUP BY team_age_band
         ORDER BY
             CASE team_age_band

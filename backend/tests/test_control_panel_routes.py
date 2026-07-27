@@ -2128,7 +2128,7 @@ def test_realism_audit_success_hides_older_stale_clear_button(session_factory):
     body = response.body.decode()
     assert response.status_code == 200
     assert "Certification completed" in body
-    assert "Clear stalled job" not in body
+    assert "Reset stalled run" not in body
     assert "Certification recoverable" not in body
 
 
@@ -2196,9 +2196,46 @@ def test_realism_audit_newer_stale_job_shows_clear_button(session_factory):
 
     body = response.body.decode()
     assert response.status_code == 200
-    assert "Clear stalled job" in body
+    assert "Reset stalled run" in body
     assert "Certification recoverable" in body
     assert "Release certification completed successfully." not in body
+
+
+def test_realism_audit_failed_job_shows_reset_stalled_run_button(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, error_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    110, 'realism_audit', 'realism-audit-failed-new', 'failed',
+                    'team_age_distribution', 78.26, 'Running realism audit query 55 of 69: team_age_distribution.',
+                    'Release certification failed at query team_age_distribution: column team_age_band does not exist.',
+                    '2026-07-27 01:28:38', '2026-07-27 08:11:05',
+                    '2026-07-27 01:28:34', '2026-07-27 08:11:05'
+                )
+                """
+            )
+        )
+        session.commit()
+        response = routes["/control/partials/orchestration"](
+            request=_request("/control/partials/orchestration"),
+            session=session,
+            queries=ControlPanelQueries(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Reset stalled run" in body
+    assert "Release certification failed at query team_age_distribution" in body
 
 
 def test_student_dataset_export_start_route_queues_background_job(session_factory):

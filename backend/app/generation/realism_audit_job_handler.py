@@ -50,6 +50,17 @@ class RealismAuditJobHandlerResult:
     snapshot_path: Path | None
 
 
+@dataclass(frozen=True)
+class RealismAuditQueryExecutionError(RuntimeError):
+    """One realism-audit query failed after checkpoint execution had already begun."""
+
+    query_name: str
+    error_message: str
+
+    def __str__(self) -> str:
+        return self.error_message
+
+
 class RealismAuditJobHandler:
     """Execute one realism-audit job using durable query checkpoints."""
 
@@ -150,6 +161,7 @@ class RealismAuditJobHandler:
                 snapshot_path=snapshot_path,
             )
         except Exception as exc:
+            self.session.rollback()
             self._mark_job_failed(
                 job_status_id=job_status_id,
                 error_message=str(exc),
@@ -184,15 +196,21 @@ class RealismAuditJobHandler:
             result = runner.run(query_names=[query.name], params=params)[0]
         except Exception as exc:
             elapsed_ms = int((perf_counter() - start_time) * 1000)
-            mark_realism_audit_query_failed(
-                self.session,
-                checkpoint,
+            self.session.rollback()
+            failed_checkpoint = self.session.get(RealismAuditQueryRun, checkpoint.id)
+            if failed_checkpoint is not None:
+                mark_realism_audit_query_failed(
+                    self.session,
+                    failed_checkpoint,
+                    error_message=str(exc),
+                    elapsed_ms=elapsed_ms,
+                    now=self.now_factory(),
+                )
+                self.session.commit()
+            raise RealismAuditQueryExecutionError(
+                query_name=query.name,
                 error_message=str(exc),
-                elapsed_ms=elapsed_ms,
-                now=self.now_factory(),
-            )
-            self.session.flush()
-            raise
+            ) from exc
 
         elapsed_ms = int((perf_counter() - start_time) * 1000)
         mark_realism_audit_query_succeeded(
@@ -373,9 +391,9 @@ class RealismAuditJobHandler:
         )
         failed_query_name = failed_checkpoint.query_name if failed_checkpoint else None
         message = (
-            f"Realism audit failed at query {failed_query_name}: {error_message}"
+            f"Release certification failed at query {failed_query_name}: {error_message}"
             if failed_query_name
-            else f"Realism audit failed: {error_message}"
+            else f"Release certification failed: {error_message}"
         )
         if stage_row is not None:
             stage_row.status = "failed"
