@@ -21,6 +21,22 @@ DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
     "historical_baseline_error_pct": 35.0,
     "historical_trend_warning_pct": 15.0,
     "historical_trend_error_pct": 25.0,
+    "chemistry_gap_warning": 0.25,
+    "chemistry_gap_error": 0.40,
+    "chemistry_gap_warning_with_partnership_bias": 0.35,
+    "chemistry_gap_error_with_partnership_bias": 0.50,
+    "fatigue_reverse_gap_warning": 0.05,
+    "fatigue_reverse_gap_error": 0.10,
+    "fatigue_reverse_gap_warning_with_fatigue_bias": 0.03,
+    "fatigue_reverse_gap_error_with_fatigue_bias": 0.07,
+    "rating_predictiveness_warning_min": 0.65,
+    "rating_predictiveness_error_min": 0.55,
+    "rating_predictiveness_warning_min_with_hidden_bias": 0.60,
+    "rating_predictiveness_error_min_with_hidden_bias": 0.50,
+    "regional_strength_spread_warning": 400.0,
+    "regional_strength_spread_error": 700.0,
+    "regional_strength_spread_warning_with_bias": 550.0,
+    "regional_strength_spread_error_with_bias": 850.0,
 }
 
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "blocker": 3}
@@ -66,9 +82,13 @@ def assess_realism_audit_payload(
     thresholds: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assess realism audit query results and return UI/report-ready findings."""
-    active_thresholds = normalize_realism_audit_assessment_thresholds(thresholds)
+    bias_context = _bias_context_from_payload(payload)
+    active_thresholds = _apply_bias_aware_threshold_overrides(
+        normalize_realism_audit_assessment_thresholds(thresholds),
+        bias_context,
+    )
     query_assessments = [
-        _assess_query_result(result, active_thresholds)
+        _assess_query_result(result, active_thresholds, bias_context)
         for result in _iter_query_results(payload.get("results"))
     ]
     query_assessments = [
@@ -121,6 +141,7 @@ def assess_realism_audit_payload(
         "blocker_queries": sorted(_BLOCKER_QUERIES),
         "policy_reasons": policy_reasons,
         "thresholds": active_thresholds,
+        "bias_context": bias_context,
         "findings": findings,
         "query_assessments": query_assessments,
     }
@@ -129,6 +150,7 @@ def assess_realism_audit_payload(
 def _assess_query_result(
     result: Mapping[str, Any],
     thresholds: Mapping[str, float],
+    bias_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     query_name = str(result.get("query") or "unnamed_query")
     category = str(result.get("category") or "general")
@@ -161,7 +183,12 @@ def _assess_query_result(
         team_assessment,
     )
 
-    simulation_assessment = _assess_simulation_fidelity(query_name, rows)
+    simulation_assessment = _assess_simulation_fidelity(
+        query_name,
+        rows,
+        thresholds,
+        bias_context,
+    )
     severity, summary, evidence, recommendation = _pick_assessment(
         (severity, summary, evidence, recommendation),
         simulation_assessment,
@@ -562,19 +589,31 @@ def _assess_team_readiness(
 def _assess_simulation_fidelity(
     query_name: str,
     rows: Sequence[Mapping[str, Any]],
+    thresholds: Mapping[str, float],
+    bias_context: Mapping[str, Any],
 ) -> tuple[str, str, str, str] | None:
     if query_name == "chemistry_effectiveness":
         max_gap = max(
             (abs(_to_float(row.get("win_rate_minus_expected")) or 0.0) for row in rows),
             default=0.0,
         )
-        severity = _severity_for_thresholds(max_gap, warning=0.25, error=0.40)
+        severity = _severity_for_thresholds(
+            max_gap,
+            warning=thresholds["chemistry_gap_warning"],
+            error=thresholds["chemistry_gap_error"],
+        )
         if severity != "info":
+            suffix = (
+                " Partnership-affinity bias is active, so certification is using wider chemistry tolerances."
+                if bias_context.get("partnership_affinity_bias_enabled")
+                else ""
+            )
             return (
                 severity,
                 "Observed chemistry effects diverge materially from expected match outcomes.",
                 f"Maximum absolute win-rate gap versus expectation is {max_gap:.3f}.",
-                "Review chemistry weighting and whether partnership effects are over- or under-expressed.",
+                "Review chemistry weighting and whether partnership effects are over- or under-expressed."
+                + suffix,
             )
         return (
             "info",
@@ -588,13 +627,23 @@ def _assess_simulation_fidelity(
         high = load_map.get("2_plus")
         if low is not None and high is not None:
             reverse_gap = high - low
-            severity = _severity_for_thresholds(reverse_gap, warning=0.05, error=0.10)
+            severity = _severity_for_thresholds(
+                reverse_gap,
+                warning=thresholds["fatigue_reverse_gap_warning"],
+                error=thresholds["fatigue_reverse_gap_error"],
+            )
             if severity != "info":
+                suffix = (
+                    " Fatigue bias is active, so certification is using stricter fatigue tolerances."
+                    if bias_context.get("fatigue_bias_enabled")
+                    else ""
+                )
                 return (
                     severity,
                     "Higher recent match load is not reducing performance as expected by the fatigue model.",
                     f"High-load score-share delta exceeds zero-load delta by {reverse_gap:.4f}.",
-                    "Review fatigue penalties and recent-load lookback behavior.",
+                    "Review fatigue penalties and recent-load lookback behavior."
+                    + suffix,
                 )
         return None
     if query_name == "confidence_stability":
@@ -628,19 +677,29 @@ def _assess_simulation_fidelity(
     if query_name == "rating_predictiveness":
         high_bucket = _row_value_for_key(rows, "prediction_bucket", "80_plus", "favorite_win_rate")
         if high_bucket is not None:
-            if high_bucket < 0.55:
+            if high_bucket < thresholds["rating_predictiveness_error_min"]:
                 return (
                     "error",
                     "High-confidence rating predictions are performing poorly.",
                     f"Favorite win rate in the 80+ bucket is {high_bucket:.3f}.",
-                    "Review prediction calibration and the rating-to-match simulation bridge.",
+                    "Review prediction calibration and the rating-to-match simulation bridge."
+                    + (
+                        " Hidden performance biases are active, so certification is allowing a lower prediction floor."
+                        if bias_context.get("hidden_bias_enabled")
+                        else ""
+                    ),
                 )
-            if high_bucket < 0.65:
+            if high_bucket < thresholds["rating_predictiveness_warning_min"]:
                 return (
                     "warning",
                     "High-confidence rating predictions are weaker than expected.",
                     f"Favorite win rate in the 80+ bucket is {high_bucket:.3f}.",
-                    "Review rating predictiveness and probability calibration.",
+                    "Review rating predictiveness and probability calibration."
+                    + (
+                        " Hidden performance biases are active, so certification is allowing a lower prediction floor."
+                        if bias_context.get("hidden_bias_enabled")
+                        else ""
+                    ),
                 )
         return None
     if query_name == "regional_strength_balance":
@@ -651,13 +710,22 @@ def _assess_simulation_fidelity(
         ]
         if len(avg_ratings) >= 2:
             spread = max(avg_ratings) - min(avg_ratings)
-            severity = _severity_for_thresholds(spread, warning=400.0, error=700.0)
+            severity = _severity_for_thresholds(
+                spread,
+                warning=thresholds["regional_strength_spread_warning"],
+                error=thresholds["regional_strength_spread_error"],
+            )
             if severity != "info":
                 return (
                     severity,
                     "Regional strength spread is wider than expected.",
                     f"Average rating spread across rated regions is {spread:.1f}.",
-                    "Review regional multipliers and geographic strength calibration.",
+                    "Review regional multipliers and geographic strength calibration."
+                    + (
+                        " Regional-strength bias is active, so certification is using wider regional spread tolerances."
+                        if bias_context.get("regional_strength_bias_enabled")
+                        else ""
+                    ),
                 )
         return None
     if query_name == "team_dissolution_rate":
@@ -701,6 +769,56 @@ def _assess_simulation_fidelity(
             )
         return None
     return None
+
+
+def _bias_context_from_payload(payload: Mapping[str, Any]) -> dict[str, bool]:
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, Mapping):
+        parameters = {}
+    return {
+        "hidden_bias_enabled": bool(parameters.get("hidden_bias_enabled")),
+        "fatigue_bias_enabled": bool(parameters.get("fatigue_bias_enabled")),
+        "regional_strength_bias_enabled": bool(parameters.get("regional_strength_bias_enabled")),
+        "partnership_affinity_bias_enabled": bool(parameters.get("partnership_affinity_bias_enabled")),
+        "age_advantage_bias_enabled": bool(parameters.get("age_advantage_bias_enabled")),
+        "experience_bias_enabled": bool(parameters.get("experience_bias_enabled")),
+    }
+
+
+def _apply_bias_aware_threshold_overrides(
+    thresholds: dict[str, float],
+    bias_context: Mapping[str, Any],
+) -> dict[str, float]:
+    adjusted = dict(thresholds)
+    if bias_context.get("partnership_affinity_bias_enabled"):
+        adjusted["chemistry_gap_warning"] = adjusted[
+            "chemistry_gap_warning_with_partnership_bias"
+        ]
+        adjusted["chemistry_gap_error"] = adjusted[
+            "chemistry_gap_error_with_partnership_bias"
+        ]
+    if bias_context.get("fatigue_bias_enabled"):
+        adjusted["fatigue_reverse_gap_warning"] = adjusted[
+            "fatigue_reverse_gap_warning_with_fatigue_bias"
+        ]
+        adjusted["fatigue_reverse_gap_error"] = adjusted[
+            "fatigue_reverse_gap_error_with_fatigue_bias"
+        ]
+    if bias_context.get("hidden_bias_enabled"):
+        adjusted["rating_predictiveness_warning_min"] = adjusted[
+            "rating_predictiveness_warning_min_with_hidden_bias"
+        ]
+        adjusted["rating_predictiveness_error_min"] = adjusted[
+            "rating_predictiveness_error_min_with_hidden_bias"
+        ]
+    if bias_context.get("regional_strength_bias_enabled"):
+        adjusted["regional_strength_spread_warning"] = adjusted[
+            "regional_strength_spread_warning_with_bias"
+        ]
+        adjusted["regional_strength_spread_error"] = adjusted[
+            "regional_strength_spread_error_with_bias"
+        ]
+    return adjusted
 
 
 def _assess_assignment_readiness(

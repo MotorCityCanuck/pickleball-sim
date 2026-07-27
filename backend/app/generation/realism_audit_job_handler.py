@@ -265,6 +265,7 @@ class RealismAuditJobHandler:
             batch_id=batch_id,
             batch_month=batch_month,
             executed_at=self.now_factory().replace(tzinfo=UTC),
+            parameters=dict(resolve_realism_audit_parameters(self.session)),
             results=results,
         )
         return save_realism_audit_snapshot(

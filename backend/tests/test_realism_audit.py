@@ -1983,6 +1983,12 @@ def test_realism_audit_parameter_resolution_uses_generation_run_snapshot(session
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(250.0)
     assert float(params["initial_rating_elite_min"]) == pytest.approx(2000.0)
     assert params["regional_strength_min_rated_players"] == 1
+    assert params["hidden_bias_enabled"] is False
+    assert params["fatigue_bias_enabled"] is False
+    assert params["regional_strength_bias_enabled"] is False
+    assert params["partnership_affinity_bias_enabled"] is False
+    assert params["age_advantage_bias_enabled"] is False
+    assert params["experience_bias_enabled"] is False
     assert params["max_daily_matches_per_team"] == 1
     assert float(params["monthly_matches_per_active_player_mean"]) == pytest.approx(8.0)
     assert float(params["monthly_matches_per_active_player_std_dev"]) == pytest.approx(2.0)
@@ -2080,6 +2086,7 @@ def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(se
     assert float(params["monthly_matches_per_active_player_mean"]) == pytest.approx(11.0)
     assert float(params["monthly_matches_per_active_player_std_dev"]) == pytest.approx(3.5)
     assert float(params["match_volume_noise_factor"]) == pytest.approx(0.05)
+    assert params["hidden_bias_enabled"] is False
 
 
 def test_realism_audit_parameter_resolution_skips_newer_runs_without_batches(session):
@@ -2509,6 +2516,75 @@ def test_realism_audit_assessment_expands_additional_phase3_query_coverage():
     assert by_query["historical_release_file_coverage"]["severity"] == "error"
     assert assessment["certification_decision"] == "FAIL"
     assert any("clean pass threshold" in reason for reason in assessment["policy_reasons"])
+
+
+def test_realism_audit_assessment_applies_bias_aware_simulation_thresholds():
+    payload = {
+        "parameters": {
+            "hidden_bias_enabled": True,
+            "fatigue_bias_enabled": True,
+            "regional_strength_bias_enabled": True,
+            "partnership_affinity_bias_enabled": True,
+            "age_advantage_bias_enabled": False,
+            "experience_bias_enabled": False,
+        },
+        "results": [
+            {
+                "query": "chemistry_effectiveness",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {
+                        "chemistry_band": "high",
+                        "team_match_count": 12,
+                        "avg_chemistry_score": 0.82,
+                        "avg_expected_win_probability": 0.70,
+                        "actual_win_rate": 0.40,
+                        "win_rate_minus_expected": -0.30,
+                    }
+                ],
+            },
+            {
+                "query": "fatigue_effectiveness",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {"workload_band": "0", "avg_score_share_delta": 0.00},
+                    {"workload_band": "2_plus", "avg_score_share_delta": 0.04},
+                ],
+            },
+            {
+                "query": "rating_predictiveness",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {"prediction_bucket": "80_plus", "predicted_match_count": 100, "favorite_win_rate": 0.62},
+                ],
+            },
+            {
+                "query": "regional_strength_balance",
+                "category": "simulation_fidelity",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {"region_id": 1, "avg_rating": 1700.0},
+                    {"region_id": 2, "avg_rating": 900.0},
+                ],
+            },
+        ],
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+    by_query = {item["query"]: item for item in assessment["query_assessments"]}
+
+    assert by_query["chemistry_effectiveness"]["severity"] == "info"
+    assert by_query["fatigue_effectiveness"]["severity"] == "warning"
+    assert by_query["rating_predictiveness"]["severity"] == "info"
+    assert by_query["regional_strength_balance"]["severity"] == "warning"
+    assert assessment["bias_context"]["hidden_bias_enabled"] is True
+    assert assessment["thresholds"]["chemistry_gap_warning"] == pytest.approx(0.35)
+    assert assessment["thresholds"]["fatigue_reverse_gap_warning"] == pytest.approx(0.03)
+    assert assessment["thresholds"]["rating_predictiveness_warning_min"] == pytest.approx(0.60)
+    assert assessment["thresholds"]["regional_strength_spread_error"] == pytest.approx(850.0)
 
 
 def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pillars():

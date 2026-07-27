@@ -31,6 +31,7 @@ def execution_to_json_ready(
             if execution.batch_month is not None
             else None
         ),
+        "parameters": _json_value(dict(execution.parameters)),
         "results": results_to_json_ready(execution.results),
     }
     payload["implemented_pillars"] = [

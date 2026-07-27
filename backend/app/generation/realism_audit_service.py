@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ class RealismAuditExecution:
     batch_id: int | None
     batch_month: date | None
     executed_at: datetime
+    parameters: Mapping[str, Any]
     results: tuple[RealismAuditResult, ...]
 
 
@@ -60,6 +61,7 @@ class RealismAuditService:
             batch_id=batch_id,
             batch_month=batch_month,
             executed_at=datetime.now(timezone.utc),
+            parameters=dict(params),
             results=results,
         )
 

@@ -4810,6 +4810,37 @@ def resolve_realism_audit_parameters(
         )
         payload = _payload_mapping(parameter_snapshot, default=payload)
 
+    hidden_bias_enabled = _payload_bool(
+        payload,
+        ("hidden_performance_bias", "enabled"),
+        False,
+    )
+    fatigue_bias_enabled = hidden_bias_enabled and _payload_bool(
+        payload,
+        ("hidden_performance_bias", "fatigue", "enabled"),
+        False,
+    )
+    regional_strength_bias_enabled = hidden_bias_enabled and _payload_bool(
+        payload,
+        ("hidden_performance_bias", "regional_strength", "enabled"),
+        False,
+    )
+    partnership_affinity_bias_enabled = hidden_bias_enabled and _payload_bool(
+        payload,
+        ("hidden_performance_bias", "partnership_affinity", "enabled"),
+        False,
+    )
+    age_advantage_bias_enabled = hidden_bias_enabled and _payload_bool(
+        payload,
+        ("hidden_performance_bias", "age_advantage", "enabled"),
+        False,
+    )
+    experience_bias_enabled = hidden_bias_enabled and _payload_bool(
+        payload,
+        ("hidden_performance_bias", "experience", "enabled"),
+        False,
+    )
+
     return {
         "generation_run_id": resolved_generation_run_id,
         "batch_id": resolved_batch_id,
@@ -4838,6 +4869,12 @@ def resolve_realism_audit_parameters(
             ("validation", "regional_strength_min_rated_players"),
             15,
         ),
+        "hidden_bias_enabled": hidden_bias_enabled,
+        "fatigue_bias_enabled": fatigue_bias_enabled,
+        "regional_strength_bias_enabled": regional_strength_bias_enabled,
+        "partnership_affinity_bias_enabled": partnership_affinity_bias_enabled,
+        "age_advantage_bias_enabled": age_advantage_bias_enabled,
+        "experience_bias_enabled": experience_bias_enabled,
         "max_club_fill_ratio": _payload_number(
             payload,
             ("club_generation", "max_club_fill_ratio"),
