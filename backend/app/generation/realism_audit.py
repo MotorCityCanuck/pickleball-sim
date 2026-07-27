@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.models import AuditBatchTeamRoster, GenerationRun, MonthlyBatch
+from .release_certification_pillars import OPERATIONAL_REALISM_PILLAR
 
 
 AuditScope = Literal["generation_run", "batch"]
@@ -31,6 +32,7 @@ class RealismAuditQuery:
     required_params: tuple[str, ...]
     tags: tuple[str, ...] = ()
     category: str = "general"
+    pillar: str = OPERATIONAL_REALISM_PILLAR.key
     related_config_keys: tuple[str, ...] = ()
     post_process: RowPostProcessor | None = None
 

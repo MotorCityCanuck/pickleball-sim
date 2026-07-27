@@ -5,6 +5,10 @@ from typing import Any, Sequence
 
 from .realism_audit import RealismAuditResult
 from .realism_audit_assessment import assess_realism_audit_payload
+from .release_certification_pillars import (
+    RELEASE_CERTIFICATION_PILLAR_MAP,
+    serialize_release_certification_pillars,
+)
 from .realism_audit_service import RealismAuditExecution
 
 
@@ -18,14 +22,7 @@ def execution_to_json_ready(
         "process_type": "release_certification",
         "framework_name": "NAPA Release Certification Framework",
         "framework_version": "2.0",
-        "implemented_pillars": ["operational_realism"],
-        "planned_pillars": [
-            "structural_integrity",
-            "simulation_fidelity",
-            "assignment_readiness",
-            "export_readiness",
-            "historical_regression",
-        ],
+        "pillars": serialize_release_certification_pillars(),
         "executed_at": execution.executed_at.isoformat(),
         "generation_run_id": execution.generation_run_id,
         "batch_id": execution.batch_id,
@@ -36,6 +33,16 @@ def execution_to_json_ready(
         ),
         "results": results_to_json_ready(execution.results),
     }
+    payload["implemented_pillars"] = [
+        pillar["key"]
+        for pillar in payload["pillars"]
+        if pillar.get("implementation_status") == "implemented"
+    ]
+    payload["planned_pillars"] = [
+        pillar["key"]
+        for pillar in payload["pillars"]
+        if pillar.get("implementation_status") != "implemented"
+    ]
     payload["assessment"] = assess_realism_audit_payload(
         payload,
         thresholds=assessment_thresholds,
@@ -54,6 +61,7 @@ def results_to_json_ready(
                 "query": result.query.name,
                 "scope": result.query.scope,
                 "category": result.query.category,
+                "pillar": result.query.pillar,
                 "description": result.query.description,
                 "tags": list(result.query.tags),
                 "related_config_keys": list(result.query.related_config_keys),
@@ -114,11 +122,24 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         return "\n".join(lines).rstrip() + "\n"
 
     category_counts: dict[str, int] = {}
+    pillar_counts: dict[str, int] = {}
     for result in results:
         category = str(result.get("category") or "general")
         category_counts[category] = category_counts.get(category, 0) + 1
+        pillar_key = str(result.get("pillar") or "operational_realism")
+        pillar_counts[pillar_key] = pillar_counts.get(pillar_key, 0) + 1
 
     lines.append("## Certification Summary")
+    lines.append("")
+    if pillar_counts:
+        lines.append("### Pillar Coverage")
+        lines.append("")
+        for pillar_key, count in sorted(pillar_counts.items()):
+            pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
+            pillar_label = pillar.label if pillar is not None else pillar_key
+            lines.append(f"- {pillar_label}: {count} query{'ies' if count != 1 else ''}")
+        lines.append("")
+    lines.append("### Query Categories")
     lines.append("")
     for category, count in sorted(category_counts.items()):
         lines.append(f"- {category}: {count} query{'ies' if count != 1 else ''}")
@@ -133,6 +154,8 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         query_name = str(result.get("query") or "unnamed_query")
         description = str(result.get("description") or "")
         category = str(result.get("category") or "general")
+        pillar_key = str(result.get("pillar") or "operational_realism")
+        pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
         scope = str(result.get("scope") or "")
         rows = result.get("rows") or []
 
@@ -141,6 +164,10 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         if description:
             lines.append(description)
             lines.append("")
+        if pillar is not None:
+            lines.append(f"- Pillar: {pillar.label}")
+        else:
+            lines.append(f"- Pillar: {pillar_key}")
         lines.append(f"- Category: {category}")
         if scope:
             lines.append(f"- Scope: {scope}")
@@ -198,6 +225,7 @@ def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
             )
             lines.append("")
             lines.append(f"- Severity: {_display_markdown_value(finding.get('severity'))}")
+            lines.append(f"- Pillar: {_display_markdown_value(_display_pillar_label(finding.get('pillar')))}")
             lines.append(f"- Category: {_display_markdown_value(finding.get('category'))}")
             lines.append(f"- Query: `{_display_markdown_value(finding.get('query'))}`")
             lines.append(f"- Summary: {_display_markdown_value(finding.get('summary'))}")
@@ -219,6 +247,7 @@ def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
             lines.append(
                 "- "
                 f"`{_display_markdown_value(query_assessment.get('query'))}`: "
+                f"{_display_markdown_value(_display_pillar_label(query_assessment.get('pillar')))} / "
                 f"{_display_markdown_value(query_assessment.get('severity'))} - "
                 f"{_display_markdown_value(query_assessment.get('summary'))}"
             )
@@ -277,3 +306,9 @@ def _display_markdown_value(value: Any) -> str:
     if value is None:
         return "n/a"
     return _display_value(value)
+
+
+def _display_pillar_label(value: Any) -> str:
+    pillar_key = str(value or "operational_realism")
+    pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
+    return pillar.label if pillar is not None else pillar_key

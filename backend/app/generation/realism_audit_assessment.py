@@ -56,12 +56,17 @@ def assess_realism_audit_payload(
     ]
     severity_counts = {"info": 0, "warning": 0, "error": 0, "blocker": 0}
     category_counts: dict[str, int] = {}
+    pillar_counts: dict[str, int] = {}
+    finding_pillar_counts: dict[str, int] = {}
     for assessment in query_assessments:
         severity = str(assessment.get("severity") or "info")
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        pillar = str(assessment.get("pillar") or "operational_realism")
+        pillar_counts[pillar] = pillar_counts.get(pillar, 0) + 1
         if severity != "info":
             category = str(assessment.get("category") or "general")
             category_counts[category] = category_counts.get(category, 0) + 1
+            finding_pillar_counts[pillar] = finding_pillar_counts.get(pillar, 0) + 1
 
     max_severity = _max_severity(query_assessments)
     overall_status = {
@@ -74,6 +79,8 @@ def assess_realism_audit_payload(
         "overall_status": overall_status,
         "finding_count": len(findings),
         "severity_counts": severity_counts,
+        "pillar_counts": dict(sorted(pillar_counts.items())),
+        "finding_pillar_counts": dict(sorted(finding_pillar_counts.items())),
         "category_counts": dict(sorted(category_counts.items())),
         "thresholds": active_thresholds,
         "findings": findings,
@@ -87,6 +94,7 @@ def _assess_query_result(
 ) -> dict[str, Any]:
     query_name = str(result.get("query") or "unnamed_query")
     category = str(result.get("category") or "general")
+    pillar = str(result.get("pillar") or "operational_realism")
     rows = [row for row in result.get("rows") or [] if isinstance(row, Mapping)]
     severity = "info"
     summary = "No material issue detected by the current assessment rules."
@@ -131,6 +139,7 @@ def _assess_query_result(
     return {
         "query": query_name,
         "category": category,
+        "pillar": pillar,
         "severity": severity,
         "status": status,
         "title": _title_for_query(query_name),

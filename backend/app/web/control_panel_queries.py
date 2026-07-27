@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core import ConfigValidationIssue
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.generation import DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR
+from app.generation.release_certification_pillars import RELEASE_CERTIFICATION_PILLAR_MAP
 from app.generation.progress_liveness import (
     DEFAULT_STAGE_LIKELY_STALLED_AFTER,
     liveness_state_for_stage,
@@ -315,6 +316,7 @@ class RealismAuditFindingSummary:
     """UI-ready summary of one realism-audit assessment finding."""
 
     query: str
+    pillar: str
     category: str
     severity: str
     title: str
@@ -333,6 +335,7 @@ class RealismAuditSnapshotSummary:
     executed_at: str | None
     query_count: int
     total_row_count: int
+    pillar_counts: tuple[tuple[str, int], ...]
     category_counts: tuple[tuple[str, int], ...]
     overall_status: str | None
     finding_count: int
@@ -1059,11 +1062,14 @@ class ControlPanelQueries:
         snapshot_summary = None
         if payload is not None:
             results = payload.get("results") or []
+            pillar_counts: dict[str, int] = {}
             category_counts: dict[str, int] = {}
             total_row_count = 0
             for result in results:
                 if not isinstance(result, dict):
                     continue
+                pillar_key = str(result.get("pillar") or "operational_realism")
+                pillar_counts[pillar_key] = pillar_counts.get(pillar_key, 0) + 1
                 category = str(result.get("category") or "general")
                 category_counts[category] = category_counts.get(category, 0) + 1
                 rows = result.get("rows") or []
@@ -1088,6 +1094,15 @@ class ControlPanelQueries:
                     default=len(results),
                 ) or 0,
                 total_row_count=total_row_count,
+                pillar_counts=tuple(
+                    sorted(
+                        (
+                            _display_release_certification_pillar(pillar_key),
+                            count,
+                        )
+                        for pillar_key, count in pillar_counts.items()
+                    )
+                ),
                 category_counts=tuple(sorted(category_counts.items())),
                 overall_status=_realism_assessment_status(payload),
                 finding_count=_realism_assessment_finding_count(payload),
@@ -2127,6 +2142,9 @@ def _realism_assessment_top_findings(
         summaries.append(
             RealismAuditFindingSummary(
                 query=str(mapping.get("query") or ""),
+                pillar=_display_release_certification_pillar(
+                    str(mapping.get("pillar") or "operational_realism")
+                ),
                 category=str(mapping.get("category") or "general"),
                 severity=str(mapping.get("severity") or "info"),
                 title=str(mapping.get("title") or mapping.get("query") or "Finding"),
@@ -2137,6 +2155,11 @@ def _realism_assessment_top_findings(
         if len(summaries) >= limit:
             break
     return tuple(summaries)
+
+
+def _display_release_certification_pillar(pillar_key: str) -> str:
+    pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
+    return pillar.label if pillar is not None else pillar_key
 
 
 def _backend_realism_audit_snapshot_candidates(

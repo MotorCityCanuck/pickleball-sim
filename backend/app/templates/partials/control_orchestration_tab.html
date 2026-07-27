@@ -525,7 +525,7 @@
                 </div>
             </div>
 
-            {% if snapshot.realism_audit_summary.latest_snapshot and snapshot.realism_audit_summary.latest_snapshot.category_counts %}
+            {% if snapshot.realism_audit_summary.latest_snapshot and (snapshot.realism_audit_summary.latest_snapshot.pillar_counts or snapshot.realism_audit_summary.latest_snapshot.category_counts) %}
                 <section class="info-card" style="display:grid; gap:12px;">
                     <div>
                         <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Certification Summary</div>
@@ -557,6 +557,7 @@
                                             {{ finding.severity }}
                                         </div>
                                     </div>
+                                    <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.pillar }} | {{ finding.category }}</div>
                                     <div style="margin-top:6px; color:#5a6477;">{{ finding.summary }}</div>
                                     {% if finding.evidence %}
                                         <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.evidence }}</div>
@@ -566,6 +567,19 @@
                         </div>
                     {% else %}
                         <div style="color:#5a6477;">No assessment findings exceeded the configured thresholds.</div>
+                    {% endif %}
+                    {% if snapshot.realism_audit_summary.latest_snapshot.pillar_counts %}
+                        <div>
+                            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Pillar Coverage</div>
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-top:8px;">
+                                {% for pillar, count in snapshot.realism_audit_summary.latest_snapshot.pillar_counts %}
+                                    <div class="metric-card">
+                                        <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ pillar }}</div>
+                                        <div style="margin-top:6px;">{{ count }}</div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
                     {% endif %}
                     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
                         {% for category, count in snapshot.realism_audit_summary.latest_snapshot.category_counts %}
