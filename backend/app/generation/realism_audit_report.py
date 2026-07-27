@@ -87,6 +87,10 @@ def execution_to_markdown(
 
 def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
     """Render a JSON-ready release-certification payload as a markdown report."""
+    assessment = payload.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = assess_realism_audit_payload(payload)
+
     lines = [
         "# Release Certification Report",
         "",
@@ -129,8 +133,71 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         pillar_key = str(result.get("pillar") or "operational_realism")
         pillar_counts[pillar_key] = pillar_counts.get(pillar_key, 0) + 1
 
-    lines.append("## Certification Summary")
+    lines.extend(_executive_summary_markdown_lines(payload, assessment))
+    lines.extend(
+        _certification_dashboard_markdown_lines(
+            assessment,
+            pillar_counts,
+            category_counts,
+        )
+    )
+    lines.extend(_findings_by_pillar_markdown_lines(assessment))
+    lines.extend(_recommendations_markdown_lines(assessment))
+    lines.extend(_release_comparison_markdown_lines(payload, assessment))
+    lines.extend(_certification_decision_markdown_lines(assessment))
+    lines.extend(_assessment_markdown_lines(assessment))
+    lines.extend(_query_results_markdown_lines(results))
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _executive_summary_markdown_lines(
+    payload: dict[str, Any],
+    assessment: dict[str, Any],
+) -> list[str]:
+    lines = ["## Executive Summary", ""]
+    lines.append(
+        f"- Certification decision: {_display_markdown_value(assessment.get('certification_decision'))}"
+    )
+    lines.append(
+        f"- Certification score: {_display_markdown_value(assessment.get('certification_score'))}"
+    )
+    lines.append(
+        f"- Overall status: {_display_markdown_value(assessment.get('overall_status'))}"
+    )
+    lines.append(
+        f"- Findings requiring review: {_display_markdown_value(assessment.get('finding_count'))}"
+    )
+    lines.append(
+        f"- Generation run ID: {_display_markdown_value(payload.get('generation_run_id'))}"
+    )
+    lines.append(f"- Batch ID: {_display_markdown_value(payload.get('batch_id'))}")
     lines.append("")
+    return lines
+
+
+def _certification_dashboard_markdown_lines(
+    assessment: dict[str, Any],
+    pillar_counts: dict[str, int],
+    category_counts: dict[str, int],
+) -> list[str]:
+    lines = ["## Certification Dashboard", ""]
+    pillar_assessments = assessment.get("pillar_assessments")
+    if isinstance(pillar_assessments, list) and pillar_assessments:
+        lines.append("### Pillar Scores")
+        lines.append("")
+        for pillar_assessment in pillar_assessments:
+            if not isinstance(pillar_assessment, dict):
+                continue
+            lines.append(
+                "- "
+                f"{_display_markdown_value(pillar_assessment.get('label'))}: "
+                f"score {_display_markdown_value(pillar_assessment.get('score'))}, "
+                f"decision {_display_markdown_value(pillar_assessment.get('decision'))}, "
+                f"queries {_display_markdown_value(pillar_assessment.get('query_count'))}, "
+                f"findings {_display_markdown_value(pillar_assessment.get('finding_count'))}"
+            )
+        lines.append("")
     if pillar_counts:
         lines.append("### Pillar Coverage")
         lines.append("")
@@ -144,12 +211,130 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
     for category, count in sorted(category_counts.items()):
         lines.append(f"- {category}: {count} query{'ies' if count != 1 else ''}")
     lines.append("")
+    return lines
 
-    assessment = payload.get("assessment")
-    if not isinstance(assessment, dict):
-        assessment = assess_realism_audit_payload(payload)
-    lines.extend(_assessment_markdown_lines(assessment))
 
+def _findings_by_pillar_markdown_lines(assessment: dict[str, Any]) -> list[str]:
+    lines = ["## Findings by Pillar", ""]
+    findings = assessment.get("findings")
+    if not isinstance(findings, list) or not findings:
+        lines.extend(["No assessment findings exceeded the configured thresholds.", ""])
+        return lines
+
+    findings_by_pillar: dict[str, list[dict[str, Any]]] = {}
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        pillar_key = str(finding.get("pillar") or "operational_realism")
+        findings_by_pillar.setdefault(pillar_key, []).append(finding)
+
+    for pillar_key, pillar_findings in sorted(findings_by_pillar.items()):
+        lines.append(f"### {_display_pillar_label(pillar_key)}")
+        lines.append("")
+        for finding in pillar_findings:
+            lines.append(
+                "- "
+                f"{_display_markdown_value(finding.get('title'))} "
+                f"({_display_markdown_value(finding.get('severity'))})"
+            )
+            lines.append(
+                f"  - Query: `{_display_markdown_value(finding.get('query'))}`"
+            )
+            lines.append(
+                f"  - Summary: {_display_markdown_value(finding.get('summary'))}"
+            )
+            lines.append(
+                f"  - Evidence: {_display_markdown_value(finding.get('evidence'))}"
+            )
+        lines.append("")
+    return lines
+
+
+def _recommendations_markdown_lines(assessment: dict[str, Any]) -> list[str]:
+    lines = ["## Recommendations", ""]
+    findings = assessment.get("findings")
+    if not isinstance(findings, list) or not findings:
+        lines.extend(
+            ["No recommendations were generated because no material findings were detected.", ""]
+        )
+        return lines
+
+    recommendations: list[str] = []
+    seen: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        recommendation = str(finding.get("recommendation") or "").strip()
+        if not recommendation or recommendation in seen:
+            continue
+        seen.add(recommendation)
+        recommendations.append(recommendation)
+
+    if not recommendations:
+        lines.extend(["No recommendations were generated from the current findings.", ""])
+        return lines
+
+    for recommendation in recommendations:
+        lines.append(f"- {recommendation}")
+    lines.append("")
+    return lines
+
+
+def _release_comparison_markdown_lines(
+    payload: dict[str, Any],
+    assessment: dict[str, Any],
+) -> list[str]:
+    lines = ["## Release Comparison", ""]
+    release_comparison = payload.get("release_comparison")
+    if isinstance(release_comparison, list) and release_comparison:
+        for item in release_comparison:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- "
+                f"{_display_markdown_value(item.get('label'))}: "
+                f"{_display_markdown_value(item.get('summary'))}"
+            )
+        lines.append("")
+        return lines
+
+    historical_findings = [
+        finding
+        for finding in assessment.get("findings") or []
+        if isinstance(finding, dict)
+        and str(finding.get("pillar") or "") == "historical_regression"
+    ]
+    if historical_findings:
+        for finding in historical_findings:
+            lines.append(
+                "- "
+                f"{_display_markdown_value(finding.get('title'))}: "
+                f"{_display_markdown_value(finding.get('summary'))}"
+            )
+        lines.append("")
+        return lines
+
+    lines.extend(["No release comparison data is included in this snapshot.", ""])
+    return lines
+
+
+def _certification_decision_markdown_lines(assessment: dict[str, Any]) -> list[str]:
+    lines = ["## Certification Decision", ""]
+    lines.append(
+        f"- Decision: {_display_markdown_value(assessment.get('certification_decision'))}"
+    )
+    lines.append(
+        f"- Score: {_display_markdown_value(assessment.get('certification_score'))}"
+    )
+    lines.append(
+        f"- Status basis: {_display_markdown_value(assessment.get('overall_status'))}"
+    )
+    lines.append("")
+    return lines
+
+
+def _query_results_markdown_lines(results: Sequence[dict[str, Any]]) -> list[str]:
+    lines = ["## Query Results", ""]
     for result in results:
         query_name = str(result.get("query") or "unnamed_query")
         description = str(result.get("description") or "")
@@ -190,8 +375,7 @@ def snapshot_payload_to_markdown(payload: dict[str, Any]) -> str:
         else:
             lines.append("(no rows)")
             lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
+    return lines
 
 
 def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
@@ -218,23 +402,6 @@ def _assessment_markdown_lines(assessment: dict[str, Any]) -> list[str]:
             )
         )
     lines.append("")
-
-    pillar_assessments = assessment.get("pillar_assessments")
-    if isinstance(pillar_assessments, list) and pillar_assessments:
-        lines.append("## Pillar Scores")
-        lines.append("")
-        for pillar_assessment in pillar_assessments:
-            if not isinstance(pillar_assessment, dict):
-                continue
-            lines.append(
-                "- "
-                f"{_display_markdown_value(pillar_assessment.get('label'))}: "
-                f"score {_display_markdown_value(pillar_assessment.get('score'))}, "
-                f"decision {_display_markdown_value(pillar_assessment.get('decision'))}, "
-                f"queries {_display_markdown_value(pillar_assessment.get('query_count'))}, "
-                f"findings {_display_markdown_value(pillar_assessment.get('finding_count'))}"
-            )
-        lines.append("")
 
     findings = assessment.get("findings")
     if isinstance(findings, list) and findings:

@@ -2126,6 +2126,12 @@ def test_realism_audit_markdown_includes_assessment_findings():
         "generation_run_id": 2,
         "batch_id": 22,
         "batch_month": "2026-02-01",
+        "release_comparison": [
+            {
+                "label": "Previous approved release",
+                "summary": "Player and team counts stayed within tolerance.",
+            }
+        ],
         "results": [
             {
                 "query": "club_fill_ratio_summary",
@@ -2146,13 +2152,19 @@ def test_realism_audit_markdown_includes_assessment_findings():
 
     markdown = snapshot_payload_to_markdown(payload)
 
-    assert "## Certification Summary" in markdown
+    assert "## Executive Summary" in markdown
+    assert "## Certification Dashboard" in markdown
+    assert "## Findings by Pillar" in markdown
+    assert "## Recommendations" in markdown
+    assert "## Release Comparison" in markdown
+    assert "## Certification Decision" in markdown
+    assert "## Query Results" in markdown
     assert "### Pillar Coverage" in markdown
     assert "Operational Realism" in markdown
     assert "## Assessment Summary" in markdown
     assert "Certification decision" in markdown
     assert "Certification score" in markdown
-    assert "## Pillar Scores" in markdown
     assert "## Assessment Findings" in markdown
+    assert "Previous approved release" in markdown
     assert "Club Fill Ratio Summary" in markdown
     assert "over capacity" in markdown
