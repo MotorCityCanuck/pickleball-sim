@@ -17,6 +17,7 @@ from .release_certification_pillars import (
     HISTORICAL_REGRESSION_PILLAR,
     OPERATIONAL_REALISM_PILLAR,
     SIMULATION_FIDELITY_PILLAR,
+    STRUCTURAL_INTEGRITY_PILLAR,
 )
 
 
@@ -1330,6 +1331,90 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         """,
         required_params=("generation_run_id",),
         tags=("clubs", "integrity"),
+        pillar=STRUCTURAL_INTEGRITY_PILLAR.key,
+    ),
+    RealismAuditQuery(
+        name="team_current_roster_integrity",
+        scope="generation_run",
+        category="teams",
+        description="Active teams whose current open roster does not contain exactly two members.",
+        sql="""
+            SELECT
+                t.id AS team_id,
+                t.team_type,
+                t.team_division,
+                t.team_status,
+                t.country_code,
+                t.formation_date,
+                t.dissolution_date,
+                COUNT(tm.id) AS current_member_count
+            FROM teams t
+            LEFT JOIN team_memberships tm
+                ON tm.team_id = t.id
+                AND tm.left_date IS NULL
+            WHERE t.generation_run_id = :generation_run_id
+                AND t.team_status = 'active'
+            GROUP BY
+                t.id,
+                t.team_type,
+                t.team_division,
+                t.team_status,
+                t.country_code,
+                t.formation_date,
+                t.dissolution_date
+            HAVING COUNT(tm.id) <> 2
+            ORDER BY t.id ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("teams", "integrity", "rosters"),
+        pillar=STRUCTURAL_INTEGRITY_PILLAR.key,
+    ),
+    RealismAuditQuery(
+        name="team_membership_date_integrity",
+        scope="generation_run",
+        category="teams",
+        description="Team memberships with temporal inconsistencies relative to team lifecycle dates.",
+        sql="""
+            SELECT
+                t.id AS team_id,
+                tm.player_id,
+                t.team_type,
+                t.team_division,
+                t.team_status,
+                t.formation_date,
+                t.dissolution_date,
+                tm.joined_date,
+                tm.left_date,
+                CASE
+                    WHEN tm.joined_date < t.formation_date THEN 'joined_before_formation'
+                    WHEN tm.left_date IS NOT NULL AND tm.left_date <= tm.joined_date THEN 'left_not_after_joined'
+                    WHEN t.dissolution_date IS NOT NULL AND tm.left_date IS NULL THEN 'open_membership_on_dissolved_team'
+                    WHEN t.dissolution_date IS NOT NULL AND tm.joined_date > t.dissolution_date THEN 'joined_after_team_dissolution'
+                    WHEN t.dissolution_date IS NOT NULL
+                        AND tm.left_date IS NOT NULL
+                        AND tm.left_date > t.dissolution_date
+                        THEN 'left_after_team_dissolution'
+                END AS issue_type
+            FROM teams t
+            JOIN team_memberships tm
+                ON tm.team_id = t.id
+            WHERE t.generation_run_id = :generation_run_id
+                AND (
+                    tm.joined_date < t.formation_date
+                    OR (tm.left_date IS NOT NULL AND tm.left_date <= tm.joined_date)
+                    OR (t.dissolution_date IS NOT NULL AND tm.left_date IS NULL)
+                    OR (t.dissolution_date IS NOT NULL AND tm.joined_date > t.dissolution_date)
+                    OR (
+                        t.dissolution_date IS NOT NULL
+                        AND tm.left_date IS NOT NULL
+                        AND tm.left_date > t.dissolution_date
+                    )
+                )
+            ORDER BY t.id ASC, tm.player_id ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("teams", "integrity", "lifecycle"),
+        pillar=STRUCTURAL_INTEGRITY_PILLAR.key,
     ),
     RealismAuditQuery(
         name="club_fill_ratio_summary",
@@ -2887,6 +2972,103 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         required_params=("batch_id", "max_daily_matches_per_team"),
         tags=("matches", "cadence", "violations"),
         related_config_keys=("match_scheduling.max_daily_matches_per_team",),
+    ),
+    RealismAuditQuery(
+        name="match_winner_integrity",
+        scope="batch",
+        category="matches",
+        description="Matches whose recorded winning team is missing or inconsistent with match-team scores.",
+        sql="""
+            SELECT
+                m.id AS match_id,
+                m.match_date,
+                m.winning_team_id,
+                COUNT(mt.id) AS team_count,
+                SUM(CASE WHEN mt.source_team_id = m.winning_team_id THEN 1 ELSE 0 END) AS winning_team_row_count,
+                MAX(CASE WHEN mt.source_team_id = m.winning_team_id THEN mt.team_score END) AS winning_team_score,
+                MAX(CASE WHEN mt.source_team_id <> m.winning_team_id THEN mt.team_score END) AS opposing_team_score,
+                CASE
+                    WHEN m.winning_team_id IS NULL THEN 'missing_winning_team'
+                    WHEN COUNT(mt.id) <> 2 THEN 'unexpected_team_count'
+                    WHEN SUM(CASE WHEN mt.source_team_id = m.winning_team_id THEN 1 ELSE 0 END) = 0
+                        THEN 'winning_team_not_in_match'
+                    WHEN MAX(CASE WHEN mt.source_team_id = m.winning_team_id THEN mt.team_score END) IS NULL
+                        THEN 'missing_winning_team_score'
+                    WHEN MAX(CASE WHEN mt.source_team_id <> m.winning_team_id THEN mt.team_score END) IS NULL
+                        THEN 'missing_opposing_team_score'
+                    WHEN MAX(CASE WHEN mt.source_team_id = m.winning_team_id THEN mt.team_score END)
+                        <= MAX(CASE WHEN mt.source_team_id <> m.winning_team_id THEN mt.team_score END)
+                        THEN 'winning_team_not_high_score'
+                END AS issue_type
+            FROM matches m
+            LEFT JOIN match_teams mt
+                ON mt.match_id = m.id
+            WHERE m.batch_id = :batch_id
+            GROUP BY m.id, m.match_date, m.winning_team_id
+            HAVING
+                m.winning_team_id IS NULL
+                OR COUNT(mt.id) <> 2
+                OR SUM(CASE WHEN mt.source_team_id = m.winning_team_id THEN 1 ELSE 0 END) = 0
+                OR MAX(CASE WHEN mt.source_team_id = m.winning_team_id THEN mt.team_score END) IS NULL
+                OR MAX(CASE WHEN mt.source_team_id <> m.winning_team_id THEN mt.team_score END) IS NULL
+                OR MAX(CASE WHEN mt.source_team_id = m.winning_team_id THEN mt.team_score END)
+                    <= MAX(CASE WHEN mt.source_team_id <> m.winning_team_id THEN mt.team_score END)
+            ORDER BY m.match_date ASC, m.id ASC
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "integrity", "winners"),
+        pillar=STRUCTURAL_INTEGRITY_PILLAR.key,
+    ),
+    RealismAuditQuery(
+        name="match_game_score_integrity",
+        scope="batch",
+        category="matches",
+        description="Games whose stored winner, target score, or margin is inconsistent with the scoreline.",
+        sql="""
+            SELECT
+                mg.match_id,
+                mg.id AS game_id,
+                mg.game_number,
+                mg.team_one_score,
+                mg.team_two_score,
+                mg.winning_team_number,
+                mg.target_score,
+                mg.win_by,
+                CASE
+                    WHEN mg.winning_team_number NOT IN (1, 2) THEN 'invalid_winning_team_number'
+                    WHEN mg.team_one_score = mg.team_two_score THEN 'tied_score'
+                    WHEN mg.winning_team_number = 1 AND mg.team_one_score <= mg.team_two_score THEN 'winner_score_mismatch'
+                    WHEN mg.winning_team_number = 2 AND mg.team_two_score <= mg.team_one_score THEN 'winner_score_mismatch'
+                    WHEN (
+                        CASE
+                            WHEN mg.team_one_score > mg.team_two_score THEN mg.team_one_score
+                            ELSE mg.team_two_score
+                        END
+                    ) < mg.target_score THEN 'target_score_not_reached'
+                    WHEN ABS(mg.team_one_score - mg.team_two_score) < mg.win_by THEN 'win_by_not_met'
+                END AS issue_type
+            FROM match_games mg
+            JOIN matches m
+                ON m.id = mg.match_id
+            WHERE m.batch_id = :batch_id
+                AND (
+                    mg.winning_team_number NOT IN (1, 2)
+                    OR mg.team_one_score = mg.team_two_score
+                    OR (mg.winning_team_number = 1 AND mg.team_one_score <= mg.team_two_score)
+                    OR (mg.winning_team_number = 2 AND mg.team_two_score <= mg.team_one_score)
+                    OR (
+                        CASE
+                            WHEN mg.team_one_score > mg.team_two_score THEN mg.team_one_score
+                            ELSE mg.team_two_score
+                        END
+                    ) < mg.target_score
+                    OR ABS(mg.team_one_score - mg.team_two_score) < mg.win_by
+                )
+            ORDER BY mg.match_id ASC, mg.game_number ASC, mg.id ASC
+        """,
+        required_params=("batch_id",),
+        tags=("matches", "integrity", "scores"),
+        pillar=STRUCTURAL_INTEGRITY_PILLAR.key,
     ),
     RealismAuditQuery(
         name="batch_region_match_distribution",

@@ -466,6 +466,25 @@ def _assess_integrity_counts(
             f"{len(rows)} violation row{'s' if len(rows) != 1 else ''} returned.",
             "Review match scheduling constraints before relying on this batch for student-facing data.",
         )
+    if query_name in {
+        "team_current_roster_integrity",
+        "team_membership_date_integrity",
+        "match_winner_integrity",
+        "match_game_score_integrity",
+    }:
+        if rows:
+            return (
+                "error",
+                "Structural integrity violations were found in the generated dataset.",
+                f"{len(rows)} integrity issue row{'s' if len(rows) != 1 else ''} returned.",
+                "Review the affected lifecycle or score-consistency records before certifying this release.",
+            )
+        return (
+            "info",
+            "No structural integrity violations were detected by this query.",
+            "0 integrity issue rows returned.",
+            "No action required.",
+        )
     return None
 
 

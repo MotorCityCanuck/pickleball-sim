@@ -1830,6 +1830,130 @@ def test_realism_audit_runner_executes_phase3_release_certification_queries(sess
     )
 
 
+def test_realism_audit_runner_executes_structural_integrity_queries(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO teams (
+                id, team_type, team_division, team_status, country_code, formation_date, dissolution_date, chemistry_score, persistence_probability, generation_run_id
+            ) VALUES
+                (610, 'competitive', 'mens_doubles', 'active', 'US', '2026-01-01', NULL, 0.55, 0.80, 1),
+                (611, 'competitive', 'mixed_doubles', 'dissolved', 'US', '2026-01-01', '2026-01-15', 0.45, 0.40, 1)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO team_memberships (
+                id, team_id, player_id, joined_date, left_date
+            ) VALUES
+                (2610, 610, 1, '2026-01-02', NULL),
+                (2611, 611, 2, '2026-01-20', NULL)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO matches (
+                id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number, predicted_win_probability, batch_id
+            ) VALUES
+                (6100, '2026-01-05', 1, 'league', 9999, 1, 0.65, 10)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_teams (
+                id, match_id, team_number, team_score, pairing_source, source_team_id
+            ) VALUES
+                (61001, 6100, 1, 11, 'competitive', 1),
+                (61002, 6100, 2, 9, 'competitive', 2)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO match_games (
+                id, match_id, game_number, team_one_score, team_two_score, winning_team_number, target_score, win_by
+            ) VALUES
+                (610001, 6100, 1, 10, 10, 1, 11, 2)
+            """
+        )
+    )
+    session.commit()
+
+    runner = RealismAuditRunner(session)
+    results = runner.run(
+        query_names=[
+            "club_primary_membership_integrity",
+            "team_current_roster_integrity",
+            "team_membership_date_integrity",
+            "match_winner_integrity",
+            "match_game_score_integrity",
+        ]
+    )
+
+    result_map = {result.query.name: result.rows for result in results}
+
+    assert result_map["club_primary_membership_integrity"][0]["multi_primary_player_count"] == 0
+    assert result_map["team_current_roster_integrity"] == (
+        {
+            "team_id": 610,
+            "team_type": "competitive",
+            "team_division": "mens_doubles",
+            "team_status": "active",
+            "country_code": "US",
+            "formation_date": "2026-01-01",
+            "dissolution_date": None,
+            "current_member_count": 1,
+        },
+    )
+    assert result_map["team_membership_date_integrity"] == (
+        {
+            "team_id": 611,
+            "player_id": 2,
+            "team_type": "competitive",
+            "team_division": "mixed_doubles",
+            "team_status": "dissolved",
+            "formation_date": "2026-01-01",
+            "dissolution_date": "2026-01-15",
+            "joined_date": "2026-01-20",
+            "left_date": None,
+            "issue_type": "open_membership_on_dissolved_team",
+        },
+    )
+    assert result_map["match_winner_integrity"] == (
+        {
+            "match_id": 6100,
+            "match_date": "2026-01-05",
+            "winning_team_id": 9999,
+            "team_count": 2,
+            "winning_team_row_count": 0,
+            "winning_team_score": None,
+            "opposing_team_score": 11,
+            "issue_type": "winning_team_not_in_match",
+        },
+    )
+    assert result_map["match_game_score_integrity"] == (
+        {
+            "match_id": 6100,
+            "game_id": 610001,
+            "game_number": 1,
+            "team_one_score": 10,
+            "team_two_score": 10,
+            "winning_team_number": 1,
+            "target_score": 11,
+            "win_by": 2,
+            "issue_type": "tied_score",
+        },
+    )
+
+
 def test_realism_audit_parameter_resolution_uses_generation_run_snapshot(session):
     seed_audit_dataset(session)
 
@@ -1973,13 +2097,14 @@ def test_realism_audit_execution_json_ready_includes_scope_metadata(session):
     assert payload["executed_at"].endswith("+00:00")
     assert payload["process_type"] == "release_certification"
     assert set(payload["implemented_pillars"]) == {
+        "structural_integrity",
         "operational_realism",
         "simulation_fidelity",
         "assignment_readiness",
         "export_readiness",
         "historical_regression",
     }
-    assert payload["planned_pillars"] == ["structural_integrity"]
+    assert payload["planned_pillars"] == []
     assert payload["results"][0]["pillar"] == "operational_realism"
     assert payload["results"][0]["query"] == "weekend_match_share"
     assert payload["assessment"]["overall_status"] in {
@@ -2161,14 +2286,14 @@ def test_realism_audit_assessment_computes_cross_pillar_certification_score():
     assert by_pillar["historical_regression"]["score"] == 100.0
 
 
-def test_realism_audit_assessment_marks_unimplemented_pillar_not_assessed():
+def test_realism_audit_assessment_scores_structural_integrity_findings():
     payload = {
         "results": [
             {
-                "query": "structural_integrity_placeholder",
-                "category": "integrity",
+                "query": "match_winner_integrity",
+                "category": "matches",
                 "pillar": "structural_integrity",
-                "rows": [],
+                "rows": [{"match_id": 99, "issue_type": "winning_team_not_in_match"}],
             }
         ]
     }
@@ -2181,10 +2306,11 @@ def test_realism_audit_assessment_marks_unimplemented_pillar_not_assessed():
         if pillar["pillar"] == "structural_integrity"
     )
     assert structural["query_count"] == 1
-    assert structural["implementation_status"] == "planned"
-    assert structural["decision"] == "PASS"
-    assert assessment["certification_score"] is None
-    assert assessment["certification_decision"] == "PASS"
+    assert structural["implementation_status"] == "implemented"
+    assert structural["decision"] == "FAIL"
+    assert structural["score"] == 75.0
+    assert assessment["certification_score"] == 75.0
+    assert assessment["certification_decision"] == "FAIL"
 
 
 def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pillars():
@@ -2193,6 +2319,7 @@ def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pilla
         for query in REALISM_AUDIT_QUERIES
         if query.name
         in {
+            "match_winner_integrity",
             "chemistry_effectiveness",
             "candidate_depth_by_country_division",
             "missing_gold_inputs",
@@ -2201,6 +2328,7 @@ def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pilla
     }
 
     assert pillar_map == {
+        "match_winner_integrity": "structural_integrity",
         "chemistry_effectiveness": "simulation_fidelity",
         "candidate_depth_by_country_division": "assignment_readiness",
         "missing_gold_inputs": "export_readiness",
