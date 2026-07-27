@@ -401,6 +401,7 @@ DEFAULT_CONFIG_PAYLOAD: dict[str, Any] = {
         "validation_sample_size_distribution": 10000,
         "weekend_concentration_min": 0.4,
         "weekend_concentration_max": 0.6,
+        "regional_strength_min_rated_players": 15,
         "distribution_tolerance": 0.01,
     },
     "export": {

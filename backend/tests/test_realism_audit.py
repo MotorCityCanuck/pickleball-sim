@@ -341,7 +341,8 @@ def seed_audit_dataset(session) -> None:
                 '{
                     "validation": {
                         "weekend_concentration_min": 0.45,
-                        "weekend_concentration_max": 0.55
+                        "weekend_concentration_max": 0.55,
+                        "regional_strength_min_rated_players": 1
                     },
                     "ratings": {
                         "rating_movement_warning_threshold": 250,
@@ -1981,6 +1982,7 @@ def test_realism_audit_parameter_resolution_uses_generation_run_snapshot(session
     assert float(params["weekend_concentration_max"]) == pytest.approx(0.55)
     assert float(params["rating_delta_warning_threshold"]) == pytest.approx(250.0)
     assert float(params["initial_rating_elite_min"]) == pytest.approx(2000.0)
+    assert params["regional_strength_min_rated_players"] == 1
     assert params["max_daily_matches_per_team"] == 1
     assert float(params["monthly_matches_per_active_player_mean"]) == pytest.approx(8.0)
     assert float(params["monthly_matches_per_active_player_std_dev"]) == pytest.approx(2.0)
@@ -1991,6 +1993,33 @@ def test_realism_audit_parameter_resolution_uses_generation_run_snapshot(session
         "INACTIVE": 12.5,
         "RETIRED": 0.0,
     }
+
+
+def test_regional_strength_balance_uses_minimum_rated_player_threshold(session):
+    seed_audit_dataset(session)
+    runner = RealismAuditRunner(session)
+
+    results = runner.run(
+        query_names=["regional_strength_balance"],
+        params={
+            "generation_run_id": 1,
+            "initial_rating_elite_min": 2000,
+            "regional_strength_min_rated_players": 4,
+        },
+    )
+
+    assert results[0].rows == (
+        {
+            "region_id": 1,
+            "country_code": "US",
+            "state_province_code": "NY",
+            "region_name": "North Metro",
+            "rated_player_count": 4,
+            "avg_rating": 1550.0,
+            "max_rating": 1700.0,
+            "elite_player_pct": 0.0,
+        },
+    )
 
 
 def test_realism_audit_parameter_resolution_defaults_to_latest_generation_run(session):

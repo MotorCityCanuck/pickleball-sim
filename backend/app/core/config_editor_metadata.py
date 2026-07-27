@@ -1479,6 +1479,17 @@ CONFIG_EDITOR_FIELDS: tuple[ConfigEditorFieldDefinition, ...] = (
         step=1.0,
     ),
     ConfigEditorFieldDefinition(
+        path="validation.regional_strength_min_rated_players",
+        label="Regional strength minimum rated players",
+        control_type="integer",
+        scope="synthetic",
+        description="Minimum rated-player count a region must have before release certification includes it in regional strength spread checks.",
+        default_value=_path_default("validation.regional_strength_min_rated_players"),
+        basic_or_advanced="advanced",
+        min_value=1,
+        step=1,
+    ),
+    ConfigEditorFieldDefinition(
         path="ratings.k_factor_new_player",
         label="New-player K factor",
         control_type="decimal",

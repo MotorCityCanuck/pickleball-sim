@@ -3856,9 +3856,15 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                 AND lr.rating_rank = 1
             WHERE p.generation_run_id = :generation_run_id
             GROUP BY r.id, r.country_code, r.state_province_code, r.region_name
+            HAVING COUNT(lr.player_id) >= :regional_strength_min_rated_players
             ORDER BY avg_rating DESC, rated_player_count DESC, r.id ASC
         """,
-        required_params=("generation_run_id", "initial_rating_elite_min"),
+        required_params=(
+            "generation_run_id",
+            "initial_rating_elite_min",
+            "regional_strength_min_rated_players",
+        ),
+        related_config_keys=("validation.regional_strength_min_rated_players",),
         tags=("simulation", "regions", "strength"),
     ),
     RealismAuditQuery(
@@ -4826,6 +4832,11 @@ def resolve_realism_audit_parameters(
             payload,
             ("ratings", "initial_rating_elite_min"),
             Decimal("4000"),
+        ),
+        "regional_strength_min_rated_players": _payload_int(
+            payload,
+            ("validation", "regional_strength_min_rated_players"),
+            15,
         ),
         "max_club_fill_ratio": _payload_number(
             payload,
