@@ -2682,14 +2682,22 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                     SELECT
                         pcd.player_id,
                         pcd.creation_date,
-                        MIN(tm.joined_date) AS first_team_joined_date
+                        MIN(t.joined_date) AS first_team_joined_date
                     FROM player_creation_dates pcd
                     JOIN batch_context bc
                         ON 1 = 1
-                    LEFT JOIN team_memberships tm
-                        ON tm.player_id = pcd.player_id
-                        AND tm.joined_date >= pcd.creation_date
-                        AND tm.joined_date <= bc.batch_month
+                    LEFT JOIN (
+                        SELECT
+                            tm.player_id,
+                            tm.joined_date
+                        FROM team_memberships tm
+                        JOIN teams t
+                            ON t.id = tm.team_id
+                            AND t.team_type = 'competitive'
+                    ) t
+                        ON t.player_id = pcd.player_id
+                        AND t.joined_date >= pcd.creation_date
+                        AND t.joined_date <= bc.batch_month
                     GROUP BY pcd.player_id, pcd.creation_date
                 ),
                 player_delays AS (
@@ -2756,14 +2764,22 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
                     SELECT
                         pcd.player_id,
                         pcd.creation_date,
-                        MIN(tm.joined_date) AS first_team_joined_date
+                        MIN(t.joined_date) AS first_team_joined_date
                     FROM player_creation_dates pcd
                     JOIN batch_context bc
                         ON 1 = 1
-                    LEFT JOIN team_memberships tm
-                        ON tm.player_id = pcd.player_id
-                        AND tm.joined_date >= pcd.creation_date
-                        AND tm.joined_date <= bc.batch_month
+                    LEFT JOIN (
+                        SELECT
+                            tm.player_id,
+                            tm.joined_date
+                        FROM team_memberships tm
+                        JOIN teams t
+                            ON t.id = tm.team_id
+                            AND t.team_type = 'competitive'
+                    ) t
+                        ON t.player_id = pcd.player_id
+                        AND t.joined_date >= pcd.creation_date
+                        AND t.joined_date <= bc.batch_month
                     GROUP BY pcd.player_id, pcd.creation_date
                 ),
                 player_delays AS (
@@ -2805,6 +2821,10 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
             """,
         },
         required_params=("batch_id",),
+        related_config_keys=(
+            "team_formation.player_team_participation_rate",
+            "team_formation.competitive_team_rate",
+        ),
         tags=("teams", "players", "registrations"),
     ),
     RealismAuditQuery(
@@ -4868,6 +4888,16 @@ def resolve_realism_audit_parameters(
             payload,
             ("validation", "regional_strength_min_rated_players"),
             15,
+        ),
+        "player_team_participation_rate": _payload_number(
+            payload,
+            ("team_formation", "player_team_participation_rate"),
+            Decimal("0.90"),
+        ),
+        "competitive_team_rate": _payload_number(
+            payload,
+            ("team_formation", "competitive_team_rate"),
+            Decimal("0.20"),
         ),
         "hidden_bias_enabled": hidden_bias_enabled,
         "fatigue_bias_enabled": fatigue_bias_enabled,

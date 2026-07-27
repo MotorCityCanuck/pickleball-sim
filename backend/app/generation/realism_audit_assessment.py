@@ -17,6 +17,8 @@ DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
     "rating_large_delta_error_pct": 5.0,
     "rating_outlier_warning_delta": 250.0,
     "unteamed_duration_warning_days": 30.0,
+    "competitive_assignment_shortfall_warning_pct_points": 10.0,
+    "competitive_assignment_shortfall_error_pct_points": 20.0,
     "historical_baseline_warning_pct": 20.0,
     "historical_baseline_error_pct": 35.0,
     "historical_trend_warning_pct": 15.0,
@@ -83,12 +85,18 @@ def assess_realism_audit_payload(
 ) -> dict[str, Any]:
     """Assess realism audit query results and return UI/report-ready findings."""
     bias_context = _bias_context_from_payload(payload)
+    assessment_parameters = _assessment_parameters_from_payload(payload)
     active_thresholds = _apply_bias_aware_threshold_overrides(
         normalize_realism_audit_assessment_thresholds(thresholds),
         bias_context,
     )
     query_assessments = [
-        _assess_query_result(result, active_thresholds, bias_context)
+        _assess_query_result(
+            result,
+            active_thresholds,
+            bias_context,
+            assessment_parameters,
+        )
         for result in _iter_query_results(payload.get("results"))
     ]
     query_assessments = [
@@ -151,6 +159,7 @@ def _assess_query_result(
     result: Mapping[str, Any],
     thresholds: Mapping[str, float],
     bias_context: Mapping[str, Any],
+    assessment_parameters: Mapping[str, Any],
 ) -> dict[str, Any]:
     query_name = str(result.get("query") or "unnamed_query")
     category = str(result.get("category") or "general")
@@ -177,7 +186,12 @@ def _assess_query_result(
         name_assessment,
     )
 
-    team_assessment = _assess_team_readiness(query_name, rows, thresholds)
+    team_assessment = _assess_team_readiness(
+        query_name,
+        rows,
+        thresholds,
+        assessment_parameters,
+    )
     severity, summary, evidence, recommendation = _pick_assessment(
         (severity, summary, evidence, recommendation),
         team_assessment,
@@ -240,6 +254,11 @@ def _assess_query_result(
         "evidence": evidence,
         "recommendation": recommendation,
     }
+
+
+def _assessment_parameters_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    parameters = payload.get("parameters")
+    return parameters if isinstance(parameters, Mapping) else {}
 
 
 def _build_pillar_assessments(
@@ -556,31 +575,71 @@ def _assess_team_readiness(
     query_name: str,
     rows: Sequence[Mapping[str, Any]],
     thresholds: Mapping[str, float],
+    parameters: Mapping[str, Any],
 ) -> tuple[str, str, str, str] | None:
     if query_name == "team_assignment_delay_summary":
-        max_days = max(
-            (
-                _to_float(row.get("max_days_unteamed_including_unresolved")) or 0
-                for row in rows
-            ),
-            default=0,
+        player_count = max(
+            (_to_float(row.get("player_count")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        ever_teamed = max(
+            (_to_float(row.get("ever_teamed_player_count")) or 0.0 for row in rows),
+            default=0.0,
         )
         unresolved = max(
-            (_to_float(row.get("still_unteamed_player_count")) or 0 for row in rows),
-            default=0,
+            (_to_float(row.get("still_unteamed_player_count")) or 0.0 for row in rows),
+            default=0.0,
         )
-        warning = thresholds["unteamed_duration_warning_days"]
-        if unresolved > 0 or max_days >= warning:
+        avg_days = max(
+            (_to_float(row.get("avg_days_to_first_team")) or 0.0 for row in rows),
+            default=0.0,
+        )
+        target_rate = (
+            (_to_float(parameters.get("player_team_participation_rate")) or 0.0)
+            * (_to_float(parameters.get("competitive_team_rate")) or 0.0)
+        )
+        observed_rate = 0.0 if player_count <= 0 else ever_teamed / player_count
+        shortfall_pct_points = max(0.0, (target_rate - observed_rate) * 100.0)
+        duration_warning = thresholds["unteamed_duration_warning_days"]
+        shortfall_warning = thresholds[
+            "competitive_assignment_shortfall_warning_pct_points"
+        ]
+        shortfall_error = thresholds[
+            "competitive_assignment_shortfall_error_pct_points"
+        ]
+        shortfall_severity = _severity_for_thresholds(
+            shortfall_pct_points,
+            warning=shortfall_warning,
+            error=shortfall_error,
+        )
+        if shortfall_severity != "info":
+            return (
+                shortfall_severity,
+                "Competitive-team assignment coverage is below the configured model target.",
+                (
+                    f"Observed competitive assignment rate is {observed_rate * 100.0:.2f}% "
+                    f"versus configured target {target_rate * 100.0:.2f}%; "
+                    f"{int(unresolved)} active players remain outside competitive teams as of the batch."
+                ),
+                "Review competitive-team formation volume and assignment eligibility against the configured competitive-team share.",
+            )
+        if ever_teamed > 0 and avg_days >= duration_warning:
             return (
                 "warning",
-                "Some players remain outside formal competitive teams or waited longer than the assessment tolerance.",
-                f"{int(unresolved)} players are not on a formal team; max time outside a formal team is {max_days:.0f} days.",
-                "Review competitive-team assignment capacity separately from ad hoc match eligibility.",
+                "Competitive-team assignment is slower than the assessment tolerance for players who do enter the competitive roster pool.",
+                (
+                    f"Average time to first competitive team is {avg_days:.0f} days; "
+                    f"configured warning threshold is {duration_warning:.0f} days."
+                ),
+                "Review competitive-team onboarding cadence rather than treating unresolved non-competitive players as defects.",
             )
         return (
             "info",
-            "Formal team assignment delay is within the assessment tolerance.",
-            f"Max time outside a formal team is {max_days:.0f} days.",
+            "Competitive-team assignment coverage is consistent with the configured team-formation model.",
+            (
+                f"Observed competitive assignment rate is {observed_rate * 100.0:.2f}% "
+                f"versus configured target {target_rate * 100.0:.2f}%."
+            ),
             "No action required.",
         )
     return None

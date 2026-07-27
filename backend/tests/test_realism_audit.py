@@ -2295,7 +2295,7 @@ def test_realism_audit_assessment_computes_cross_pillar_certification_score():
                         "player_count": 120,
                         "ever_teamed_player_count": 118,
                         "still_unteamed_player_count": 2,
-                        "avg_days_to_first_team": 14.0,
+                        "avg_days_to_first_team": 45.0,
                         "avg_days_unteamed_including_unresolved": 18.0,
                         "max_days_unteamed_including_unresolved": 45,
                     }
