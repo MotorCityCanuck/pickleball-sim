@@ -63,7 +63,9 @@ def session():
                 country_code varchar(10) not null,
                 region_name varchar(255) not null,
                 state_province_code varchar(10),
-                selection_probability numeric(12, 8)
+                selection_probability numeric(12, 8),
+                latitude numeric(10, 6),
+                longitude numeric(10, 6)
             )
             """
         )
@@ -125,6 +127,9 @@ def session():
                 rating_type varchar(50) not null,
                 rating_value numeric(8, 3) not null,
                 confidence_score numeric(8, 3),
+                volatility_score numeric(8, 3),
+                global_percentile numeric(5, 2),
+                match_count_used integer,
                 batch_id bigint not null
             )
             """
@@ -159,8 +164,11 @@ def session():
                 team_type varchar(30) not null default 'competitive',
                 team_division varchar(50) not null default 'open_doubles',
                 team_status varchar(30) not null,
+                country_code varchar(2),
                 formation_date date not null,
                 dissolution_date date,
+                chemistry_score numeric(8, 4),
+                persistence_probability numeric(5, 4),
                 generation_run_id bigint
             )
             """
@@ -283,6 +291,34 @@ def session():
             )
             """
         )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_releases (
+                id integer primary key,
+                release_name varchar(255) not null,
+                release_type varchar(50) not null,
+                release_month date,
+                generation_run_id bigint not null,
+                data_quality_level varchar(50),
+                output_path text not null,
+                status varchar(30) not null default 'pending',
+                completed_at datetime
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE student_dataset_release_files (
+                id integer primary key,
+                release_id bigint not null,
+                table_name varchar(255) not null,
+                file_path text not null,
+                row_count bigint,
+                schema_hash varchar(128),
+                checksum varchar(128)
+            )
+            """
+        )
 
     db_session = sessionmaker(bind=engine, autoflush=False, future=True)()
     try:
@@ -371,10 +407,10 @@ def seed_audit_dataset(session) -> None:
     session.execute(
         text(
             """
-            INSERT INTO regions (id, country_code, region_name, state_province_code, selection_probability) VALUES
-                (1, 'US', 'North Metro', 'NY', 0.50),
-                (2, 'US', 'South Metro', 'FL', 0.30),
-                (3, 'CA', 'West Metro', 'BC', 0.20)
+            INSERT INTO regions (id, country_code, region_name, state_province_code, selection_probability, latitude, longitude) VALUES
+                (1, 'US', 'North Metro', 'NY', 0.50, 40.7128, -74.0060),
+                (2, 'US', 'South Metro', 'FL', 0.30, 25.7617, -80.1918),
+                (3, 'CA', 'West Metro', 'BC', 0.20, 49.2827, -123.1207)
             """
         )
     )
@@ -450,16 +486,16 @@ def seed_audit_dataset(session) -> None:
         text(
             """
             INSERT INTO player_rating_history (
-                id, player_id, rating_date, rating_type, rating_value, confidence_score, batch_id
+                id, player_id, rating_date, rating_type, rating_value, confidence_score, volatility_score, global_percentile, match_count_used, batch_id
             ) VALUES
-                (200, 1, '2026-01-01', 'initial', 1500, 0.20, 10),
-                (201, 2, '2026-01-01', 'initial', 1600, 0.20, 10),
-                (202, 3, '2026-01-01', 'initial', 1700, 0.20, 10),
-                (203, 4, '2026-01-01', 'initial', 1800, 0.20, 10),
-                (204, 5, '2026-01-01', 'initial', 2100, 0.20, 10),
-                (205, 6, '2026-01-01', 'initial', 900, 0.20, 10),
-                (206, 7, '2026-01-01', 'initial', 1400, 0.20, 10),
-                (207, 8, '2026-01-01', 'initial', 1300, 0.20, 10)
+                (200, 1, '2026-01-01', 'initial', 1500, 0.20, 0.35, 55.0, 2, 10),
+                (201, 2, '2026-01-01', 'initial', 1600, 0.20, 0.34, 63.0, 2, 10),
+                (202, 3, '2026-01-01', 'initial', 1700, 0.20, 0.30, 72.0, 4, 10),
+                (203, 4, '2026-01-01', 'initial', 1800, 0.20, 0.28, 78.0, 4, 10),
+                (204, 5, '2026-01-01', 'initial', 2100, 0.20, 0.22, 96.0, 8, 10),
+                (205, 6, '2026-01-01', 'initial', 900, 0.20, 0.45, 18.0, 1, 10),
+                (206, 7, '2026-01-01', 'initial', 1400, 0.20, 0.39, 48.0, 1, 10),
+                (207, 8, '2026-01-01', 'initial', 1300, 0.20, 0.41, 35.0, 1, 10)
             """
         )
     )
@@ -493,11 +529,11 @@ def seed_audit_dataset(session) -> None:
         text(
             """
             INSERT INTO teams (
-                id, team_status, formation_date, dissolution_date, generation_run_id
+                id, team_type, team_division, team_status, country_code, formation_date, dissolution_date, chemistry_score, persistence_probability, generation_run_id
             ) VALUES
-                (500, 'active', '2026-01-01', NULL, 1),
-                (501, 'active', '2026-01-01', NULL, 1),
-                (502, 'active', '2026-01-01', NULL, 1)
+                (500, 'competitive', 'mens_doubles', 'active', 'US', '2026-01-01', NULL, 0.82, 0.91, 1),
+                (501, 'competitive', 'mens_doubles', 'active', 'US', '2026-01-01', NULL, 0.48, 0.66, 1),
+                (502, 'competitive', 'mixed_doubles', 'active', 'US', '2026-01-01', NULL, 0.73, 0.84, 1)
             """
         )
     )
@@ -1572,6 +1608,224 @@ def test_realism_audit_runner_uses_latest_batch_when_scope_is_omitted(session):
             "unique_match_days": 0,
             "avg_matches_per_match_day": None,
             "distinct_match_regions": 0,
+        },
+    )
+
+
+def test_realism_audit_runner_executes_phase3_release_certification_queries(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, parameter_snapshot, status, created_at, updated_at
+            ) VALUES (
+                2,
+                'Prior Audit Run',
+                55,
+                'v0',
+                '{}',
+                'succeeded',
+                '2025-12-31 12:00:00',
+                '2025-12-31 12:00:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO players (
+                id, first_name, last_name, gender, birth_date, registration_date, player_status, home_region_id, generation_run_id
+            ) VALUES
+                (101, 'Prior', 'One', 'M', '1990-01-01', '2025-12-01', 'ACTIVE', 1, 2),
+                (102, 'Prior', 'Two', 'F', '1991-01-01', '2025-12-01', 'ACTIVE', 2, 2)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO teams (
+                id, team_type, team_division, team_status, country_code, formation_date, dissolution_date, chemistry_score, persistence_probability, generation_run_id
+            ) VALUES
+                (900, 'competitive', 'womens_doubles', 'active', 'CA', '2025-12-01', NULL, 0.61, 0.70, 2)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO monthly_batches (
+                id, generation_run_id, batch_month, batch_sequence, batch_type, processing_status, created_at, updated_at
+            ) VALUES
+                (20, 2, '2025-12-01', 1, 'historical_initial', 'succeeded', '2025-12-15 12:00:00', '2025-12-15 12:00:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO matches (
+                id, match_date, region_id, match_type, winning_team_id, predicted_winning_team_number, predicted_win_probability, batch_id
+            ) VALUES
+                (9000, '2025-12-10', 2, 'recreational', 900, 1, 0.60, 20)
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_releases (
+                id, release_name, release_type, release_month, generation_run_id, data_quality_level, output_path, status, completed_at
+            ) VALUES
+                (1, 'baseline_clean', 'initial_snapshot', '2026-01-01', 1, 'none', '/tmp/baseline_clean', 'succeeded', '2026-01-20 12:00:00')
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_release_files (
+                id, release_id, table_name, file_path, row_count, schema_hash, checksum
+            ) VALUES
+                (1, 1, 'players', '/tmp/baseline_clean/players.parquet', 8, 'abc', 'chk1'),
+                (2, 1, 'teams', '/tmp/baseline_clean/teams.parquet', 3, 'def', 'chk2')
+            """
+        )
+    )
+    session.commit()
+    runner = RealismAuditRunner(session)
+
+    results = runner.run(
+        query_names=[
+            "chemistry_effectiveness",
+            "fatigue_effectiveness",
+            "confidence_stability",
+            "regional_strength_balance",
+            "candidate_depth_by_country_division",
+            "elite_player_depth",
+            "alternate_candidate_depth",
+            "missing_gold_inputs",
+            "division_balance",
+            "repeat_opponent_rate",
+            "historical_run_size_regression",
+            "historical_release_file_coverage",
+        ]
+    )
+
+    result_map = {result.query.name: result.rows for result in results}
+
+    assert result_map["chemistry_effectiveness"] == (
+        {
+            "chemistry_band": "medium",
+            "team_match_count": 2,
+            "avg_chemistry_score": 0.48,
+            "avg_expected_win_probability": 0.225,
+            "actual_win_rate": 0.5,
+            "win_rate_minus_expected": 0.275,
+        },
+        {
+            "chemistry_band": "high",
+            "team_match_count": 2,
+            "avg_chemistry_score": 0.82,
+            "avg_expected_win_probability": 0.775,
+            "actual_win_rate": 0.5,
+            "win_rate_minus_expected": -0.275,
+        },
+    )
+    assert result_map["fatigue_effectiveness"] == (
+        {
+            "workload_band": "0",
+            "player_update_count": 8,
+            "avg_recent_match_count": 0.0,
+            "avg_score_share_delta": 0.0,
+            "met_or_exceeded_expected_rate": 0.5,
+        },
+    )
+    assert result_map["confidence_stability"][0]["confidence_band"] == "0_24"
+    assert result_map["regional_strength_balance"][0]["region_id"] == 2
+    assert result_map["candidate_depth_by_country_division"] == (
+        {
+            "country_code": "US",
+            "team_division": "mens_doubles",
+            "candidate_team_count": 2,
+            "candidate_player_count": 4,
+            "avg_team_rating": 1650.0,
+        },
+        {
+            "country_code": "US",
+            "team_division": "mixed_doubles",
+            "candidate_team_count": 1,
+            "candidate_player_count": 2,
+            "avg_team_rating": 1500.0,
+        },
+    )
+    assert result_map["elite_player_depth"] == (
+        {
+            "country_code": "US",
+            "team_division": "mens_doubles",
+            "elite_player_count": 0,
+            "rostered_player_count": 4,
+            "elite_player_pct": 0.0,
+        },
+        {
+            "country_code": "US",
+            "team_division": "mixed_doubles",
+            "elite_player_count": 1,
+            "rostered_player_count": 2,
+            "elite_player_pct": 50.0,
+        },
+    )
+    assert result_map["alternate_candidate_depth"] == (
+        {
+            "country_code": "US",
+            "team_division": "mens_doubles",
+            "ranked_team_count": 2,
+            "alternate_team_count": 1,
+        },
+        {
+            "country_code": "US",
+            "team_division": "mixed_doubles",
+            "ranked_team_count": 1,
+            "alternate_team_count": 0,
+        },
+    )
+    missing_inputs = {row["table_name"]: row for row in result_map["missing_gold_inputs"]}
+    assert missing_inputs["players"]["row_count"] == 8
+    assert missing_inputs["matches"]["missing_flag"] == 0
+    assert result_map["division_balance"] == (
+        {
+            "country_code": "US",
+            "team_division": "mens_doubles",
+            "team_count": 2,
+            "team_pct_within_country": 66.67,
+        },
+        {
+            "country_code": "US",
+            "team_division": "mixed_doubles",
+            "team_count": 1,
+            "team_pct_within_country": 33.33,
+        },
+    )
+    assert result_map["repeat_opponent_rate"] == (
+        {
+            "meeting_count": 2,
+            "matchup_pair_count": 1,
+            "matchup_pair_pct": 100.0,
+        },
+    )
+    assert result_map["historical_run_size_regression"][0]["generation_run_id"] == 2
+    assert result_map["historical_run_size_regression"][1]["generation_run_id"] == 1
+    assert result_map["historical_release_file_coverage"] == (
+        {
+            "generation_run_id": 1,
+            "release_name": "baseline_clean",
+            "release_type": "initial_snapshot",
+            "data_quality_level": "none",
+            "status": "succeeded",
+            "file_count": 2,
+            "total_row_count": 11,
         },
     )
 

@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD
 from app.models import AuditBatchTeamRoster, GenerationRun, MonthlyBatch
-from .release_certification_pillars import OPERATIONAL_REALISM_PILLAR
+from .release_certification_pillars import (
+    ASSIGNMENT_READINESS_PILLAR,
+    EXPORT_READINESS_PILLAR,
+    HISTORICAL_REGRESSION_PILLAR,
+    OPERATIONAL_REALISM_PILLAR,
+    SIMULATION_FIDELITY_PILLAR,
+)
 
 
 AuditScope = Literal["generation_run", "batch"]
@@ -699,6 +705,182 @@ FIRST_NAME_ALIGNMENT_SQL = {
                 WHEN 'country_year_other_state' THEN 2
                 WHEN 'country_gender_other_state_year' THEN 3
                 ELSE 4
+            END
+    """,
+}
+
+
+FATIGUE_EFFECTIVENESS_SQL = {
+    "sqlite": """
+        WITH player_match_load AS (
+            SELECT
+                r.player_id,
+                r.match_id,
+                r.match_date,
+                r.expected_score_share,
+                r.actual_score_share,
+                (
+                    SELECT COUNT(DISTINCT prior.match_id)
+                    FROM ratings_update_log prior
+                    WHERE prior.player_id = r.player_id
+                        AND prior.match_date < r.match_date
+                        AND julianday(r.match_date) - julianday(prior.match_date) <= 14
+                ) AS recent_match_count
+            FROM ratings_update_log r
+            JOIN monthly_batches b
+                ON b.id = r.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+        ),
+        bucketed AS (
+            SELECT
+                CASE
+                    WHEN recent_match_count = 0 THEN '0'
+                    WHEN recent_match_count = 1 THEN '1'
+                    ELSE '2_plus'
+                END AS workload_band,
+                recent_match_count,
+                actual_score_share - expected_score_share AS score_share_delta
+            FROM player_match_load
+        )
+        SELECT
+            workload_band,
+            COUNT(*) AS player_update_count,
+            ROUND(AVG(recent_match_count), 3) AS avg_recent_match_count,
+            ROUND(AVG(score_share_delta), 4) AS avg_score_share_delta,
+            ROUND(
+                AVG(CASE WHEN score_share_delta >= 0 THEN 1.0 ELSE 0.0 END),
+                4
+            ) AS met_or_exceeded_expected_rate
+        FROM bucketed
+        GROUP BY workload_band
+        ORDER BY
+            CASE workload_band
+                WHEN '0' THEN 0
+                WHEN '1' THEN 1
+                ELSE 2
+            END
+    """,
+    "postgresql": """
+        WITH player_match_load AS (
+            SELECT
+                r.player_id,
+                r.match_id,
+                r.match_date,
+                r.expected_score_share,
+                r.actual_score_share,
+                (
+                    SELECT COUNT(DISTINCT prior.match_id)
+                    FROM ratings_update_log prior
+                    WHERE prior.player_id = r.player_id
+                        AND prior.match_date < r.match_date
+                        AND prior.match_date >= r.match_date - INTERVAL '14 days'
+                ) AS recent_match_count
+            FROM ratings_update_log r
+            JOIN monthly_batches b
+                ON b.id = r.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+        ),
+        bucketed AS (
+            SELECT
+                CASE
+                    WHEN recent_match_count = 0 THEN '0'
+                    WHEN recent_match_count = 1 THEN '1'
+                    ELSE '2_plus'
+                END AS workload_band,
+                recent_match_count,
+                actual_score_share - expected_score_share AS score_share_delta
+            FROM player_match_load
+        )
+        SELECT
+            workload_band,
+            COUNT(*) AS player_update_count,
+            ROUND(AVG(recent_match_count), 3) AS avg_recent_match_count,
+            ROUND(AVG(score_share_delta), 4) AS avg_score_share_delta,
+            ROUND(
+                AVG(CASE WHEN score_share_delta >= 0 THEN 1.0 ELSE 0.0 END),
+                4
+            ) AS met_or_exceeded_expected_rate
+        FROM bucketed
+        GROUP BY workload_band
+        ORDER BY
+            CASE workload_band
+                WHEN '0' THEN 0
+                WHEN '1' THEN 1
+                ELSE 2
+            END
+    """,
+}
+
+
+TEAM_AGE_DISTRIBUTION_SQL = {
+    "sqlite": """
+        WITH reference_date AS (
+            SELECT MAX(batch_month) AS analysis_date
+            FROM monthly_batches
+            WHERE generation_run_id = :generation_run_id
+        ),
+        aged_teams AS (
+            SELECT
+                CAST(
+                    julianday(COALESCE(t.dissolution_date, rd.analysis_date)) - julianday(t.formation_date)
+                    AS INTEGER
+                ) AS team_age_days
+            FROM teams t
+            CROSS JOIN reference_date rd
+            WHERE t.generation_run_id = :generation_run_id
+        )
+        SELECT
+            CASE
+                WHEN team_age_days < 30 THEN '0_29'
+                WHEN team_age_days < 90 THEN '30_89'
+                WHEN team_age_days < 180 THEN '90_179'
+                ELSE '180_plus'
+            END AS team_age_band,
+            COUNT(*) AS team_count,
+            ROUND(AVG(team_age_days), 1) AS avg_team_age_days
+        FROM aged_teams
+        GROUP BY team_age_band
+        ORDER BY
+            CASE team_age_band
+                WHEN '0_29' THEN 0
+                WHEN '30_89' THEN 1
+                WHEN '90_179' THEN 2
+                ELSE 3
+            END
+    """,
+    "postgresql": """
+        WITH reference_date AS (
+            SELECT MAX(batch_month) AS analysis_date
+            FROM monthly_batches
+            WHERE generation_run_id = :generation_run_id
+        ),
+        aged_teams AS (
+            SELECT
+                CAST(
+                    COALESCE(t.dissolution_date, rd.analysis_date) - t.formation_date
+                    AS INTEGER
+                ) AS team_age_days
+            FROM teams t
+            CROSS JOIN reference_date rd
+            WHERE t.generation_run_id = :generation_run_id
+        )
+        SELECT
+            CASE
+                WHEN team_age_days < 30 THEN '0_29'
+                WHEN team_age_days < 90 THEN '30_89'
+                WHEN team_age_days < 180 THEN '90_179'
+                ELSE '180_plus'
+            END AS team_age_band,
+            COUNT(*) AS team_count,
+            ROUND(AVG(team_age_days), 1) AS avg_team_age_days
+        FROM aged_teams
+        GROUP BY team_age_band
+        ORDER BY
+            CASE team_age_band
+                WHEN '0_29' THEN 0
+                WHEN '30_89' THEN 1
+                WHEN '90_179' THEN 2
+                ELSE 3
             END
     """,
 }
@@ -3225,6 +3407,865 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         """,
         required_params=("batch_id",),
         tags=("ratings", "confidence"),
+    ),
+    RealismAuditQuery(
+        name="chemistry_effectiveness",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Observed team win rates versus expected results grouped by stored chemistry score.",
+        sql="""
+            WITH team_match_results AS (
+                SELECT
+                    CASE
+                        WHEN t.chemistry_score IS NULL THEN 'unknown'
+                        WHEN t.chemistry_score < 0.40 THEN 'low'
+                        WHEN t.chemistry_score < 0.70 THEN 'medium'
+                        ELSE 'high'
+                    END AS chemistry_band,
+                    t.chemistry_score,
+                    CASE
+                        WHEN m.predicted_winning_team_number = mt.team_number
+                            THEN COALESCE(m.predicted_win_probability, 0.5)
+                        ELSE 1.0 - COALESCE(m.predicted_win_probability, 0.5)
+                    END AS expected_win_probability,
+                    CASE
+                        WHEN m.winning_team_id = mt.source_team_id THEN 1.0
+                        ELSE 0.0
+                    END AS actual_win_rate
+                FROM match_teams mt
+                JOIN matches m
+                    ON m.id = mt.match_id
+                JOIN monthly_batches b
+                    ON b.id = m.batch_id
+                JOIN teams t
+                    ON t.id = mt.source_team_id
+                WHERE b.generation_run_id = :generation_run_id
+                    AND t.chemistry_score IS NOT NULL
+            )
+            SELECT
+                chemistry_band,
+                COUNT(*) AS team_match_count,
+                ROUND(AVG(chemistry_score), 4) AS avg_chemistry_score,
+                ROUND(AVG(expected_win_probability), 4) AS avg_expected_win_probability,
+                ROUND(AVG(actual_win_rate), 4) AS actual_win_rate,
+                ROUND(AVG(actual_win_rate) - AVG(expected_win_probability), 4) AS win_rate_minus_expected
+            FROM team_match_results
+            GROUP BY chemistry_band
+            ORDER BY
+                CASE chemistry_band
+                    WHEN 'unknown' THEN 0
+                    WHEN 'low' THEN 1
+                    WHEN 'medium' THEN 2
+                    ELSE 3
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("simulation", "chemistry"),
+    ),
+    RealismAuditQuery(
+        name="fatigue_effectiveness",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Actual-versus-expected score share grouped by recent match load within the fatigue lookback window.",
+        sql=FATIGUE_EFFECTIVENESS_SQL,
+        required_params=("generation_run_id",),
+        tags=("simulation", "fatigue"),
+    ),
+    RealismAuditQuery(
+        name="confidence_stability",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Rating-movement stability grouped by pre-match confidence bands.",
+        sql="""
+            WITH banded AS (
+                SELECT
+                    CASE
+                        WHEN r.confidence_before IS NULL THEN 'unknown'
+                        WHEN r.confidence_before < 0.25 THEN '0_24'
+                        WHEN r.confidence_before < 0.50 THEN '25_49'
+                        WHEN r.confidence_before < 0.75 THEN '50_74'
+                        ELSE '75_plus'
+                    END AS confidence_band,
+                    ABS(r.rating_delta) AS abs_rating_delta,
+                    COALESCE(r.confidence_after, r.confidence_before) - r.confidence_before AS confidence_delta
+                FROM ratings_update_log r
+                JOIN monthly_batches b
+                    ON b.id = r.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            )
+            SELECT
+                confidence_band,
+                COUNT(*) AS player_update_count,
+                ROUND(AVG(abs_rating_delta), 3) AS avg_abs_rating_delta,
+                ROUND(AVG(confidence_delta), 4) AS avg_confidence_delta
+            FROM banded
+            GROUP BY confidence_band
+            ORDER BY
+                CASE confidence_band
+                    WHEN 'unknown' THEN 0
+                    WHEN '0_24' THEN 1
+                    WHEN '25_49' THEN 2
+                    WHEN '50_74' THEN 3
+                    ELSE 4
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("simulation", "confidence"),
+    ),
+    RealismAuditQuery(
+        name="volatility_decay",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Observed volatility levels grouped by rating-history match-count experience bands.",
+        sql="""
+            WITH banded AS (
+                SELECT
+                    CASE
+                        WHEN prh.match_count_used IS NULL THEN 'unknown'
+                        WHEN prh.match_count_used < 5 THEN '0_4'
+                        WHEN prh.match_count_used < 10 THEN '5_9'
+                        ELSE '10_plus'
+                    END AS experience_band,
+                    prh.volatility_score,
+                    prh.confidence_score
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+                    AND prh.volatility_score IS NOT NULL
+            )
+            SELECT
+                experience_band,
+                COUNT(*) AS rating_snapshot_count,
+                ROUND(AVG(volatility_score), 4) AS avg_volatility_score,
+                ROUND(AVG(confidence_score), 4) AS avg_confidence_score
+            FROM banded
+            GROUP BY experience_band
+            ORDER BY
+                CASE experience_band
+                    WHEN 'unknown' THEN 0
+                    WHEN '0_4' THEN 1
+                    WHEN '5_9' THEN 2
+                    ELSE 3
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("simulation", "volatility"),
+    ),
+    RealismAuditQuery(
+        name="rating_predictiveness",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Predicted-win probability accuracy grouped into model-confidence buckets.",
+        sql="""
+            WITH bucketed AS (
+                SELECT
+                    CASE
+                        WHEN m.predicted_win_probability IS NULL THEN 'unknown'
+                        WHEN m.predicted_win_probability < 0.60 THEN '50_59'
+                        WHEN m.predicted_win_probability < 0.70 THEN '60_69'
+                        WHEN m.predicted_win_probability < 0.80 THEN '70_79'
+                        ELSE '80_plus'
+                    END AS prediction_bucket,
+                    CASE
+                        WHEN mt.team_number = m.predicted_winning_team_number
+                            AND m.winning_team_id = mt.source_team_id
+                        THEN 1.0
+                        WHEN mt.team_number = m.predicted_winning_team_number
+                        THEN 0.0
+                        ELSE NULL
+                    END AS favorite_won
+                FROM matches m
+                JOIN monthly_batches b
+                    ON b.id = m.batch_id
+                LEFT JOIN match_teams mt
+                    ON mt.match_id = m.id
+                    AND mt.team_number = m.predicted_winning_team_number
+                WHERE b.generation_run_id = :generation_run_id
+            )
+            SELECT
+                prediction_bucket,
+                COUNT(favorite_won) AS predicted_match_count,
+                ROUND(AVG(favorite_won), 4) AS favorite_win_rate
+            FROM bucketed
+            GROUP BY prediction_bucket
+            ORDER BY
+                CASE prediction_bucket
+                    WHEN 'unknown' THEN 0
+                    WHEN '50_59' THEN 1
+                    WHEN '60_69' THEN 2
+                    WHEN '70_79' THEN 3
+                    ELSE 4
+                END
+        """,
+        required_params=("generation_run_id",),
+        tags=("simulation", "prediction"),
+    ),
+    RealismAuditQuery(
+        name="regional_strength_balance",
+        scope="generation_run",
+        category="simulation_fidelity",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Latest player-rating strength distribution by home region.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            )
+            SELECT
+                r.id AS region_id,
+                r.country_code,
+                r.state_province_code,
+                r.region_name,
+                COUNT(lr.player_id) AS rated_player_count,
+                ROUND(AVG(lr.rating_value), 3) AS avg_rating,
+                ROUND(MAX(lr.rating_value), 3) AS max_rating,
+                ROUND(
+                    100.0 * SUM(
+                        CASE WHEN lr.rating_value >= :initial_rating_elite_min THEN 1 ELSE 0 END
+                    ) / NULLIF(COUNT(lr.player_id), 0),
+                    2
+                ) AS elite_player_pct
+            FROM players p
+            JOIN regions r
+                ON r.id = p.home_region_id
+            LEFT JOIN latest_ratings lr
+                ON lr.player_id = p.id
+                AND lr.rating_rank = 1
+            WHERE p.generation_run_id = :generation_run_id
+            GROUP BY r.id, r.country_code, r.state_province_code, r.region_name
+            ORDER BY avg_rating DESC, rated_player_count DESC, r.id ASC
+        """,
+        required_params=("generation_run_id", "initial_rating_elite_min"),
+        tags=("simulation", "regions", "strength"),
+    ),
+    RealismAuditQuery(
+        name="team_age_distribution",
+        scope="generation_run",
+        category="partnership_dynamics",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Distribution of team ages in days as of the current release window.",
+        sql=TEAM_AGE_DISTRIBUTION_SQL,
+        required_params=("generation_run_id",),
+        tags=("teams", "age"),
+    ),
+    RealismAuditQuery(
+        name="team_dissolution_rate",
+        scope="generation_run",
+        category="partnership_dynamics",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Lifecycle-event rate for dormant, retired, and reactivated teams relative to formed teams.",
+        sql="""
+            WITH formed AS (
+                SELECT COUNT(*) AS formed_team_count
+                FROM team_lifecycle_events
+                WHERE generation_run_id = :generation_run_id
+                    AND event_type = 'formed'
+            ),
+            event_counts AS (
+                SELECT 'dormant' AS event_type
+                UNION ALL SELECT 'retired'
+                UNION ALL SELECT 'reactivated'
+            )
+            SELECT
+                ec.event_type,
+                (
+                    SELECT COUNT(*)
+                    FROM team_lifecycle_events tle
+                    WHERE tle.generation_run_id = :generation_run_id
+                        AND tle.event_type = ec.event_type
+                ) AS event_count,
+                formed.formed_team_count,
+                ROUND(
+                    100.0 * (
+                        SELECT COUNT(*)
+                        FROM team_lifecycle_events tle
+                        WHERE tle.generation_run_id = :generation_run_id
+                            AND tle.event_type = ec.event_type
+                    ) / NULLIF(formed.formed_team_count, 0),
+                    2
+                ) AS event_pct_of_formed_teams
+            FROM event_counts ec
+            CROSS JOIN formed
+            ORDER BY ec.event_type
+        """,
+        required_params=("generation_run_id",),
+        tags=("teams", "lifecycle"),
+    ),
+    RealismAuditQuery(
+        name="repeat_partner_frequency",
+        scope="generation_run",
+        category="partnership_dynamics",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="How often the same two-player partnership reappears across matches in one run.",
+        sql="""
+            WITH roster_match_counts AS (
+                SELECT
+                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key,
+                    COUNT(DISTINCT mt.match_id) AS partner_match_count
+                FROM match_teams mt
+                JOIN matches m
+                    ON m.id = mt.match_id
+                JOIN monthly_batches b
+                    ON b.id = m.batch_id
+                JOIN match_team_players mtp
+                    ON mtp.match_team_id = mt.id
+                WHERE b.generation_run_id = :generation_run_id
+                GROUP BY mt.id
+                HAVING COUNT(*) = 2
+            ),
+            partnership_counts AS (
+                SELECT
+                    roster_key,
+                    COUNT(*) AS match_count
+                FROM roster_match_counts
+                GROUP BY roster_key
+            )
+            SELECT
+                match_count AS repeat_match_count,
+                COUNT(*) AS partnership_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                    2
+                ) AS partnership_pct
+            FROM partnership_counts
+            GROUP BY match_count
+            ORDER BY repeat_match_count ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("teams", "partners"),
+    ),
+    RealismAuditQuery(
+        name="repeat_opponent_rate",
+        scope="generation_run",
+        category="competition_ecology",
+        pillar=SIMULATION_FIDELITY_PILLAR.key,
+        description="Distribution of repeated opponent matchups across the generation run.",
+        sql="""
+            WITH team_rosters AS (
+                SELECT
+                    mt.match_id,
+                    mt.team_number,
+                    CAST(MIN(mtp.player_id) AS TEXT) || ':' || CAST(MAX(mtp.player_id) AS TEXT) AS roster_key
+                FROM match_teams mt
+                JOIN matches m
+                    ON m.id = mt.match_id
+                JOIN monthly_batches b
+                    ON b.id = m.batch_id
+                JOIN match_team_players mtp
+                    ON mtp.match_team_id = mt.id
+                WHERE b.generation_run_id = :generation_run_id
+                GROUP BY mt.match_id, mt.team_number
+                HAVING COUNT(*) = 2
+            ),
+            matchup_counts AS (
+                SELECT
+                    CASE
+                        WHEN one.roster_key < two.roster_key
+                            THEN one.roster_key || ' vs ' || two.roster_key
+                        ELSE two.roster_key || ' vs ' || one.roster_key
+                    END AS matchup_key,
+                    COUNT(*) AS meeting_count
+                FROM team_rosters one
+                JOIN team_rosters two
+                    ON two.match_id = one.match_id
+                    AND two.team_number = 2
+                WHERE one.team_number = 1
+                GROUP BY matchup_key
+            )
+            SELECT
+                meeting_count,
+                COUNT(*) AS matchup_pair_count,
+                ROUND(
+                    100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0),
+                    2
+                ) AS matchup_pair_pct
+            FROM matchup_counts
+            GROUP BY meeting_count
+            ORDER BY meeting_count ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("matches", "opponents"),
+    ),
+    RealismAuditQuery(
+        name="candidate_depth_by_country_division",
+        scope="generation_run",
+        category="assignment_readiness",
+        pillar=ASSIGNMENT_READINESS_PILLAR.key,
+        description="Current competitive-team candidate depth by country and division.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            active_team_rosters AS (
+                SELECT
+                    t.id AS team_id,
+                    t.country_code,
+                    t.team_division,
+                    COUNT(DISTINCT tm.player_id) AS member_count,
+                    ROUND(AVG(lr.rating_value), 3) AS avg_team_rating
+                FROM teams t
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.left_date IS NULL
+                LEFT JOIN latest_ratings lr
+                    ON lr.player_id = tm.player_id
+                    AND lr.rating_rank = 1
+                WHERE t.generation_run_id = :generation_run_id
+                    AND t.team_type = 'competitive'
+                    AND t.team_status = 'active'
+                GROUP BY t.id, t.country_code, t.team_division
+                HAVING COUNT(DISTINCT tm.player_id) = 2
+            )
+            SELECT
+                country_code,
+                team_division,
+                COUNT(*) AS candidate_team_count,
+                SUM(member_count) AS candidate_player_count,
+                ROUND(AVG(avg_team_rating), 3) AS avg_team_rating
+            FROM active_team_rosters
+            GROUP BY country_code, team_division
+            ORDER BY country_code ASC, team_division ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("assignment", "candidates"),
+    ),
+    RealismAuditQuery(
+        name="elite_player_depth",
+        scope="generation_run",
+        category="assignment_readiness",
+        pillar=ASSIGNMENT_READINESS_PILLAR.key,
+        description="Elite-player roster depth by country and current team division.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            )
+            SELECT
+                t.country_code,
+                t.team_division,
+                COUNT(DISTINCT CASE WHEN lr.rating_value >= :initial_rating_elite_min THEN tm.player_id END) AS elite_player_count,
+                COUNT(DISTINCT tm.player_id) AS rostered_player_count,
+                ROUND(
+                    100.0 * COUNT(DISTINCT CASE WHEN lr.rating_value >= :initial_rating_elite_min THEN tm.player_id END)
+                    / NULLIF(COUNT(DISTINCT tm.player_id), 0),
+                    2
+                ) AS elite_player_pct
+            FROM teams t
+            JOIN team_memberships tm
+                ON tm.team_id = t.id
+                AND tm.left_date IS NULL
+            LEFT JOIN latest_ratings lr
+                ON lr.player_id = tm.player_id
+                AND lr.rating_rank = 1
+            WHERE t.generation_run_id = :generation_run_id
+                AND t.team_type = 'competitive'
+                AND t.team_status = 'active'
+            GROUP BY t.country_code, t.team_division
+            ORDER BY t.country_code ASC, t.team_division ASC
+        """,
+        required_params=("generation_run_id", "initial_rating_elite_min"),
+        tags=("assignment", "elite", "players"),
+    ),
+    RealismAuditQuery(
+        name="elite_team_depth",
+        scope="generation_run",
+        category="assignment_readiness",
+        pillar=ASSIGNMENT_READINESS_PILLAR.key,
+        description="Elite-team depth by country and division using average current roster rating.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            active_team_rosters AS (
+                SELECT
+                    t.id AS team_id,
+                    t.country_code,
+                    t.team_division,
+                    ROUND(AVG(lr.rating_value), 3) AS avg_team_rating
+                FROM teams t
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.left_date IS NULL
+                LEFT JOIN latest_ratings lr
+                    ON lr.player_id = tm.player_id
+                    AND lr.rating_rank = 1
+                WHERE t.generation_run_id = :generation_run_id
+                    AND t.team_type = 'competitive'
+                    AND t.team_status = 'active'
+                GROUP BY t.id, t.country_code, t.team_division
+                HAVING COUNT(DISTINCT tm.player_id) = 2
+            )
+            SELECT
+                country_code,
+                team_division,
+                COUNT(*) AS candidate_team_count,
+                SUM(CASE WHEN avg_team_rating >= :initial_rating_elite_min THEN 1 ELSE 0 END) AS elite_team_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN avg_team_rating >= :initial_rating_elite_min THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS elite_team_pct
+            FROM active_team_rosters
+            GROUP BY country_code, team_division
+            ORDER BY country_code ASC, team_division ASC
+        """,
+        required_params=("generation_run_id", "initial_rating_elite_min"),
+        tags=("assignment", "elite", "teams"),
+    ),
+    RealismAuditQuery(
+        name="alternate_candidate_depth",
+        scope="generation_run",
+        category="assignment_readiness",
+        pillar=ASSIGNMENT_READINESS_PILLAR.key,
+        description="Teams available beyond the top-ranked team in each country/division candidate pool.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            team_ratings AS (
+                SELECT
+                    t.id AS team_id,
+                    t.country_code,
+                    t.team_division,
+                    ROUND(AVG(lr.rating_value), 3) AS avg_team_rating
+                FROM teams t
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.left_date IS NULL
+                LEFT JOIN latest_ratings lr
+                    ON lr.player_id = tm.player_id
+                    AND lr.rating_rank = 1
+                WHERE t.generation_run_id = :generation_run_id
+                    AND t.team_type = 'competitive'
+                    AND t.team_status = 'active'
+                GROUP BY t.id, t.country_code, t.team_division
+                HAVING COUNT(DISTINCT tm.player_id) = 2
+            ),
+            ranked_teams AS (
+                SELECT
+                    team_id,
+                    country_code,
+                    team_division,
+                    avg_team_rating,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY country_code, team_division
+                        ORDER BY avg_team_rating DESC, team_id ASC
+                    ) AS division_rank
+                FROM team_ratings
+            )
+            SELECT
+                country_code,
+                team_division,
+                COUNT(*) AS ranked_team_count,
+                SUM(CASE WHEN division_rank > 1 THEN 1 ELSE 0 END) AS alternate_team_count
+            FROM ranked_teams
+            GROUP BY country_code, team_division
+            ORDER BY country_code ASC, team_division ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("assignment", "alternates"),
+    ),
+    RealismAuditQuery(
+        name="missing_gold_inputs",
+        scope="generation_run",
+        category="export_readiness",
+        pillar=EXPORT_READINESS_PILLAR.key,
+        description="Required source-table row coverage for downstream Gold and student-release workflows.",
+        sql="""
+            SELECT 'players' AS table_name, COUNT(*) AS row_count, CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS missing_flag
+            FROM players
+            WHERE generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'teams', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM teams
+            WHERE generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'team_memberships', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM team_memberships tm
+            JOIN teams t ON t.id = tm.team_id
+            WHERE t.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'matches', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM matches m
+            JOIN monthly_batches b ON b.id = m.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'match_teams', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM match_teams mt
+            JOIN matches m ON m.id = mt.match_id
+            JOIN monthly_batches b ON b.id = m.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'match_team_players', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM match_team_players mtp
+            JOIN match_teams mt ON mt.id = mtp.match_team_id
+            JOIN matches m ON m.id = mt.match_id
+            JOIN monthly_batches b ON b.id = m.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'player_rating_history', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM player_rating_history prh
+            JOIN monthly_batches b ON b.id = prh.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'ratings_update_log', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM ratings_update_log r
+            JOIN monthly_batches b ON b.id = r.batch_id
+            WHERE b.generation_run_id = :generation_run_id
+            UNION ALL
+            SELECT 'clubs', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM clubs
+            UNION ALL
+            SELECT 'club_memberships', COUNT(*), CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
+            FROM club_memberships
+            WHERE generation_run_id = :generation_run_id
+            ORDER BY table_name ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("export", "gold"),
+    ),
+    RealismAuditQuery(
+        name="student_candidate_availability",
+        scope="generation_run",
+        category="export_readiness",
+        pillar=EXPORT_READINESS_PILLAR.key,
+        description="Release-ready candidate coverage by country and division where both team members have ratings.",
+        sql="""
+            WITH latest_ratings AS (
+                SELECT
+                    prh.player_id,
+                    prh.rating_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY prh.player_id
+                        ORDER BY prh.rating_date DESC, prh.id DESC
+                    ) AS rating_rank
+                FROM player_rating_history prh
+                JOIN monthly_batches b
+                    ON b.id = prh.batch_id
+                WHERE b.generation_run_id = :generation_run_id
+            ),
+            rated_team_rosters AS (
+                SELECT
+                    t.id AS team_id,
+                    t.country_code,
+                    t.team_division,
+                    COUNT(DISTINCT tm.player_id) AS member_count,
+                    COUNT(DISTINCT lr.player_id) AS rated_member_count
+                FROM teams t
+                JOIN team_memberships tm
+                    ON tm.team_id = t.id
+                    AND tm.left_date IS NULL
+                LEFT JOIN latest_ratings lr
+                    ON lr.player_id = tm.player_id
+                    AND lr.rating_rank = 1
+                WHERE t.generation_run_id = :generation_run_id
+                    AND t.team_type = 'competitive'
+                    AND t.team_status = 'active'
+                GROUP BY t.id, t.country_code, t.team_division
+                HAVING COUNT(DISTINCT tm.player_id) = 2
+            )
+            SELECT
+                country_code,
+                team_division,
+                COUNT(*) AS candidate_team_count,
+                SUM(CASE WHEN rated_member_count = 2 THEN 1 ELSE 0 END) AS fully_rated_team_count,
+                ROUND(
+                    100.0 * SUM(CASE WHEN rated_member_count = 2 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ) AS fully_rated_team_pct
+            FROM rated_team_rosters
+            GROUP BY country_code, team_division
+            ORDER BY country_code ASC, team_division ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("export", "candidates"),
+    ),
+    RealismAuditQuery(
+        name="division_balance",
+        scope="generation_run",
+        category="export_readiness",
+        pillar=EXPORT_READINESS_PILLAR.key,
+        description="Active competitive-team balance by country and doubles division.",
+        sql="""
+            WITH active_divisions AS (
+                SELECT
+                    t.country_code,
+                    t.team_division,
+                    COUNT(*) AS team_count
+                FROM teams t
+                WHERE t.generation_run_id = :generation_run_id
+                    AND t.team_type = 'competitive'
+                    AND t.team_status = 'active'
+                GROUP BY t.country_code, t.team_division
+            ),
+            country_totals AS (
+                SELECT
+                    country_code,
+                    SUM(team_count) AS total_team_count
+                FROM active_divisions
+                GROUP BY country_code
+            )
+            SELECT
+                d.country_code,
+                d.team_division,
+                d.team_count,
+                ROUND(
+                    100.0 * d.team_count / NULLIF(ct.total_team_count, 0),
+                    2
+                ) AS team_pct_within_country
+            FROM active_divisions d
+            JOIN country_totals ct
+                ON ct.country_code = d.country_code
+            ORDER BY d.country_code ASC, d.team_division ASC
+        """,
+        required_params=("generation_run_id",),
+        tags=("export", "divisions"),
+    ),
+    RealismAuditQuery(
+        name="historical_run_size_regression",
+        scope="generation_run",
+        category="historical_regression",
+        pillar=HISTORICAL_REGRESSION_PILLAR.key,
+        description="Cross-run player, team, and match counts with simple growth rates versus the prior run.",
+        sql="""
+            WITH run_sizes AS (
+                SELECT
+                    gr.id AS generation_run_id,
+                    gr.generation_name,
+                    COUNT(DISTINCT p.id) AS player_count,
+                    COUNT(DISTINCT t.id) AS team_count,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM generation_runs gr
+                LEFT JOIN players p
+                    ON p.generation_run_id = gr.id
+                LEFT JOIN teams t
+                    ON t.generation_run_id = gr.id
+                LEFT JOIN monthly_batches mb
+                    ON mb.generation_run_id = gr.id
+                LEFT JOIN matches m
+                    ON m.batch_id = mb.id
+                GROUP BY gr.id, gr.generation_name
+            ),
+            ranked AS (
+                SELECT
+                    generation_run_id,
+                    generation_name,
+                    player_count,
+                    team_count,
+                    match_count,
+                    LAG(player_count) OVER (ORDER BY generation_run_id) AS prior_player_count,
+                    LAG(team_count) OVER (ORDER BY generation_run_id) AS prior_team_count,
+                    LAG(match_count) OVER (ORDER BY generation_run_id) AS prior_match_count
+                FROM run_sizes
+            )
+            SELECT
+                generation_run_id,
+                generation_name,
+                player_count,
+                team_count,
+                match_count,
+                ROUND(
+                    100.0 * (player_count - prior_player_count) / NULLIF(prior_player_count, 0),
+                    2
+                ) AS player_growth_pct,
+                ROUND(
+                    100.0 * (team_count - prior_team_count) / NULLIF(prior_team_count, 0),
+                    2
+                ) AS team_growth_pct,
+                ROUND(
+                    100.0 * (match_count - prior_match_count) / NULLIF(prior_match_count, 0),
+                    2
+                ) AS match_growth_pct
+            FROM ranked
+            ORDER BY generation_run_id DESC
+            LIMIT 10
+        """,
+        required_params=(),
+        tags=("history", "regression"),
+    ),
+    RealismAuditQuery(
+        name="historical_release_file_coverage",
+        scope="generation_run",
+        category="historical_regression",
+        pillar=HISTORICAL_REGRESSION_PILLAR.key,
+        description="Historical student-release file coverage and row counts across prior releases.",
+        sql="""
+            SELECT
+                r.generation_run_id,
+                r.release_name,
+                r.release_type,
+                COALESCE(r.data_quality_level, 'none') AS data_quality_level,
+                r.status,
+                COUNT(f.id) AS file_count,
+                COALESCE(SUM(f.row_count), 0) AS total_row_count
+            FROM student_dataset_releases r
+            LEFT JOIN student_dataset_release_files f
+                ON f.release_id = r.id
+            GROUP BY
+                r.generation_run_id,
+                r.release_name,
+                r.release_type,
+                COALESCE(r.data_quality_level, 'none'),
+                r.status
+            ORDER BY r.generation_run_id DESC, r.release_name ASC
+        """,
+        required_params=(),
+        tags=("history", "releases"),
     ),
     RealismAuditQuery(
         name="rating_outlier_players",
