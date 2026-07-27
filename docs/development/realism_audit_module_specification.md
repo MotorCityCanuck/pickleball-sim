@@ -2,630 +2,426 @@
 
 ## Status
 
-Proposed specification for review.
+Current implementation specification.
+
+This document describes the realism-audit module as implemented in the current
+repository. It is aligned to:
+
+- `backend/app/generation/realism_audit.py`
+- `backend/app/generation/realism_audit_service.py`
+- `backend/app/generation/realism_audit_report.py`
+- `backend/app/generation/realism_audit_assessment.py`
+- `backend/app/generation/realism_audit_checkpoints.py`
+- `backend/app/generation/realism_audit_job_handler.py`
+- `backend/app/generation/realism_audit_history.py`
+- `backend/app/web/routes.py`
+- `backend/app/web/control_panel_queries.py`
+- `scripts/run_realism_audits.sh`
+
+The module is no longer only a proposed standalone audit pack. It supports both
+standalone CLI execution and durable control-panel execution with per-query
+checkpointing.
 
 ## Purpose
 
-This document defines the design for a standalone realism-audit module for the
-pickleball simulation platform.
+The realism-audit module evaluates whether generated simulation data looks
+operationally plausible as dataset size increases.
 
-The purpose of the module is to evaluate whether generated simulation data
-looks operationally plausible as dataset size increases, using reusable
-SQL-backed audits that can run independently of the generation workflow.
+The audit pack is SQL-backed and focuses on reusable aggregate, distribution,
+drift, integrity, and outlier checks across:
 
-This module is intended to assess realism in generated data before any workflow
-integration, pipeline gating, UI exposure, or persistence of findings is added.
+- players
+- clubs and memberships
+- matches and scheduling
+- teams and partner continuity
+- game scores
+- rating movement
 
-The module should be designed in a manner that supports future integration
-into the overall data generation workflow 
+Realism audit findings are advisory. They help tune generation logic and
+configuration. They do not currently block monthly generation or student
+dataset export.
 
----
+## Operating Modes
 
-# Core Design Decision
+### Standalone CLI
 
-## Recommended First Implementation
+The command wrapper is:
 
-The first implementation should be a standalone, report-only audit module.
-
-Recommended flow:
-
-```text
-Generate synthetic data
-        ↓
-Run standalone realism audit pack against generation run / batch
-        ↓
-Review summary metrics, distributions, and outliers
-        ↓
-Tune generation logic or audit thresholds
-        ↓
-Integrate into workflow later if warranted
+```bash
+./scripts/run_realism_audits.sh
 ```
 
-## Rationale
+Supported options:
 
-This is the preferred first step because it:
+- `--list-queries`: list registered query names, scopes, categories, and
+  descriptions.
+- `--query <name>`: run one named query; repeat to run multiple queries.
+- `--format table`: print human-readable tables. This is the default.
+- `--format json`: print JSON-ready result payloads.
+- `--snapshot-dir <path>`: choose where JSON snapshots are written.
+- `--no-save-snapshot`: run without writing a snapshot file.
 
-- avoids coupling new realism checks to the control plane too early
-- allows rapid iteration on query design and thresholds
-- lets us observe real generated-data behavior before defining hard gates
-- reduces the risk of false failures while the generator logic is still maturing
-- supports large-dataset inspection using database-native aggregation
-- creates a reusable audit surface for manual review, automated tests, and later
-  pipeline integration
+The CLI uses the latest auditable generation run and latest batch in that run.
+Historical run or batch targeting is intentionally not exposed by the wrapper.
 
-The initial module should be descriptive first, not prescriptive first.
+### Control Panel
 
----
+The control panel can queue a durable realism-audit job from the orchestration
+tab.
 
-# Non-Goals for Initial Version
+Control-panel execution:
 
-The first version should NOT:
+- registers a `job_status` row with `job_type = 'realism_audit'`;
+- registers one `job_stage_progress` row for the audit stage;
+- creates one `ops.realism_audit_query_runs` checkpoint row per registered
+  query;
+- executes queries through the durable worker;
+- can resume interrupted jobs by skipping succeeded checkpoints and resetting
+  interrupted `running` checkpoints to `pending`;
+- saves a JSON snapshot after all checkpoints succeed;
+- exposes progress, lease state, latest completed query, summary assessment,
+  and report download in the UI.
 
-- block monthly batch completion
-- write findings into `validation_results`
-- modify generated data
-- modify configuration payloads
-- require control-panel UI changes
-- require new exposed config fields
-- require export-layer integration
-- define final production warning or blocker thresholds for every audit
+The control panel permits a realism audit only when:
 
-Those concerns can be added after the standalone audit pack is stable.
+- a generation run exists;
+- the generation run status is `succeeded`;
+- seed/reference readiness is restored;
+- all monthly batches have `processing_status = 'succeeded'`;
+- no write-heavy generation job is pending or running;
+- no seed preparation job is active;
+- no student dataset export is active;
+- no realism audit is already active.
 
----
-
-# Scope
-
-## In Scope
-
-The module should support:
-
-- reusable named audit queries
-- generation-run scoped audits
-- monthly-batch scoped audits
-- SQL-first implementations for scalability
-- report-only execution from a script or module API
-- comparisons against current configuration snapshot where useful
-- summary metrics, distributions, and outlier-oriented outputs
-- deterministic interpretation of the same underlying dataset
-- test coverage for audit execution and representative query results
-
-## Out of Scope for Initial Implementation
-
-The first version does not need:
-
-- automatic persistence of findings
-- severity-based pipeline stopping
-- control-panel rendering
-- asynchronous audit jobs
-- cross-run trend warehousing
-- instructor-only truth tables
-- statistical modeling beyond pragmatic SQL summaries
-- visualization dashboards
-
----
-
-# Design Principles
-
-The realism-audit module should follow these rules:
-
-- Prefer SQL queries over Python row-by-row inspection.
-- Prefer reportable aggregates over opaque pass/fail booleans.
-- Compare generated outcomes to active configuration when the configuration is
-  already consumed by live generation logic.
-- Avoid audits for fields that are not currently populated by live logic.
-- Keep the module reusable outside the monthly pipeline.
-- Make outputs readable in both human and machine formats.
-- Treat the first release as an audit pack, not a validation gate.
-- Provide results in a format that allows inspection and review.
-
----
-
-# Current Baseline
-
-The codebase already contains an initial realism-audit scaffold with:
-
-- a named query registry
-- a runner that resolves parameters from `generation_runs.parameter_snapshot`
-- a CLI script
-- one focused SQLite test
-
-The current baseline is useful but narrow. It covers:
-
-- player roster summary
-- club membership geography summary
-- match type distribution
-- weekend match share
-- game competitiveness summary
-- rating delta summary
-
-The next step is to expand this into a practical first-pass audit pack that
-covers the most important realism questions across players, clubs, matches,
-scores, and ratings.
-
----
-
-# Module Boundaries
+## Module Boundaries
 
 ## Inputs
 
 Primary inputs:
 
-- database connection / ORM session
-- `generation_run_id` for run-scoped audits
-- `batch_id` for batch-scoped audits
-- active configuration snapshot from `generation_runs.parameter_snapshot`
-- optional named query filters
+- SQLAlchemy `Session`;
+- latest generation run with monthly batches;
+- latest monthly batch for that generation run;
+- `generation_runs.parameter_snapshot`;
+- application default configuration as fallback;
+- optional named query list.
 
-These should default to the most recent run only.  The database will have
-only one version of data, prior runs will have been purged.
+The parameter resolver reads from the frozen run snapshot where available, then
+falls back to `DEFAULT_CONFIG_PAYLOAD`.
 
 ## Outputs
 
 Primary outputs:
 
-- named audit result sets
-- machine-readable JSON output
-- human-readable tabular output
-- summary-oriented metrics for review
-- outlier rows where useful
+- `RealismAuditResult` objects from the runner;
+- table or JSON output from the CLI;
+- JSON snapshots under `data/realism_audit_snapshots/` by default;
+- Markdown reports downloaded from the control panel under
+  `data/realism_audit_reports/` by default;
+- UI-ready summary state derived from latest snapshot payloads;
+- per-query checkpoint rows for durable jobs.
 
-## No Initial Persistent Outputs
+## Persistent State
 
-The first version should not persist results to database tables.
+The module currently writes operational audit-execution state, but not
+student-facing validation records.
 
-In particular, it should not write to:
+Persistent execution state:
 
-- `validation_results`
-- `batch_runs`
+- `job_status`
 - `job_stage_progress`
-
----
-
-# Audit Taxonomy
-
-The first-pass audit pack should be organized into the following categories.
-
-## 1. Player Population Distribution Audits
-
-Purpose:
-
-- check whether generated player populations broadly match configured and
-  expected shapes
-
-Initial audit targets:
-
-- total player count by generation run
-- active / injured / inactive / retired status distribution
-- gender distribution versus configured weights
-- age-bucket distribution versus configured weights
-- regional allocation distribution versus `regions.selection_probability`
-- registration-month counts by batch
-- initial rating distribution summary
-- initial confidence summary
-
-Recommended outputs:
-
-- counts
-- percentages
-- configured target percentages where available
-- absolute percentage-point drift
-- top regional outliers
-- percentile summaries for age and initial rating
-
-## 2. Club Size and Capacity Audits
-
-Purpose:
-
-- check whether club usage looks plausible given seeded club supply and current
-  assignment logic
-
-Initial audit targets:
-
-- players with zero club memberships
-- players with more than one club membership
-- players with multiple primary memberships
-- memberships per club
-- primary memberships per club
-- total memberships versus `member_capacity`
-- club fill ratio distribution
-- clubs with implausibly high or low utilization
-- clubs with zero memberships in high-population regions
-
-Recommended outputs:
-
-- fill ratio percentiles
-- over-capacity club counts
-- top overloaded clubs
-- counts by club type if populated
-- counts by region
-
-## 3. Membership Geography and Locality Audits
-
-Purpose:
-
-- check whether club assignment respects locality expectations
-
-Initial audit targets:
-
-- primary memberships in home region versus outside home region
-- secondary memberships in same region versus cross-region
-- cross-region membership rate compared to
-  `club_generation.cross_region_assignment_enabled`
-- cross-region rate compared to
-  `club_generation.secondary_membership_same_region_rate`
-- regions with unusually high outbound or inbound membership flow
-
-Recommended outputs:
-
-- same-region percentages
-- cross-region percentages
-- counts by region pair for strongest cross-region flows
-- exception tables for unusual patterns
-
-## 4. Match Volume and Cadence Audits
-
-Purpose:
-
-- check whether generated match activity looks operationally plausible across
-  batches and teams
-
-Initial audit targets:
-
-- matches per batch
-- matches by match type
-- matches by day of week
-- weekend share versus configured weekend range
-- matches per team per month
-- teams with zero matches in an active batch
-- teams exceeding configured daily match caps
-- region-level match concentration
-- monthly cadence distribution across the historical window
-
-Recommended outputs:
-
-- counts and percentages
-- average and percentile matches per team
-- daily cap violations
-- top heavy-use teams
-- top underused teams
-
-## 5. Score Competitiveness Audits
-
-Purpose:
-
-- check whether game and match scorelines look plausible given matchmaking and
-  score-generation logic
-
-Initial audit targets:
-
-- average game margin
-- game margin distribution
-- extended-game rate
-- straight-target wins versus extended wins
-- points played per match
-- upset rate relative to predicted winner
-- expected competitiveness versus actual score closeness
-- match-type differences in competitiveness
-
-Recommended outputs:
-
-- margin percentiles
-- extended-game percentages
-- upset percentages
-- score-share drift summaries
-- comparison of predicted win probability buckets to actual outcomes
-
-## 6. Rating Movement and Outlier Audits
-
-Purpose:
-
-- check whether rating movement magnitude and direction look plausible
-
-Initial audit targets:
-
-- average absolute rating delta
-- max absolute rating delta
-- large-delta rate versus configured threshold
-- delta distribution by batch
-- delta distribution by player confidence band
-- delta distribution by rating band
-- confidence progression summaries
-- players with repeated extreme rating swings
-- ratings pushed to configured min or max bounds
-
-Recommended outputs:
-
-- percentile summaries
-- threshold counts
-- top outlier players
-- confidence-before versus delta summaries
-- batch-level movement comparisons
-
----
-
-# Query Design Requirements
-
-Each audit query should have explicit metadata.
-
-Minimum metadata:
-
-- query name
-- scope: `generation_run` or `batch`
-- plain-language description
-- required parameters
-- tags
-
-Optional metadata for the expanded design:
-
-- category
-- intended audience
-- related configuration keys
-- suggested severity if later integrated into validation workflow
-- whether the query is summary-only or outlier-oriented
-
-## Query Conventions
-
-Queries should:
-
-- return deterministic row sets for the same data
-- use explicit ordering for multi-row outputs
-- avoid dialect-specific SQL unless necessary
-- supply dialect-specific variants only when required
-- return numeric drift values where comparisons are made
-- avoid mixing too many unrelated concepts into one result set
-
-The goal is composable audits, not one giant audit query.
-
----
-
-# Configuration Awareness
-
-The module should read from the frozen run snapshot where useful, not from
-mutable live defaults alone.
-
-The first-pass audit pack should compare against snapshot values for settings
-already used by current live generation logic, including where applicable:
-
-- player count
-- age distribution
-- gender weights
-- player status weights
-- weekend concentration bounds
-- match type weights
-- club unaffiliated rate
-- multi-club membership rate
-- same-region secondary membership rate
-- rating movement warning threshold
-
-If a value is missing from the snapshot, the module may fall back to the
-application default payload.
-
----
-
-# Output Formats
-
-The standalone module should support at least:
-
-- human-readable table output
-- JSON output
-
-## Table Output
-
-Table output should be optimized for quick operator review:
-
-- grouped by audit query
-- stable column ordering
-- readable numeric formatting
-- explicit indication when no rows are returned
-
-## JSON Output
-
-JSON output should be optimized for:
-
-- test assertions
-- future automation
-- later UI or persistence integration
-
-Recommended JSON shape:
-
-```json
-[
-  {
-    "query": "player_age_distribution",
-    "scope": "generation_run",
-    "description": "Observed age-bucket mix versus configured target weights.",
-    "rows": [
-      {
-        "age_bucket": "45_59",
-        "player_count": 12345,
-        "player_pct": 31.82,
-        "configured_pct": 32.0,
-        "pct_point_drift": -0.18
-      }
-    ]
-  }
-]
-```
-
----
-
-# Severity Model
-
-The standalone module should not enforce blocking behavior yet, but the spec
-should define a future-compatible severity model.
-
-Recommended future severities:
+- `ops.realism_audit_query_runs`
+- filesystem JSON snapshots in `data/realism_audit_snapshots/`
+- filesystem Markdown reports in `data/realism_audit_reports/` when downloaded
+
+The module does not write to `validation_results`, mutate generated data, or
+modify configuration payloads.
+
+## Query Model
+
+Each query is registered as a `RealismAuditQuery` with:
+
+- `name`
+- `scope`: `generation_run` or `batch`
+- `description`
+- `sql`: a SQL string or dialect map
+- `required_params`
+- `tags`
+- `category`
+- `related_config_keys`
+- optional `post_process`
+
+The runner selects all queries by default. If query names are supplied, it runs
+only those queries and fails clearly for unknown names.
+
+Query execution rules:
+
+- resolve required parameters before execution;
+- select SQL by database dialect when a dialect-specific query exists;
+- return deterministic row sets where queries produce multiple rows;
+- post-process target/drift columns where applicable;
+- avoid Python row-by-row table scans.
+
+The `team_partner_continuity_by_batch` query uses helper rows from
+`audit_batch_team_rosters` when available and falls back to legacy team
+lifecycle reconstruction when helper rows are absent.
+
+## Current Query Registry
+
+The current registry contains 45 queries.
+
+| Query | Scope | Category | Purpose |
+| --- | --- | --- | --- |
+| `player_roster_summary` | generation_run | players | Top-line roster counts and membership coverage. |
+| `player_status_distribution` | generation_run | players | Player status mix versus configured weights. |
+| `player_gender_distribution` | generation_run | players | Gender mix versus configured weights. |
+| `player_age_distribution` | generation_run | players | Creation-time age buckets versus configured weights. |
+| `player_registration_age_distribution` | generation_run | players | Age buckets at stored registration date. |
+| `player_region_distribution` | generation_run | players | Home-region allocation versus region selection weights. |
+| `player_registration_by_batch` | generation_run | players | Registration counts by monthly batch. |
+| `player_name_uniqueness_summary` | generation_run | players | Distinct names and duplicate full-name concentration. |
+| `player_first_name_alignment` | generation_run | players | First-name alignment to state/year/gender references. |
+| `player_last_name_alignment` | generation_run | players | Last-name alignment to state/province and country references. |
+| `initial_rating_distribution_summary` | generation_run | ratings | Initial rating distribution and elite-rate summary. |
+| `club_membership_summary` | generation_run | clubs | Club affiliation and multi-club summary. |
+| `club_primary_membership_integrity` | generation_run | clubs | Primary membership integrity. |
+| `club_fill_ratio_summary` | generation_run | clubs | Club fill ratio versus configured maximum. |
+| `club_fill_ratio_outliers` | generation_run | clubs | Highest-loaded club outliers. |
+| `club_membership_geography` | generation_run | clubs | Secondary-membership locality and cross-region pressure. |
+| `cross_region_membership_flows` | generation_run | clubs | Largest cross-region membership flows. |
+| `match_volume_by_batch` | generation_run | matches | Per-batch match volume trend. |
+| `match_volume_summary` | batch | matches | Batch match volume and day coverage. |
+| `match_type_distribution` | batch | matches | Batch match-type mix versus configured weights. |
+| `match_team_pairing_source_distribution` | batch | matches | Match-side source mix by pairing source. |
+| `match_day_of_week_distribution` | batch | matches | Batch day-of-week distribution. |
+| `weekend_match_share` | batch | matches | Weekend concentration versus configured validation bounds. |
+| `matches_per_team_distribution` | batch | matches | Match volume across active team rosters. |
+| `team_partner_continuity_by_batch` | generation_run | teams | Active-roster continuity relative to prior batch. |
+| `matches_per_player_distribution` | batch | matches | Monthly match volume across active players. |
+| `repeat_partner_match_distribution` | batch | matches | Prior same-partner match-count distribution. |
+| `zero_match_players_by_registration_cohort` | batch | matches | Zero-match players by registration timing. |
+| `zero_match_players_by_team_membership` | batch | matches | Zero-match players by team-membership coverage. |
+| `zero_match_players_by_competitive_team_status` | batch | matches | Zero-match players by competitive team coverage. |
+| `team_assignment_delay_summary` | batch | teams | Delay from player registration to first team assignment. |
+| `zero_match_players_by_ad_hoc_eligibility` | batch | matches | Zero-match players by ad hoc eligibility. |
+| `zero_match_players_by_club_affiliation` | batch | matches | Zero-match players by club affiliation. |
+| `daily_team_match_cap_violations` | batch | matches | Active teams exceeding same-day match cap. |
+| `batch_region_match_distribution` | batch | matches | Region-level match concentration. |
+| `game_competitiveness_summary` | batch | scores | Game margin and extension-rate summary. |
+| `game_margin_distribution` | batch | scores | Per-game score-margin distribution. |
+| `upset_rate_summary` | batch | scores | Upset rate relative to predicted favorite. |
+| `predicted_vs_actual_outcome_buckets` | batch | scores | Favorite win rate by predicted-probability bucket. |
+| `rating_summary_by_batch` | generation_run | ratings | Per-batch rating summary and spread trend. |
+| `rating_band_distribution_by_batch` | generation_run | ratings | Per-batch rating-band distribution. |
+| `rating_delta_summary` | batch | ratings | Batch rating movement versus configured warning threshold. |
+| `rating_delta_distribution` | batch | ratings | Absolute rating-delta distribution. |
+| `rating_delta_by_confidence_band` | batch | ratings | Rating movement by confidence band. |
+| `rating_outlier_players` | batch | ratings | Largest individual rating swings. |
+
+## Configuration Awareness
+
+The audit parameter resolver currently reads these configuration-backed values:
+
+| Parameter | Config path | Default fallback |
+| --- | --- | --- |
+| weekend lower bound | `validation.weekend_concentration_min` | `0.40` |
+| weekend upper bound | `validation.weekend_concentration_max` | `0.60` |
+| rating delta warning threshold | `ratings.rating_movement_warning_threshold` | `300` |
+| initial elite rating minimum | `ratings.initial_rating_elite_min` | `4000` |
+| max club fill ratio | `club_generation.max_club_fill_ratio` | `1.0` |
+| unaffiliated player rate | `club_generation.unaffiliated_player_rate` | `0.12` |
+| multi-club membership rate | `club_generation.multi_club_membership_rate` | `0.06` |
+| secondary same-region membership rate | `club_generation.secondary_membership_same_region_rate` | `0.85` |
+| cross-region assignment enabled | `club_generation.cross_region_assignment_enabled` | `false` |
+| max daily matches per team | `match_scheduling.max_daily_matches_per_team` | `2` |
+| monthly matches per active player mean | `match_scheduling.monthly_matches_per_active_player_mean` | `8.0` |
+| monthly matches per active player standard deviation | `match_scheduling.monthly_matches_per_active_player_std_dev` | `4.0` |
+| match volume noise factor | `match_scheduling.match_volume_noise_factor` | `0.15` |
+| player status target percentages | `player_generation.player_status_weights` | empty map if unavailable |
+| gender target percentages | `player_generation.gender_weights` | empty map if unavailable |
+| age-bucket target percentages | `player_generation.age_distribution` | empty map if unavailable |
+| match-type target percentages | `match_types.weights` | empty map if unavailable |
+
+Current application defaults for the main distribution maps are:
+
+- `player_generation.player_status_weights`: `ACTIVE` 94%, `INJURED` 2%,
+  `INACTIVE` 2%, `RETIRED` 2%.
+- `player_generation.gender_weights`: `M` 50%, `F` 50%.
+- `player_generation.age_distribution`: `under_18` 4%, `18_29` 24%,
+  `30_44` 32%, `45_59` 24%, `60_74` 13%, `75_plus` 3%.
+- `match_types.weights`: `recreational` 55%, `league` 20%, `ladder` 10%,
+  `tournament` 10%, `challenge` 4%, `clinic` 1%.
+
+## Assessment Model
+
+Audit assessment is rule-based and report-only. It produces:
+
+- `overall_status`
+- `finding_count`
+- `severity_counts`
+- `category_counts`
+- `findings`
+- `query_assessments`
+- active threshold values
+
+Supported severities:
 
 - `info`
 - `warning`
 - `error`
 - `blocker`
 
-## Initial Handling
+Current overall status mapping:
 
-For the standalone module:
+- max severity `info`: `no_material_issues`
+- max severity `warning`: `review_recommended`
+- max severity `error` or `blocker`: `significant_realism_concerns`
 
-- severities may be documented in query metadata later
-- outputs should remain report-only
-- no batch or run should fail because of audit findings yet
+Default assessment thresholds:
 
-This keeps the first iteration focused on trust-building and threshold tuning.
+| Threshold | Default |
+| --- | --- |
+| `distribution_drift_warning_pct_points` | `5.0` |
+| `distribution_drift_error_pct_points` | `10.0` |
+| `summary_drift_warning_pct_points` | `5.0` |
+| `summary_drift_error_pct_points` | `10.0` |
+| `duplicate_full_name_warning_pct` | `1.0` |
+| `name_alignment_min_reference_pct` | `90.0` |
+| `rating_large_delta_warning_pct` | `1.0` |
+| `rating_large_delta_error_pct` | `5.0` |
+| `rating_outlier_warning_delta` | `250.0` |
+| `unteamed_duration_warning_days` | `30.0` |
 
----
+The control panel lets the operator submit these thresholds when queueing an
+audit. The durable job stores normalized threshold values on the audit stage
+metadata and uses them when saving the final snapshot.
 
-# Suggested First-Pass Query List
+## Snapshot Format
 
-The following named queries are recommended for the first implementation wave.
+Saved JSON snapshots use this high-level shape:
 
-## Generation-Run Scoped
+```json
+{
+  "executed_at": "2026-06-20T13:43:51+00:00",
+  "generation_run_id": 64,
+  "batch_id": 611,
+  "batch_month": "2025-12-01",
+  "results": [
+    {
+      "query": "player_status_distribution",
+      "scope": "generation_run",
+      "category": "players",
+      "description": "Observed player-status distribution versus configured weights.",
+      "tags": ["players", "distribution"],
+      "related_config_keys": ["player_generation.player_status_weights"],
+      "rows": []
+    }
+  ],
+  "assessment": {
+    "overall_status": "review_recommended",
+    "finding_count": 1,
+    "severity_counts": {
+      "info": 44,
+      "warning": 1,
+      "error": 0,
+      "blocker": 0
+    },
+    "findings": [],
+    "query_assessments": []
+  },
+  "snapshot_path": "data/realism_audit_snapshots/generation_run_000064/...",
+  "snapshot_version": 1,
+  "query_count": 45
+}
+```
 
-- `player_roster_summary`
-- `player_status_distribution`
-- `player_gender_distribution`
-- `player_age_distribution`
-- `player_region_distribution`
-- `player_registration_by_batch`
-- `initial_rating_distribution_summary`
-- `club_membership_summary`
-- `club_primary_membership_integrity`
-- `club_fill_ratio_summary`
-- `club_fill_ratio_outliers`
-- `club_membership_geography`
-- `cross_region_membership_flows`
+The CLI `--format json` output prints only serialized results. The saved
+snapshot contains execution metadata, assessment, path, version, and query
+count.
 
-## Batch Scoped
+## Design Principles
 
-- `match_volume_summary`
-- `match_type_distribution`
-- `match_day_of_week_distribution`
-- `weekend_match_share`
-- `matches_per_team_distribution`
-- `daily_team_match_cap_violations`
-- `batch_region_match_distribution`
-- `game_competitiveness_summary`
-- `game_margin_distribution`
-- `upset_rate_summary`
-- `predicted_vs_actual_outcome_buckets`
-- `rating_delta_summary`
-- `rating_delta_distribution`
-- `rating_delta_by_confidence_band`
-- `rating_outlier_players`
+The implemented module follows these rules:
 
-This list is intentionally practical rather than exhaustive.
+- Prefer SQL aggregation over Python row-by-row inspection.
+- Keep queries composable and named.
+- Keep output deterministic for repeatable review.
+- Compare generated outcomes to the frozen run snapshot when relevant.
+- Fall back to application defaults only when snapshot values are unavailable.
+- Keep realism findings advisory rather than blocking.
+- Preserve generated data; audits must never mutate simulation tables.
+- Keep durable job progress recoverable at query granularity.
 
----
+## Current Limitations
 
-# Recommended Implementation Phases
+Known boundaries:
 
-## Phase 1
+- The public CLI intentionally targets only the latest auditable run and latest
+  batch.
+- Assessment rules are heuristic and intentionally conservative.
+- Findings are not persisted to `validation_results`.
+- The control panel queues all registered queries; named-query selection is CLI
+  only.
+- Some historical runs may lack `audit_batch_team_rosters`; continuity audits
+  use a legacy fallback in that case.
+- The module assesses generated-data realism, not student-export Parquet
+  validity. Export validation remains separate.
 
-Build the standalone audit pack only.
+## Testing Requirements
 
-Deliverables:
+The current test suite should continue to cover:
 
-- expanded query registry
-- query metadata
-- standalone runner API
-- CLI support for named query execution
-- JSON and table outputs
-- test coverage for representative audits
+- query registry execution;
+- parameter resolution from `generation_runs.parameter_snapshot`;
+- config-target drift post-processing;
+- unknown query failure behavior;
+- required parameter failure behavior;
+- representative generation-run and batch query outputs;
+- empty-result stability;
+- assessment severity classification;
+- snapshot serialization and Markdown rendering;
+- durable checkpoint creation, success, failure, and resume behavior;
+- control-panel run gating and progress summaries.
 
-## Phase 2
+Representative test files:
 
-Tune realism expectations against larger generated datasets.
+- `backend/tests/test_realism_audit.py`
+- `backend/tests/test_realism_audit_checkpoints.py`
+- `backend/tests/test_realism_audit_job_handler.py`
+- `backend/tests/test_control_panel_queries.py`
+- `backend/tests/test_control_panel_routes.py`
 
-Deliverables:
+## Performance Expectations
 
-- drift thresholds refined using observed outputs
-- redundant or low-value audits removed
-- naming and output cleanup
-
-## Phase 3
-
-Optional workflow integration.
-
-Possible future deliverables:
-
-- pipeline invocation after generation
-- persistence into `validation_results`
-- severity-based summaries
-- operator UI surfacing
-
-Integration should happen only after the standalone pack proves useful.
-
----
-
-# Testing Requirements
-
-Minimum tests for the module should include:
-
-- audit runner executes named queries on SQLite
-- parameter resolution reads from `generation_runs.parameter_snapshot`
-- configuration comparisons compute expected drift correctly
-- unknown query names fail clearly
-- missing required scope parameters fail clearly
-- representative generation-run queries return expected rows
-- representative batch queries return expected rows
-- empty-result queries return stable output
-
-## Recommended Additional Tests
-
-- large synthetic fixture for club fill-ratio behavior
-- weekend share calculations on both SQLite and PostgreSQL-compatible SQL
-- cross-region membership edge cases
-- rating outlier detection edge cases
-- score competitiveness edge cases such as extended games and upset-heavy batches
-
----
-
-# Performance Expectations
-
-The realism-audit module should be designed for larger generated datasets.
+The realism-audit module is intended for large generated datasets.
 
 Performance guidance:
 
-- push aggregation into SQL
-- avoid loading full tables into Python
-- prefer grouped summaries and targeted outlier extracts
-- avoid correlated subqueries where simpler CTEs or grouped joins suffice
-- ensure queries align with existing indexed join keys where possible
+- push aggregation into SQL;
+- keep result sets summary-oriented or explicitly outlier-limited;
+- preserve indexes used by generation-run, batch, player, team, and match joins;
+- avoid full ORM object materialization in query execution;
+- prefer helper tables such as `audit_batch_team_rosters` where they avoid
+  repeatedly reconstructing expensive historical state.
 
-Initial success criteria:
+## Extension Guidance
 
-- the audit pack runs comfortably against a materially larger dataset than the
-  small test fixtures
-- individual queries remain understandable and maintainable
+Future changes should be narrow and tied to observed audit gaps.
 
----
+Reasonable extensions:
 
-# Review Questions
+- add a new query with complete `RealismAuditQuery` metadata;
+- add dialect-specific SQL only when needed;
+- add post-processing when a query compares observed percentages to config
+  targets;
+- add assessment rules only after reviewing real generated outputs;
+- expose named-query subsets in the control panel if full audit runtime becomes
+  operationally expensive.
 
-Before implementation, the following points should be confirmed:
+Avoid:
 
-1. Should the first version remain entirely report-only with no persistence?
-2. Which audits are mandatory for wave one versus nice-to-have?
-3. Should drift comparisons be strict percentages, percentile-based, or both?
-4. Should the first pass focus only on run and batch summaries, or also include
-   detailed outlier row extracts?
-5. Should any future severity defaults be documented now, or deferred until
-   after first real-data review?
-
----
-
-# Recommendation
-
-Proceed by building the realism-audit module as an independent, SQL-backed,
-report-only component first.
-
-The first implementation should prioritize:
-
-- player population distribution checks
-- club size and capacity sanity checks
-- membership geography and locality checks
-- match volume and cadence checks
-- score competitiveness checks
-- rating movement and outlier checks
-
-Only after reviewing outputs from a larger generated dataset should we decide
-how much of this should become persisted validation or workflow enforcement.
+- turning advisory findings into generation blockers without calibration;
+- writing realism findings into student-facing exports;
+- duplicating export-validation logic in the realism audit pack;
+- using live mutable defaults instead of the run snapshot when snapshot values
+  exist.
