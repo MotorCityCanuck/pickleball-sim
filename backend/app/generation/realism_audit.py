@@ -715,22 +715,29 @@ FATIGUE_EFFECTIVENESS_SQL = {
     "sqlite": """
         WITH player_match_load AS (
             SELECT
+                r.id AS rating_update_id,
                 r.player_id,
                 r.match_id,
                 r.match_date,
                 r.expected_score_share,
                 r.actual_score_share,
-                (
-                    SELECT COUNT(DISTINCT prior.match_id)
-                    FROM ratings_update_log prior
-                    WHERE prior.player_id = r.player_id
-                        AND prior.match_date < r.match_date
-                        AND julianday(r.match_date) - julianday(prior.match_date) <= 14
-                ) AS recent_match_count
+                COUNT(DISTINCT prior.match_id) AS recent_match_count
             FROM ratings_update_log r
             JOIN monthly_batches b
                 ON b.id = r.batch_id
+            LEFT JOIN ratings_update_log prior
+                ON prior.generation_run_id = r.generation_run_id
+                AND prior.player_id = r.player_id
+                AND prior.match_date < r.match_date
+                AND julianday(r.match_date) - julianday(prior.match_date) <= 14
             WHERE b.generation_run_id = :generation_run_id
+            GROUP BY
+                r.id,
+                r.player_id,
+                r.match_id,
+                r.match_date,
+                r.expected_score_share,
+                r.actual_score_share
         ),
         bucketed AS (
             SELECT
@@ -764,22 +771,29 @@ FATIGUE_EFFECTIVENESS_SQL = {
     "postgresql": """
         WITH player_match_load AS (
             SELECT
+                r.id AS rating_update_id,
                 r.player_id,
                 r.match_id,
                 r.match_date,
                 r.expected_score_share,
                 r.actual_score_share,
-                (
-                    SELECT COUNT(DISTINCT prior.match_id)
-                    FROM ratings_update_log prior
-                    WHERE prior.player_id = r.player_id
-                        AND prior.match_date < r.match_date
-                        AND prior.match_date >= r.match_date - INTERVAL '14 days'
-                ) AS recent_match_count
+                COUNT(DISTINCT prior.match_id) AS recent_match_count
             FROM ratings_update_log r
             JOIN monthly_batches b
                 ON b.id = r.batch_id
+            LEFT JOIN ratings_update_log prior
+                ON prior.generation_run_id = r.generation_run_id
+                AND prior.player_id = r.player_id
+                AND prior.match_date < r.match_date
+                AND prior.match_date >= r.match_date - INTERVAL '14 days'
             WHERE b.generation_run_id = :generation_run_id
+            GROUP BY
+                r.id,
+                r.player_id,
+                r.match_id,
+                r.match_date,
+                r.expected_score_share,
+                r.actual_score_share
         ),
         bucketed AS (
             SELECT

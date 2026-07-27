@@ -159,6 +159,7 @@ EXPECTED_PUBLIC_INDEXES = {
     "idx_rating_batch",
     "idx_rating_player_date",
     "idx_ratings_update_log_batch",
+    "idx_ratings_update_log_run_player_date",
     "idx_student_dataset_release_files_release",
     "idx_student_dataset_release_files_table",
     "idx_student_dataset_comparisons_clean_run",
