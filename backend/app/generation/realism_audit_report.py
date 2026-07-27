@@ -301,6 +301,19 @@ def _release_comparison_markdown_lines(
         lines.append("")
         return lines
 
+    synthesized_release_comparison = _release_comparison_from_results(
+        payload.get("results")
+    )
+    if synthesized_release_comparison:
+        for item in synthesized_release_comparison:
+            lines.append(
+                "- "
+                f"{_display_markdown_value(item.get('label'))}: "
+                f"{_display_markdown_value(item.get('summary'))}"
+            )
+        lines.append("")
+        return lines
+
     historical_findings = [
         finding
         for finding in assessment.get("findings") or []
@@ -319,6 +332,66 @@ def _release_comparison_markdown_lines(
 
     lines.extend(["No release comparison data is included in this snapshot.", ""])
     return lines
+
+
+def _release_comparison_from_results(results: Any) -> list[dict[str, str]]:
+    if not isinstance(results, list):
+        return []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("query") or "") != "historical_baseline_scale_regression":
+            continue
+        rows = result.get("rows")
+        if not isinstance(rows, list) or not rows:
+            continue
+        row = rows[0]
+        if not isinstance(row, dict):
+            continue
+
+        baseline_name = row.get("baseline_release_name")
+        baseline_run_id = row.get("baseline_generation_run_id")
+        if baseline_name is None and baseline_run_id is None:
+            return [
+                {
+                    "label": "Historical baseline",
+                    "summary": "No prior successful baseline release was available for comparison.",
+                }
+            ]
+
+        return [
+            {
+                "label": "Previous baseline release",
+                "summary": (
+                    f"{_display_markdown_value(baseline_name)} "
+                    f"(run {_display_markdown_value(baseline_run_id)})"
+                ),
+            },
+            {
+                "label": "Scale delta vs baseline",
+                "summary": (
+                    "players "
+                    f"{_display_pct(row.get('player_delta_vs_baseline_pct'))}, "
+                    "teams "
+                    f"{_display_pct(row.get('team_delta_vs_baseline_pct'))}, "
+                    "matches "
+                    f"{_display_pct(row.get('match_delta_vs_baseline_pct'))}"
+                ),
+            },
+            {
+                "label": "Scale delta vs recent trend",
+                "summary": (
+                    f"compared against {_display_markdown_value(row.get('prior_run_count'))} prior runs: "
+                    "players "
+                    f"{_display_pct(row.get('player_delta_vs_trend_pct'))}, "
+                    "teams "
+                    f"{_display_pct(row.get('team_delta_vs_trend_pct'))}, "
+                    "matches "
+                    f"{_display_pct(row.get('match_delta_vs_trend_pct'))}"
+                ),
+            },
+        ]
+    return []
 
 
 def _certification_decision_markdown_lines(assessment: dict[str, Any]) -> list[str]:
@@ -510,3 +583,10 @@ def _display_pillar_label(value: Any) -> str:
     pillar_key = str(value or "operational_realism")
     pillar = RELEASE_CERTIFICATION_PILLAR_MAP.get(pillar_key)
     return pillar.label if pillar is not None else pillar_key
+
+
+def _display_pct(value: Any) -> str:
+    rendered = _display_markdown_value(value)
+    if rendered == "n/a":
+        return rendered
+    return f"{rendered}%"

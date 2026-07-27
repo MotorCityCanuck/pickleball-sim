@@ -1829,6 +1829,16 @@ def test_realism_audit_runner_executes_phase3_release_certification_queries(sess
         },
     )
 
+    baseline_results = runner.run(
+        query_names=["historical_baseline_scale_regression"],
+        params={"generation_run_id": 2},
+    )
+    baseline_row = baseline_results[0].rows[0]
+    assert baseline_row["generation_run_id"] == 2
+    assert baseline_row["baseline_generation_run_id"] == 1
+    assert baseline_row["baseline_release_name"] == "baseline_clean"
+    assert baseline_row["prior_run_count"] == 1
+
 
 def test_realism_audit_runner_executes_structural_integrity_queries(session):
     seed_audit_dataset(session)
@@ -2374,6 +2384,25 @@ def test_realism_audit_assessment_expands_simulation_assignment_export_and_regre
                     }
                 ],
             },
+            {
+                "query": "historical_baseline_scale_regression",
+                "category": "historical_regression",
+                "pillar": "historical_regression",
+                "rows": [
+                    {
+                        "generation_run_id": 10,
+                        "baseline_generation_run_id": 8,
+                        "baseline_release_name": "baseline_clean",
+                        "player_delta_vs_baseline_pct": 42.0,
+                        "team_delta_vs_baseline_pct": 18.0,
+                        "match_delta_vs_baseline_pct": 12.0,
+                        "prior_run_count": 3,
+                        "player_delta_vs_trend_pct": 28.0,
+                        "team_delta_vs_trend_pct": 8.0,
+                        "match_delta_vs_trend_pct": 4.0,
+                    }
+                ],
+            },
         ]
     }
 
@@ -2384,8 +2413,9 @@ def test_realism_audit_assessment_expands_simulation_assignment_export_and_regre
     assert by_query["candidate_depth_by_country_division"]["severity"] == "warning"
     assert by_query["missing_gold_inputs"]["severity"] == "blocker"
     assert by_query["historical_run_size_regression"]["severity"] == "error"
+    assert by_query["historical_baseline_scale_regression"]["severity"] == "error"
     assert assessment["certification_decision"] == "FAIL"
-    assert assessment["finding_count"] == 4
+    assert assessment["finding_count"] == 5
 
 
 def test_realism_audit_assessment_expands_additional_phase3_query_coverage():
@@ -2457,6 +2487,7 @@ def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pilla
             "candidate_depth_by_country_division",
             "missing_gold_inputs",
             "historical_run_size_regression",
+            "historical_baseline_scale_regression",
         }
     }
 
@@ -2466,6 +2497,7 @@ def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pilla
         "candidate_depth_by_country_division": "assignment_readiness",
         "missing_gold_inputs": "export_readiness",
         "historical_run_size_regression": "historical_regression",
+        "historical_baseline_scale_regression": "historical_regression",
     }
 
 
@@ -2623,3 +2655,72 @@ def test_realism_audit_markdown_uses_historical_findings_for_release_comparison(
     assert "Current release is larger than the previous certified baseline." in markdown
     assert "## Recommendations" in markdown
     assert "Review whether release growth remains within approved tolerances." in markdown
+
+
+def test_realism_audit_markdown_synthesizes_release_comparison_from_baseline_query():
+    payload = {
+        "executed_at": "2026-06-18T12:00:00+00:00",
+        "generation_run_id": 2,
+        "batch_id": 22,
+        "batch_month": "2026-02-01",
+        "results": [
+            {
+                "query": "historical_baseline_scale_regression",
+                "scope": "generation_run",
+                "category": "historical",
+                "pillar": "historical_regression",
+                "description": "Baseline regression summary.",
+                "rows": [
+                    {
+                        "generation_run_id": 2,
+                        "baseline_generation_run_id": 1,
+                        "baseline_release_name": "baseline_clean",
+                        "player_delta_vs_baseline_pct": 12.5,
+                        "team_delta_vs_baseline_pct": 8.0,
+                        "match_delta_vs_baseline_pct": -2.5,
+                        "prior_run_count": 3,
+                        "player_delta_vs_trend_pct": 10.0,
+                        "team_delta_vs_trend_pct": 6.0,
+                        "match_delta_vs_trend_pct": -1.0,
+                    }
+                ],
+            }
+        ],
+        "assessment": {
+            "overall_status": "no_material_issues",
+            "finding_count": 0,
+            "severity_counts": {"info": 1, "warning": 0, "error": 0, "blocker": 0},
+            "certification_score": 100.0,
+            "certification_decision": "PASS",
+            "findings": [],
+            "pillar_assessments": [
+                {
+                    "pillar": "historical_regression",
+                    "label": "Historical Regression",
+                    "implementation_status": "implemented",
+                    "query_count": 1,
+                    "finding_count": 0,
+                    "severity_counts": {"info": 1, "warning": 0, "error": 0, "blocker": 0},
+                    "score": 100.0,
+                    "decision": "PASS",
+                }
+            ],
+            "query_assessments": [
+                {
+                    "query": "historical_baseline_scale_regression",
+                    "pillar": "historical_regression",
+                    "severity": "info",
+                    "summary": "Current release scale remains within configured historical regression tolerances.",
+                }
+            ],
+        },
+    }
+
+    markdown = snapshot_payload_to_markdown(payload)
+
+    assert "## Release Comparison" in markdown
+    assert "Previous baseline release" in markdown
+    assert "baseline_clean (run 1)" in markdown
+    assert "Scale delta vs baseline" in markdown
+    assert "players 12.5%" in markdown
+    assert "Scale delta vs recent trend" in markdown

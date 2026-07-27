@@ -4421,6 +4421,141 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         tags=("history", "regression"),
     ),
     RealismAuditQuery(
+        name="historical_baseline_scale_regression",
+        scope="generation_run",
+        category="historical_regression",
+        pillar=HISTORICAL_REGRESSION_PILLAR.key,
+        description="Current run counts versus the latest successful baseline release and recent prior-run trend.",
+        sql="""
+            WITH run_sizes AS (
+                SELECT
+                    gr.id AS generation_run_id,
+                    gr.generation_name,
+                    COUNT(DISTINCT p.id) AS player_count,
+                    COUNT(DISTINCT t.id) AS team_count,
+                    COUNT(DISTINCT m.id) AS match_count
+                FROM generation_runs gr
+                LEFT JOIN players p
+                    ON p.generation_run_id = gr.id
+                LEFT JOIN teams t
+                    ON t.generation_run_id = gr.id
+                LEFT JOIN monthly_batches mb
+                    ON mb.generation_run_id = gr.id
+                LEFT JOIN matches m
+                    ON m.batch_id = mb.id
+                GROUP BY gr.id, gr.generation_name
+            ),
+            current_run AS (
+                SELECT *
+                FROM run_sizes
+                WHERE generation_run_id = :generation_run_id
+            ),
+            baseline_release AS (
+                SELECT
+                    r.generation_run_id AS baseline_generation_run_id,
+                    r.release_name AS baseline_release_name,
+                    r.release_type AS baseline_release_type,
+                    COALESCE(r.data_quality_level, 'none') AS baseline_data_quality_level,
+                    r.completed_at
+                FROM student_dataset_releases r
+                WHERE r.status = 'succeeded'
+                    AND r.generation_run_id <> :generation_run_id
+                    AND r.release_type IN ('historical_baseline', 'initial_snapshot')
+                ORDER BY
+                    r.completed_at DESC,
+                    r.generation_run_id DESC,
+                    r.id DESC
+                LIMIT 1
+            ),
+            baseline_run AS (
+                SELECT
+                    br.baseline_generation_run_id,
+                    br.baseline_release_name,
+                    br.baseline_release_type,
+                    br.baseline_data_quality_level,
+                    rs.player_count AS baseline_player_count,
+                    rs.team_count AS baseline_team_count,
+                    rs.match_count AS baseline_match_count
+                FROM baseline_release br
+                JOIN run_sizes rs
+                    ON rs.generation_run_id = br.baseline_generation_run_id
+            ),
+            prior_runs AS (
+                SELECT
+                    generation_run_id,
+                    player_count,
+                    team_count,
+                    match_count
+                FROM run_sizes
+                WHERE generation_run_id < :generation_run_id
+                ORDER BY generation_run_id DESC
+                LIMIT 3
+            ),
+            prior_summary AS (
+                SELECT
+                    COUNT(*) AS prior_run_count,
+                    ROUND(AVG(player_count), 2) AS avg_prior_player_count,
+                    ROUND(AVG(team_count), 2) AS avg_prior_team_count,
+                    ROUND(AVG(match_count), 2) AS avg_prior_match_count
+                FROM prior_runs
+            )
+            SELECT
+                cr.generation_run_id,
+                cr.generation_name,
+                cr.player_count,
+                cr.team_count,
+                cr.match_count,
+                br.baseline_generation_run_id,
+                br.baseline_release_name,
+                br.baseline_release_type,
+                br.baseline_data_quality_level,
+                br.baseline_player_count,
+                br.baseline_team_count,
+                br.baseline_match_count,
+                ROUND(
+                    100.0 * (cr.player_count - br.baseline_player_count)
+                    / NULLIF(br.baseline_player_count, 0),
+                    2
+                ) AS player_delta_vs_baseline_pct,
+                ROUND(
+                    100.0 * (cr.team_count - br.baseline_team_count)
+                    / NULLIF(br.baseline_team_count, 0),
+                    2
+                ) AS team_delta_vs_baseline_pct,
+                ROUND(
+                    100.0 * (cr.match_count - br.baseline_match_count)
+                    / NULLIF(br.baseline_match_count, 0),
+                    2
+                ) AS match_delta_vs_baseline_pct,
+                ps.prior_run_count,
+                ps.avg_prior_player_count,
+                ps.avg_prior_team_count,
+                ps.avg_prior_match_count,
+                ROUND(
+                    100.0 * (cr.player_count - ps.avg_prior_player_count)
+                    / NULLIF(ps.avg_prior_player_count, 0),
+                    2
+                ) AS player_delta_vs_trend_pct,
+                ROUND(
+                    100.0 * (cr.team_count - ps.avg_prior_team_count)
+                    / NULLIF(ps.avg_prior_team_count, 0),
+                    2
+                ) AS team_delta_vs_trend_pct,
+                ROUND(
+                    100.0 * (cr.match_count - ps.avg_prior_match_count)
+                    / NULLIF(ps.avg_prior_match_count, 0),
+                    2
+                ) AS match_delta_vs_trend_pct
+            FROM current_run cr
+            LEFT JOIN baseline_run br
+                ON 1 = 1
+            LEFT JOIN prior_summary ps
+                ON 1 = 1
+        """,
+        required_params=("generation_run_id",),
+        tags=("history", "baseline", "regression"),
+    ),
+    RealismAuditQuery(
         name="historical_release_file_coverage",
         scope="generation_run",
         category="historical_regression",

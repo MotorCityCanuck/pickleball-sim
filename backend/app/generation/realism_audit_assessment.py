@@ -17,6 +17,10 @@ DEFAULT_REALISM_AUDIT_ASSESSMENT_THRESHOLDS: dict[str, float] = {
     "rating_large_delta_error_pct": 5.0,
     "rating_outlier_warning_delta": 250.0,
     "unteamed_duration_warning_days": 30.0,
+    "historical_baseline_warning_pct": 20.0,
+    "historical_baseline_error_pct": 35.0,
+    "historical_trend_warning_pct": 15.0,
+    "historical_trend_error_pct": 25.0,
 }
 
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "blocker": 3}
@@ -175,7 +179,11 @@ def _assess_query_result(
         export_assessment,
     )
 
-    historical_assessment = _assess_historical_regression(query_name, rows)
+    historical_assessment = _assess_historical_regression(
+        query_name,
+        rows,
+        thresholds,
+    )
     severity, summary, evidence, recommendation = _pick_assessment(
         (severity, summary, evidence, recommendation),
         historical_assessment,
@@ -819,6 +827,7 @@ def _assess_export_readiness(
 def _assess_historical_regression(
     query_name: str,
     rows: Sequence[Mapping[str, Any]],
+    thresholds: Mapping[str, float],
 ) -> tuple[str, str, str, str] | None:
     if query_name == "historical_run_size_regression":
         growth_values: list[float] = []
@@ -837,6 +846,83 @@ def _assess_historical_regression(
                 "Review whether current release scale is intentionally different from the established baseline.",
             )
         return None
+    if query_name == "historical_baseline_scale_regression":
+        if not rows:
+            return (
+                "warning",
+                "No baseline release comparison data was available.",
+                "The historical baseline regression query returned no rows.",
+                "Confirm that at least one prior successful baseline release exists before relying on historical certification checks.",
+            )
+
+        row = rows[0]
+        baseline_run_id = _to_float(row.get("baseline_generation_run_id"))
+        baseline_release_name = str(row.get("baseline_release_name") or "prior baseline release")
+        if baseline_run_id is None:
+            return (
+                "warning",
+                "No prior baseline release is available for regression comparison.",
+                "The current release does not have a completed earlier baseline release to compare against.",
+                "Create or retain a successful baseline release before using baseline regression as a certification signal.",
+            )
+
+        baseline_deltas = [
+            abs(value)
+            for value in (
+                _to_float(row.get("player_delta_vs_baseline_pct")),
+                _to_float(row.get("team_delta_vs_baseline_pct")),
+                _to_float(row.get("match_delta_vs_baseline_pct")),
+            )
+            if value is not None
+        ]
+        trend_deltas = [
+            abs(value)
+            for value in (
+                _to_float(row.get("player_delta_vs_trend_pct")),
+                _to_float(row.get("team_delta_vs_trend_pct")),
+                _to_float(row.get("match_delta_vs_trend_pct")),
+            )
+            if value is not None
+        ]
+        max_baseline_delta = max(baseline_deltas, default=0.0)
+        max_trend_delta = max(trend_deltas, default=0.0)
+
+        baseline_severity = _severity_for_thresholds(
+            max_baseline_delta,
+            warning=thresholds["historical_baseline_warning_pct"],
+            error=thresholds["historical_baseline_error_pct"],
+        )
+        trend_severity = _severity_for_thresholds(
+            max_trend_delta,
+            warning=thresholds["historical_trend_warning_pct"],
+            error=thresholds["historical_trend_error_pct"],
+        )
+        severity = baseline_severity
+        if _SEVERITY_RANK[trend_severity] > _SEVERITY_RANK[severity]:
+            severity = trend_severity
+
+        prior_run_count = int(_to_float(row.get("prior_run_count")) or 0)
+        evidence = (
+            f"Baseline release {baseline_release_name} compared player/team/match deltas of "
+            f"{_display_number(_to_float(row.get('player_delta_vs_baseline_pct')))}%, "
+            f"{_display_number(_to_float(row.get('team_delta_vs_baseline_pct')))}%, "
+            f"and {_display_number(_to_float(row.get('match_delta_vs_baseline_pct')))}%; "
+            f"trend comparison uses {prior_run_count} prior run{'s' if prior_run_count != 1 else ''} "
+            f"with max delta {_display_number(max_trend_delta)}%."
+        )
+        if severity != "info":
+            return (
+                severity,
+                "Current release scale differs materially from the historical baseline or recent trend.",
+                evidence,
+                "Review whether the current release intentionally diverges from the baseline package and recent run trend before certification.",
+            )
+        return (
+            "info",
+            "Current release scale remains within configured historical regression tolerances.",
+            evidence,
+            "No action required.",
+        )
     if query_name == "historical_release_file_coverage":
         if any(str(row.get("status") or "") != "succeeded" for row in rows):
             return (
@@ -861,6 +947,12 @@ def _assess_historical_regression(
             )
         return None
     return None
+
+
+def _display_number(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
 
 
 def _assess_rating_movement(
