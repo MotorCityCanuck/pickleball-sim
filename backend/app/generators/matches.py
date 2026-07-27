@@ -47,6 +47,52 @@ from .team_identity import (
 logger = logging.getLogger("uvicorn.error")
 
 
+def _resolve_winning_match_team(
+    team_one: MatchTeam,
+    team_two: MatchTeam,
+    *,
+    games: tuple[MatchGame, ...],
+    expected_team_one_win_probability: Decimal,
+) -> MatchTeam:
+    """Resolve a non-null winning side, including deterministic tiebreaks."""
+    if team_one.team_score > team_two.team_score:
+        return team_one
+    if team_two.team_score > team_one.team_score:
+        return team_two
+
+    team_one_points = sum(game.team_one_score for game in games)
+    team_two_points = sum(game.team_two_score for game in games)
+    if team_one_points > team_two_points:
+        team_one.team_score += 1
+        return team_one
+    if team_two_points > team_one_points:
+        team_two.team_score += 1
+        return team_two
+
+    if expected_team_one_win_probability > Decimal("0.5"):
+        team_one.team_score += 1
+        return team_one
+    if expected_team_one_win_probability < Decimal("0.5"):
+        team_two.team_score += 1
+        return team_two
+
+    team_one_key = (
+        team_one.source_team_id
+        if team_one.source_team_id is not None
+        else team_one.team_number
+    )
+    team_two_key = (
+        team_two.source_team_id
+        if team_two.source_team_id is not None
+        else team_two.team_number
+    )
+    if team_one_key <= team_two_key:
+        team_one.team_score += 1
+        return team_one
+    team_two.team_score += 1
+    return team_two
+
+
 @dataclass(frozen=True)
 class AgeAdvantageBiasConfig:
     """Hidden effective-rating settings for age-based performance effects."""
@@ -2218,8 +2264,11 @@ class MatchGenerator:
                     _match_team_player_rows(team_two, second_team)
                 )
                 match = pairings[pairing_index][0]
-                winning_match_team = (
-                    team_one if team_one.team_score > team_two.team_score else team_two
+                winning_match_team = _resolve_winning_match_team(
+                    team_one,
+                    team_two,
+                    games=generated_games.games,
+                    expected_team_one_win_probability=expected_prob,
                 )
                 match.winning_team_id = winning_match_team.source_team_id
             metric["output_count"] = len(match_team_player_rows)

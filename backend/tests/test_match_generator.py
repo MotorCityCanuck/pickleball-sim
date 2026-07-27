@@ -19,7 +19,12 @@ if str(BACKEND_DIR) not in sys.path:
 from app.core.default_configuration import DEFAULT_CONFIG_PAYLOAD  # noqa: E402
 from app.generation.runtime_metrics import RuntimeMetricRecorder  # noqa: E402
 from app.generators import MatchGenerationConfig, MatchGenerator  # noqa: E402
-from app.generators.games import expected_scores, game_score  # noqa: E402
+from app.generators.games import (  # noqa: E402
+    SimulatedGameResult,
+    SimulatedMatchGames,
+    expected_scores,
+    game_score,
+)
 from app.generators import matches as match_generator_module  # noqa: E402
 from app.generators.matches import (  # noqa: E402
     ActivePlayerCandidate,
@@ -602,6 +607,72 @@ def test_generate_for_batch_creates_matches_teams_players_and_games(session):
     assert {team.team_number for team in session.query(MatchTeam)} == {1, 2}
     session.refresh(batch)
     assert batch.match_count_generated == 4
+
+
+def test_generate_for_batch_resolves_tied_two_game_matches_by_total_points(
+    session,
+    monkeypatch,
+):
+    payload = test_payload()
+    payload["match_types"]["weights"] = {
+        "recreational": 0.0,
+        "league": 1.0,
+        "ladder": 0.0,
+        "tournament": 0.0,
+        "challenge": 0.0,
+        "clinic": 0.0,
+    }
+    _, batch = seed_match_data(session, payload=payload, team_count=2)
+
+    def tied_two_game_split(*_args, **_kwargs):
+        return SimulatedMatchGames(
+            team_one_games_won=1,
+            team_two_games_won=1,
+            games=(
+                SimulatedGameResult(
+                    game_number=1,
+                    team_one_score=11,
+                    team_two_score=5,
+                    winning_team_number=1,
+                    target_score=11,
+                    win_by=2,
+                    expected_team_one_score_share=Decimal("0.6000"),
+                    actual_team_one_score_share=Decimal("0.6875"),
+                    expected_team_one_score=Decimal("11.000"),
+                    expected_team_two_score=Decimal("8.000"),
+                    score_noise_factor=Decimal("0.000"),
+                ),
+                SimulatedGameResult(
+                    game_number=2,
+                    team_one_score=9,
+                    team_two_score=11,
+                    winning_team_number=2,
+                    target_score=11,
+                    win_by=2,
+                    expected_team_one_score_share=Decimal("0.6000"),
+                    actual_team_one_score_share=Decimal("0.4500"),
+                    expected_team_one_score=Decimal("11.000"),
+                    expected_team_two_score=Decimal("8.000"),
+                    score_noise_factor=Decimal("0.000"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        match_generator_module,
+        "simulate_match_games",
+        tied_two_game_split,
+    )
+
+    result = MatchGenerator().generate_for_batch(batch_id=batch.id, session=session)
+
+    assert result.match_count == 1
+    match = session.query(Match).one()
+    match_teams = sorted(match.match_teams, key=lambda row: row.team_number)
+    assert len(match.games) == 2
+    assert match_teams[0].team_score == 2
+    assert match_teams[1].team_score == 1
+    assert match.winning_team_id == match_teams[0].source_team_id
 
 
 def test_active_teams_include_hidden_bias_context_fields(session):
