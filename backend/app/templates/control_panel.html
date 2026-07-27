@@ -238,6 +238,11 @@
                 return `student-dataset-export-complete:v3:${completionKey}`;
             }
 
+            function releaseCertificationCompletionStorageKey(modal) {
+                const completionKey = `${modal.dataset.jobStatusId}:${modal.dataset.completedAt || "completed"}`;
+                return `release-certification-complete:v1:${completionKey}`;
+            }
+
             function markStudentExportCompletionSeen(modal) {
                 if (!modal || !modal.isConnected) {
                     return;
@@ -259,6 +264,24 @@
                 }
                 delete document.body.dataset.studentExportCompletionModalOpen;
                 document.body.style.overflow = "";
+            };
+
+            window.closeReleaseCertificationCompletionModal = function closeReleaseCertificationCompletionModal() {
+                const modal = document.getElementById("release-certification-completion-modal");
+                if (modal) {
+                    if (modal.style.display !== "none") {
+                        studentExportCompletionStorageSet(
+                            releaseCertificationCompletionStorageKey(modal),
+                            "shown",
+                        );
+                    }
+                    modal.style.display = "none";
+                    modal.setAttribute("aria-hidden", "true");
+                }
+                delete document.body.dataset.releaseCertificationCompletionModalOpen;
+                if (document.body.dataset.studentExportCompletionModalOpen !== "true") {
+                    document.body.style.overflow = "";
+                }
             };
 
             window.initializeStudentExportCompletionModal = function initializeStudentExportCompletionModal() {
@@ -294,12 +317,51 @@
                 }, 80);
             };
 
+            window.initializeReleaseCertificationCompletionModal = function initializeReleaseCertificationCompletionModal() {
+                const modal = document.getElementById("release-certification-completion-modal");
+                if (!modal || !modal.isConnected) {
+                    delete document.body.dataset.releaseCertificationCompletionModalOpen;
+                    if (document.body.dataset.studentExportCompletionModalOpen !== "true") {
+                        document.body.style.overflow = "";
+                    }
+                    return;
+                }
+                if (!modal.dataset.initialized) {
+                    modal.dataset.initialized = "true";
+                    modal.addEventListener("click", (event) => {
+                        if (event.target === modal) {
+                            window.closeReleaseCertificationCompletionModal();
+                        }
+                    });
+                }
+                const storageKey = releaseCertificationCompletionStorageKey(modal);
+                if (studentExportCompletionStorageGet(storageKey)) {
+                    modal.style.display = "none";
+                    modal.setAttribute("aria-hidden", "true");
+                    return;
+                }
+                window.setTimeout(() => {
+                    const currentModal = document.getElementById("release-certification-completion-modal");
+                    if (currentModal !== modal || !modal.isConnected) {
+                        return;
+                    }
+                    modal.style.display = "flex";
+                    modal.removeAttribute("aria-hidden");
+                    document.body.dataset.releaseCertificationCompletionModalOpen = "true";
+                    document.body.style.overflow = "hidden";
+                }, 80);
+            };
+
             document.body.addEventListener("htmx:afterSwap", () => {
                 window.initializeStudentExportCompletionModal?.();
+                window.initializeReleaseCertificationCompletionModal?.();
             });
 
             document.body.addEventListener("htmx:beforeRequest", (event) => {
-                if (document.body.dataset.studentExportCompletionModalOpen !== "true") {
+                if (
+                    document.body.dataset.studentExportCompletionModalOpen !== "true"
+                    && document.body.dataset.releaseCertificationCompletionModalOpen !== "true"
+                ) {
                     return;
                 }
                 const requestPath = event.detail?.requestConfig?.path
@@ -311,12 +373,27 @@
             });
 
             document.body.addEventListener("htmx:beforeSwap", (event) => {
-                const modal = document.getElementById("student-export-completion-modal");
                 const target = event.detail?.target;
-                if (modal && target instanceof Element && (target === modal || target.contains(modal))) {
+                const studentExportModal = document.getElementById("student-export-completion-modal");
+                if (
+                    studentExportModal
+                    && target instanceof Element
+                    && (target === studentExportModal || target.contains(studentExportModal))
+                ) {
                     window.closeStudentExportCompletionModal();
                 }
+                const certificationModal = document.getElementById("release-certification-completion-modal");
+                if (
+                    certificationModal
+                    && target instanceof Element
+                    && (target === certificationModal || target.contains(certificationModal))
+                ) {
+                    window.closeReleaseCertificationCompletionModal();
+                }
             });
+
+            window.initializeStudentExportCompletionModal?.();
+            window.initializeReleaseCertificationCompletionModal?.();
 
             window.setControlPanelTab = function setControlPanelTab(activeButton) {
                 document.querySelectorAll(".tab-button").forEach((button) => {

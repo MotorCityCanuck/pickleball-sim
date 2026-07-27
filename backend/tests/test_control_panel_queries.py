@@ -1341,6 +1341,116 @@ def test_realism_audit_summary_includes_drilldown_regression_and_history(
     assert summary.certification_history[1].executed_at == "2026-06-17T12:00:00+00:00"
 
 
+def test_realism_audit_summary_includes_completion_metrics(
+    session,
+    tmp_path,
+    monkeypatch,
+):
+    snapshot_root = tmp_path / "realism_audit_snapshots"
+    target_dir = snapshot_root / "generation_run_000002"
+    target_dir.mkdir(parents=True)
+    target_dir.joinpath("run_000002_batch_000022_latest.json").write_text(
+        json.dumps(
+            {
+                "executed_at": "2026-06-18T12:00:00+00:00",
+                "generation_run_id": 2,
+                "batch_id": 22,
+                "batch_month": "2026-02-01",
+                "query_count": 3,
+                "results": [
+                    {
+                        "query": "weekend_match_share",
+                        "category": "matches",
+                        "pillar": "operational_realism",
+                        "rows": [{"weekend_match_share": 0.58}],
+                    }
+                ],
+                "assessment": {
+                    "overall_status": "review_recommended",
+                    "finding_count": 2,
+                    "severity_counts": {"info": 0, "warning": 1, "error": 1, "blocker": 0},
+                    "certification_score": 88.5,
+                    "certification_decision": "PASS_WITH_WARNINGS",
+                    "findings": [
+                        {
+                            "query": "repeat_opponent_rate",
+                            "pillar": "simulation_fidelity",
+                            "category": "competition_ecology",
+                            "severity": "error",
+                            "title": "Repeat Opponent Rate",
+                            "summary": "Too many repeated pairings.",
+                            "evidence": "Meeting count exceeded tolerance.",
+                        },
+                        {
+                            "query": "weekend_match_share",
+                            "pillar": "operational_realism",
+                            "category": "matches",
+                            "severity": "warning",
+                            "title": "Weekend Match Share",
+                            "summary": "Weekend concentration drifted high.",
+                            "evidence": "Observed share was 0.58.",
+                        },
+                    ],
+                    "pillar_assessments": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        queries_module,
+        "DEFAULT_REALISM_AUDIT_SNAPSHOT_DIR",
+        snapshot_root,
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO job_status (
+                id, job_type, job_id, status, current_phase, percent_complete,
+                current_message, started_at, completed_at, created_at, updated_at
+            ) VALUES (
+                801, 'realism_audit', 'realism-audit-801', 'succeeded',
+                'completed', 100.00, 'Release certification completed successfully.',
+                '2026-06-18 11:45:00', '2026-06-18 12:00:00',
+                '2026-06-18 11:45:00', '2026-06-18 12:00:00'
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO ops.realism_audit_query_runs (
+                job_status_id, generation_run_id, batch_id, query_index, query_name,
+                status, started_at, completed_at, elapsed_ms, row_count
+            ) VALUES
+                (801, 2, 22, 1, 'weekend_match_share', 'succeeded', '2026-06-18 11:45:00', '2026-06-18 11:45:05', 5000, 1),
+                (801, 2, 22, 2, 'repeat_opponent_rate', 'succeeded', '2026-06-18 11:45:05', '2026-06-18 11:47:20', 135000, 4),
+                (801, 2, 22, 3, 'historical_run_size_regression', 'succeeded', '2026-06-18 11:47:20', '2026-06-18 11:47:30', 10000, 1)
+            """
+        )
+    )
+    session.commit()
+
+    summary = ControlPanelQueries().get_realism_audit_summary(
+        session,
+        generation_run_id=2,
+        batch_id=22,
+    )
+
+    assert summary.latest_completion is not None
+    assert summary.latest_completion.job_status_id == 801
+    assert summary.latest_completion.elapsed_seconds == 900
+    assert summary.latest_completion.certification_decision == "PASS_WITH_WARNINGS"
+    assert summary.latest_completion.query_count == 3
+    assert summary.latest_completion.longest_query_name == "repeat_opponent_rate"
+    assert summary.latest_completion.longest_query_index == 2
+    assert summary.latest_completion.longest_query_elapsed_ms == 135000
+    assert summary.latest_completion.longest_query_elapsed_label == "2m 15s"
+    assert summary.latest_completion.finding_count == 2
+    assert summary.latest_completion.top_findings[0].title == "Repeat Opponent Rate"
+
+
 def test_get_control_panel_snapshot_blocks_generation_when_seed_data_missing(session):
     _seed_valid_config(session)
 

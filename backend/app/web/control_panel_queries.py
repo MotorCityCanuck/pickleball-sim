@@ -376,6 +376,31 @@ class RealismAuditHistoryEntrySummary:
 
 
 @dataclass(frozen=True)
+class RealismAuditCompletionSummary:
+    """UI-ready completion summary for the latest succeeded certification run."""
+
+    job_status_id: int
+    generation_run_id: int | None
+    batch_id: int | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    elapsed_seconds: int | None
+    elapsed_label: str | None
+    certification_decision: str | None
+    certification_score: float | None
+    overall_status: str | None
+    query_count: int
+    total_row_count: int
+    finding_count: int
+    severity_counts: tuple[tuple[str, int], ...]
+    longest_query_name: str | None
+    longest_query_index: int | None
+    longest_query_elapsed_ms: int | None
+    longest_query_elapsed_label: str | None
+    top_findings: tuple[RealismAuditFindingSummary, ...]
+
+
+@dataclass(frozen=True)
 class RealismAuditRegressionSummary:
     """UI-ready latest-vs-previous certification comparison."""
 
@@ -409,6 +434,7 @@ class RealismAuditSummary:
     pillar_drilldowns: tuple[RealismAuditPillarDrilldownSummary, ...]
     regression_summary: RealismAuditRegressionSummary | None
     certification_history: tuple[RealismAuditHistoryEntrySummary, ...]
+    latest_completion: RealismAuditCompletionSummary | None
     latest_completed_job: JobSummary | None
     latest_incomplete_job: JobSummary | None
     latest_incomplete_job_is_active: bool
@@ -1122,6 +1148,13 @@ class ControlPanelQueries:
                 snapshot_payloads[1] if len(snapshot_payloads) > 1 else None,
             ),
             certification_history=_realism_audit_history_entries(snapshot_payloads),
+            latest_completion=_realism_audit_completion_summary(
+                session,
+                latest_job=latest_completed_job,
+                latest_snapshot=snapshot_summary,
+                latest_incomplete_job=latest_incomplete_job,
+                latest_incomplete_job_is_active=latest_incomplete_job_is_active,
+            ),
             latest_completed_job=latest_completed_job,
             latest_incomplete_job=latest_incomplete_job,
             latest_incomplete_job_is_active=latest_incomplete_job_is_active,
@@ -2056,10 +2089,79 @@ def _student_export_completion_group(
     )
 
 
-def _table_exists(session: Session, table_name: str) -> bool:
-    bind = session.get_bind()
-    return bind is not None and inspect(bind).has_table(table_name)
+def _realism_audit_completion_summary(
+    session: Session,
+    *,
+    latest_job: JobSummary | None,
+    latest_snapshot: RealismAuditSnapshotSummary | None,
+    latest_incomplete_job: JobSummary | None,
+    latest_incomplete_job_is_active: bool,
+) -> RealismAuditCompletionSummary | None:
+    if latest_job is None or latest_job.status != "succeeded":
+        return None
+    if (
+        latest_incomplete_job is not None
+        and latest_incomplete_job_is_active
+        and _job_reference_time(latest_incomplete_job) >= _job_reference_time(latest_job)
+    ):
+        return None
 
+    elapsed_seconds = None
+    if (
+        latest_job.started_at is not None
+        and latest_job.completed_at is not None
+        and latest_job.completed_at >= latest_job.started_at
+    ):
+        elapsed_seconds = int(
+            (latest_job.completed_at - latest_job.started_at).total_seconds()
+        )
+
+    longest_query = None
+    query_count = 0
+    if _table_exists(session, "realism_audit_query_runs", schema="ops"):
+        query_rows = list(
+            session.scalars(
+                select(RealismAuditQueryRun)
+                .where(RealismAuditQueryRun.job_status_id == latest_job.job_status_id)
+                .order_by(RealismAuditQueryRun.query_index.asc(), RealismAuditQueryRun.id.asc())
+            )
+        )
+        query_count = len(query_rows)
+        longest_query = max(
+            (
+                row
+                for row in query_rows
+                if row.elapsed_ms is not None
+            ),
+            key=lambda row: int(row.elapsed_ms or 0),
+            default=None,
+        )
+
+    return RealismAuditCompletionSummary(
+        job_status_id=latest_job.job_status_id,
+        generation_run_id=latest_snapshot.generation_run_id if latest_snapshot else None,
+        batch_id=latest_snapshot.batch_id if latest_snapshot else None,
+        started_at=latest_job.started_at,
+        completed_at=latest_job.completed_at,
+        elapsed_seconds=elapsed_seconds,
+        elapsed_label=latest_job.elapsed_label,
+        certification_decision=(
+            latest_snapshot.certification_decision if latest_snapshot else None
+        ),
+        certification_score=latest_snapshot.certification_score if latest_snapshot else None,
+        overall_status=latest_snapshot.overall_status if latest_snapshot else None,
+        query_count=query_count or (latest_snapshot.query_count if latest_snapshot else 0),
+        total_row_count=latest_snapshot.total_row_count if latest_snapshot else 0,
+        finding_count=latest_snapshot.finding_count if latest_snapshot else 0,
+        severity_counts=latest_snapshot.severity_counts if latest_snapshot else (),
+        longest_query_name=longest_query.query_name if longest_query is not None else None,
+        longest_query_index=longest_query.query_index if longest_query is not None else None,
+        longest_query_elapsed_ms=int(longest_query.elapsed_ms) if longest_query and longest_query.elapsed_ms is not None else None,
+        longest_query_elapsed_label=_format_elapsed_milliseconds(
+            int(longest_query.elapsed_ms)
+        ) if longest_query and longest_query.elapsed_ms is not None else None,
+        top_findings=latest_snapshot.top_findings if latest_snapshot else (),
+    )
 
 def latest_realism_audit_snapshot_payload(
     *,
@@ -2989,6 +3091,22 @@ def _format_elapsed_duration(
     if minutes > 0:
         return f"{minutes}m {seconds:02d}s"
     return f"{seconds}s"
+
+
+def _format_elapsed_milliseconds(total_ms: int | None) -> str | None:
+    if total_ms is None or total_ms < 0:
+        return None
+    total_seconds = total_ms // 1000
+    milliseconds = total_ms % 1000
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes > 0:
+        return f"{minutes}m {seconds:02d}s"
+    if total_seconds > 0:
+        return f"{seconds}s"
+    return f"{milliseconds}ms"
 
 
 def _format_clock_duration(

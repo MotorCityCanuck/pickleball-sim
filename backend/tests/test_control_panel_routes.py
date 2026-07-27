@@ -2042,6 +2042,38 @@ def test_orchestration_partial_renders_phase_6_release_certification_sections(
         ),
         encoding="utf-8",
     )
+    session = session_factory()
+    try:
+        session.execute(
+            text(
+                """
+                INSERT INTO job_status (
+                    id, job_type, job_id, status, current_phase, percent_complete,
+                    current_message, started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    801, 'realism_audit', 'realism-audit-801', 'succeeded',
+                    'completed', 100.00, 'Release certification completed successfully.',
+                    '2026-06-18 11:45:00', '2026-06-18 12:00:00',
+                    '2026-06-18 11:45:00', '2026-06-18 12:00:00'
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO ops.realism_audit_query_runs (
+                    job_status_id, generation_run_id, batch_id, query_index, query_name,
+                    status, started_at, completed_at, elapsed_ms, row_count
+                ) VALUES
+                    (801, 2, 22, 1, 'weekend_match_share', 'succeeded', '2026-06-18 11:45:00', '2026-06-18 11:45:05', 5000, 1),
+                    (801, 2, 22, 2, 'repeat_opponent_rate', 'succeeded', '2026-06-18 11:45:05', '2026-06-18 11:47:20', 135000, 4)
+                """
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
 
     app = create_app()
     routes = _route_map(app)
@@ -2063,6 +2095,9 @@ def test_orchestration_partial_renders_phase_6_release_certification_sections(
     assert "Weekend Match Share" in body
     assert "Previous Snapshot" in body
     assert "Score Delta" in body
+    assert "release-certification-completion-modal" in body
+    assert "Release certification finished" in body
+    assert "Longest Query" in body
 
 
 def test_realism_audit_success_hides_older_stale_clear_button(session_factory):

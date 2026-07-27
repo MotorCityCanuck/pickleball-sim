@@ -474,6 +474,134 @@
                 </div>
             {% endif %}
 
+            {% set certification_completion = snapshot.realism_audit_summary.latest_completion %}
+            {% if certification_completion %}
+                <div
+                    id="release-certification-completion-modal"
+                    data-job-status-id="{{ certification_completion.job_status_id }}"
+                    data-completed-at="{% if certification_completion.completed_at %}{{ certification_completion.completed_at.isoformat() }}{% endif %}"
+                    style="position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(16, 24, 40, 0.46);"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="release-certification-completion-title"
+                >
+                    <div style="width:min(760px, 100%); max-height:min(86vh, 760px); overflow:auto; border:1px solid #b7dfc2; border-radius:18px; background:#ffffff; box-shadow:0 24px 70px rgba(23, 32, 51, 0.28);">
+                        <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:18px 20px; border-bottom:1px solid #e5eaf1;">
+                            <div style="display:grid; gap:6px;">
+                                <div style="font-size:12px; color:#247a3d; text-transform:uppercase; font-weight:800;">Certification complete</div>
+                                <div id="release-certification-completion-title" style="font-size:22px; font-weight:800; color:#172033; line-height:1.2;">Release certification finished</div>
+                                <div style="color:#5a6477; line-height:1.45;">
+                                    Job {{ certification_completion.job_status_id }} completed{% if certification_completion.elapsed_seconds is not none %} in {{ "{:,}".format(certification_completion.elapsed_seconds) }} seconds{% endif %}.
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onclick="window.closeReleaseCertificationCompletionModal?.()"
+                                style="border:1px solid #d6d9df; background:#f7f9fc; color:#1d2433; border-radius:10px; min-width:40px; height:40px; cursor:pointer; font-size:20px; line-height:1;"
+                                aria-label="Close release certification completion summary"
+                            >
+                                &times;
+                            </button>
+                        </div>
+
+                        <div style="display:grid; gap:16px; padding:20px;">
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+                                <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Decision</div>
+                                    <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">{{ certification_completion.certification_decision or "--" }}</div>
+                                </div>
+                                <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Score</div>
+                                    <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">{% if certification_completion.certification_score is not none %}{{ certification_completion.certification_score }}{% else %}n/a{% endif %}</div>
+                                </div>
+                                <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Elapsed</div>
+                                    <div style="margin-top:6px; font-size:18px; font-weight:800; color:#172033;">{{ certification_completion.elapsed_label or "--" }}</div>
+                                </div>
+                                <div style="border:1px solid #eef1f5; border-radius:12px; padding:12px; background:#fbfcfe;">
+                                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Longest Query</div>
+                                    <div style="margin-top:6px; font-size:15px; font-weight:800; color:#172033;">{{ certification_completion.longest_query_name or "--" }}</div>
+                                    {% if certification_completion.longest_query_elapsed_label %}
+                                        <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ certification_completion.longest_query_elapsed_label }}{% if certification_completion.longest_query_index is not none %} | query {{ certification_completion.longest_query_index }}{% endif %}</div>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Generation Run</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.generation_run_id or "n/a" }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Batch</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.batch_id or "n/a" }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Queries</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.query_count }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Result Rows</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.total_row_count }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Findings</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.finding_count }}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">Assessment Status</div>
+                                    <div style="margin-top:6px;">{{ certification_completion.overall_status or "n/a" }}</div>
+                                </div>
+                            </div>
+
+                            {% if certification_completion.severity_counts %}
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px;">
+                                    {% for severity, count in certification_completion.severity_counts %}
+                                        <div class="metric-card">
+                                            <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ severity }}</div>
+                                            <div style="margin-top:6px;">{{ count }}</div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+
+                            <div style="display:grid; gap:10px;">
+                                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Top Findings</div>
+                                {% if certification_completion.top_findings %}
+                                    <div style="display:grid; gap:8px;">
+                                        {% for finding in certification_completion.top_findings %}
+                                            <div style="border:1px solid #d6d9df; border-radius:10px; padding:10px 12px;">
+                                                <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
+                                                    <div style="font-weight:700; color:#172033;">{{ finding.title }}</div>
+                                                    <div style="font-size:11px; color:#5a6477; text-transform:uppercase;">{{ finding.severity }}</div>
+                                                </div>
+                                                <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.pillar }} | {{ finding.category }}</div>
+                                                <div style="margin-top:6px; color:#5a6477;">{{ finding.summary }}</div>
+                                                {% if finding.evidence %}
+                                                    <div style="margin-top:4px; color:#5a6477; font-size:12px;">{{ finding.evidence }}</div>
+                                                {% endif %}
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <div style="color:#5a6477;">No findings exceeded the configured thresholds.</div>
+                                {% endif %}
+                            </div>
+
+                            <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+                                <button
+                                    type="button"
+                                    onclick="window.closeReleaseCertificationCompletionModal?.()"
+                                    style="border:1px solid #d6d9df; background:#fff; color:#1d2433; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:800;"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
                 <div class="info-card {% if snapshot.allowed_actions.can_run_realism_audit %}state-card-ready{% else %}state-card-blocked{% endif %}">
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Certification Preconditions</div>
