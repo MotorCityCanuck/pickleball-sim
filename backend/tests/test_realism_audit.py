@@ -2088,6 +2088,126 @@ def test_realism_audit_assessment_allows_unaffiliated_zero_primary_players():
     assert multi_primary_assessment["findings"][0]["severity"] == "error"
 
 
+def test_realism_audit_assessment_computes_cross_pillar_certification_score():
+    payload = {
+        "results": [
+            {
+                "query": "chemistry_effectiveness",
+                "category": "simulation",
+                "pillar": "simulation_fidelity",
+                "rows": [
+                    {
+                        "chemistry_band": "high",
+                        "team_match_count": 8,
+                        "avg_chemistry_score": 0.81,
+                        "avg_expected_win_probability": 0.52,
+                        "actual_win_rate": 0.52,
+                        "win_rate_minus_expected": 0.0,
+                    }
+                ],
+            },
+            {
+                "query": "team_assignment_delay_summary",
+                "category": "teams",
+                "pillar": "operational_realism",
+                "rows": [
+                    {
+                        "player_count": 120,
+                        "ever_teamed_player_count": 118,
+                        "still_unteamed_player_count": 2,
+                        "avg_days_to_first_team": 14.0,
+                        "avg_days_unteamed_including_unresolved": 18.0,
+                        "max_days_unteamed_including_unresolved": 45,
+                    }
+                ],
+            },
+            {
+                "query": "historical_run_size_regression",
+                "category": "historical",
+                "pillar": "historical_regression",
+                "rows": [
+                    {
+                        "generation_run_id": 2,
+                        "player_count": 1000,
+                        "team_count": 500,
+                        "match_count": 2500,
+                    },
+                    {
+                        "generation_run_id": 1,
+                        "player_count": 800,
+                        "team_count": 400,
+                        "match_count": 2000,
+                    },
+                ],
+            },
+        ]
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+
+    assert assessment["certification_decision"] == "PASS_WITH_WARNINGS"
+    assert assessment["certification_score"] == 96.7
+    assert assessment["finding_count"] == 1
+    by_pillar = {
+        pillar["pillar"]: pillar
+        for pillar in assessment["pillar_assessments"]
+        if pillar["query_count"] > 0
+    }
+    assert by_pillar["simulation_fidelity"]["decision"] == "PASS"
+    assert by_pillar["simulation_fidelity"]["score"] == 100.0
+    assert by_pillar["operational_realism"]["decision"] == "PASS_WITH_WARNINGS"
+    assert by_pillar["operational_realism"]["score"] == 90.0
+    assert by_pillar["historical_regression"]["decision"] == "PASS"
+    assert by_pillar["historical_regression"]["score"] == 100.0
+
+
+def test_realism_audit_assessment_marks_unimplemented_pillar_not_assessed():
+    payload = {
+        "results": [
+            {
+                "query": "structural_integrity_placeholder",
+                "category": "integrity",
+                "pillar": "structural_integrity",
+                "rows": [],
+            }
+        ]
+    }
+
+    assessment = assess_realism_audit_payload(payload)
+
+    structural = next(
+        pillar
+        for pillar in assessment["pillar_assessments"]
+        if pillar["pillar"] == "structural_integrity"
+    )
+    assert structural["query_count"] == 1
+    assert structural["implementation_status"] == "planned"
+    assert structural["decision"] == "PASS"
+    assert assessment["certification_score"] is None
+    assert assessment["certification_decision"] == "PASS"
+
+
+def test_realism_audit_query_registry_maps_phase3_queries_to_certification_pillars():
+    pillar_map = {
+        query.name: query.pillar
+        for query in REALISM_AUDIT_QUERIES
+        if query.name
+        in {
+            "chemistry_effectiveness",
+            "candidate_depth_by_country_division",
+            "missing_gold_inputs",
+            "historical_run_size_regression",
+        }
+    }
+
+    assert pillar_map == {
+        "chemistry_effectiveness": "simulation_fidelity",
+        "candidate_depth_by_country_division": "assignment_readiness",
+        "missing_gold_inputs": "export_readiness",
+        "historical_run_size_regression": "historical_regression",
+    }
+
+
 def test_last_name_alignment_query_avoids_full_reference_materialization():
     query = next(
         query
@@ -2168,3 +2288,76 @@ def test_realism_audit_markdown_includes_assessment_findings():
     assert "Previous approved release" in markdown
     assert "Club Fill Ratio Summary" in markdown
     assert "over capacity" in markdown
+
+
+def test_realism_audit_markdown_uses_historical_findings_for_release_comparison():
+    payload = {
+        "executed_at": "2026-06-18T12:00:00+00:00",
+        "generation_run_id": 2,
+        "batch_id": 22,
+        "batch_month": "2026-02-01",
+        "results": [
+            {
+                "query": "historical_run_size_regression",
+                "scope": "generation_run",
+                "category": "historical",
+                "pillar": "historical_regression",
+                "description": "Run-size regression summary.",
+                "rows": [
+                    {
+                        "generation_run_id": 2,
+                        "player_count": 1000,
+                        "team_count": 500,
+                        "match_count": 2500,
+                    }
+                ],
+            }
+        ],
+        "assessment": {
+            "overall_status": "review_recommended",
+            "finding_count": 1,
+            "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+            "certification_score": 90.0,
+            "certification_decision": "PASS_WITH_WARNINGS",
+            "findings": [
+                {
+                    "query": "historical_run_size_regression",
+                    "pillar": "historical_regression",
+                    "category": "historical",
+                    "severity": "warning",
+                    "title": "Historical Run Size Regression",
+                    "summary": "Current release is larger than the previous certified baseline.",
+                    "evidence": "Player count increased by 25.0%.",
+                    "recommendation": "Review whether release growth remains within approved tolerances.",
+                }
+            ],
+            "pillar_assessments": [
+                {
+                    "pillar": "historical_regression",
+                    "label": "Historical Regression",
+                    "implementation_status": "implemented",
+                    "query_count": 1,
+                    "finding_count": 1,
+                    "severity_counts": {"info": 0, "warning": 1, "error": 0, "blocker": 0},
+                    "score": 90.0,
+                    "decision": "PASS_WITH_WARNINGS",
+                }
+            ],
+            "query_assessments": [
+                {
+                    "query": "historical_run_size_regression",
+                    "pillar": "historical_regression",
+                    "severity": "warning",
+                    "summary": "Current release is larger than the previous certified baseline.",
+                }
+            ],
+        },
+    }
+
+    markdown = snapshot_payload_to_markdown(payload)
+
+    assert "## Release Comparison" in markdown
+    assert "Historical Run Size Regression" in markdown
+    assert "Current release is larger than the previous certified baseline." in markdown
+    assert "## Recommendations" in markdown
+    assert "Review whether release growth remains within approved tolerances." in markdown
