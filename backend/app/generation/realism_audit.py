@@ -4391,23 +4391,43 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         pillar=HISTORICAL_REGRESSION_PILLAR.key,
         description="Cross-run player, team, and match counts with simple growth rates versus the prior run.",
         sql="""
-            WITH run_sizes AS (
+            WITH player_counts AS (
+                SELECT
+                    p.generation_run_id,
+                    COUNT(*) AS player_count
+                FROM players p
+                GROUP BY p.generation_run_id
+            ),
+            team_counts AS (
+                SELECT
+                    t.generation_run_id,
+                    COUNT(*) AS team_count
+                FROM teams t
+                GROUP BY t.generation_run_id
+            ),
+            match_counts AS (
+                SELECT
+                    mb.generation_run_id,
+                    COUNT(*) AS match_count
+                FROM monthly_batches mb
+                JOIN matches m
+                    ON m.batch_id = mb.id
+                GROUP BY mb.generation_run_id
+            ),
+            run_sizes AS (
                 SELECT
                     gr.id AS generation_run_id,
                     gr.generation_name,
-                    COUNT(DISTINCT p.id) AS player_count,
-                    COUNT(DISTINCT t.id) AS team_count,
-                    COUNT(DISTINCT m.id) AS match_count
+                    COALESCE(pc.player_count, 0) AS player_count,
+                    COALESCE(tc.team_count, 0) AS team_count,
+                    COALESCE(mc.match_count, 0) AS match_count
                 FROM generation_runs gr
-                LEFT JOIN players p
-                    ON p.generation_run_id = gr.id
-                LEFT JOIN teams t
-                    ON t.generation_run_id = gr.id
-                LEFT JOIN monthly_batches mb
-                    ON mb.generation_run_id = gr.id
-                LEFT JOIN matches m
-                    ON m.batch_id = mb.id
-                GROUP BY gr.id, gr.generation_name
+                LEFT JOIN player_counts pc
+                    ON pc.generation_run_id = gr.id
+                LEFT JOIN team_counts tc
+                    ON tc.generation_run_id = gr.id
+                LEFT JOIN match_counts mc
+                    ON mc.generation_run_id = gr.id
             ),
             ranked AS (
                 SELECT
@@ -4453,23 +4473,43 @@ REALISM_AUDIT_QUERIES: tuple[RealismAuditQuery, ...] = (
         pillar=HISTORICAL_REGRESSION_PILLAR.key,
         description="Current run counts versus the latest successful baseline release and recent prior-run trend.",
         sql="""
-            WITH run_sizes AS (
+            WITH player_counts AS (
+                SELECT
+                    p.generation_run_id,
+                    COUNT(*) AS player_count
+                FROM players p
+                GROUP BY p.generation_run_id
+            ),
+            team_counts AS (
+                SELECT
+                    t.generation_run_id,
+                    COUNT(*) AS team_count
+                FROM teams t
+                GROUP BY t.generation_run_id
+            ),
+            match_counts AS (
+                SELECT
+                    mb.generation_run_id,
+                    COUNT(*) AS match_count
+                FROM monthly_batches mb
+                JOIN matches m
+                    ON m.batch_id = mb.id
+                GROUP BY mb.generation_run_id
+            ),
+            run_sizes AS (
                 SELECT
                     gr.id AS generation_run_id,
                     gr.generation_name,
-                    COUNT(DISTINCT p.id) AS player_count,
-                    COUNT(DISTINCT t.id) AS team_count,
-                    COUNT(DISTINCT m.id) AS match_count
+                    COALESCE(pc.player_count, 0) AS player_count,
+                    COALESCE(tc.team_count, 0) AS team_count,
+                    COALESCE(mc.match_count, 0) AS match_count
                 FROM generation_runs gr
-                LEFT JOIN players p
-                    ON p.generation_run_id = gr.id
-                LEFT JOIN teams t
-                    ON t.generation_run_id = gr.id
-                LEFT JOIN monthly_batches mb
-                    ON mb.generation_run_id = gr.id
-                LEFT JOIN matches m
-                    ON m.batch_id = mb.id
-                GROUP BY gr.id, gr.generation_name
+                LEFT JOIN player_counts pc
+                    ON pc.generation_run_id = gr.id
+                LEFT JOIN team_counts tc
+                    ON tc.generation_run_id = gr.id
+                LEFT JOIN match_counts mc
+                    ON mc.generation_run_id = gr.id
             ),
             current_run AS (
                 SELECT *

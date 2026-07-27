@@ -1817,6 +1817,9 @@ def test_realism_audit_runner_executes_phase3_release_certification_queries(sess
     )
     assert result_map["historical_run_size_regression"][0]["generation_run_id"] == 2
     assert result_map["historical_run_size_regression"][1]["generation_run_id"] == 1
+    assert result_map["historical_run_size_regression"][0]["player_count"] == 2
+    assert result_map["historical_run_size_regression"][0]["team_count"] == 1
+    assert result_map["historical_run_size_regression"][0]["match_count"] == 1
     assert result_map["historical_release_file_coverage"] == (
         {
             "generation_run_id": 1,
@@ -1837,6 +1840,9 @@ def test_realism_audit_runner_executes_phase3_release_certification_queries(sess
     assert baseline_row["generation_run_id"] == 2
     assert baseline_row["baseline_generation_run_id"] == 1
     assert baseline_row["baseline_release_name"] == "baseline_clean"
+    assert baseline_row["player_count"] == 2
+    assert baseline_row["team_count"] == 1
+    assert baseline_row["match_count"] == 1
     assert baseline_row["prior_run_count"] == 1
 
 
