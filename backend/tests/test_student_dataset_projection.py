@@ -27,6 +27,13 @@ def test_student_dataset_schema_version_tracks_current_projection_contract():
     assert STUDENT_DATASET_SCHEMA_VERSION == "1.5"
 
 
+def test_club_memberships_projection_uses_raw_contract_column_names():
+    projection = PROJECTION_BY_TABLE["club_memberships"]
+
+    assert projection.source_columns[4:6] == ("start_date", "end_date")
+    assert projection.included_columns[4:6] == ("joined_date", "left_date")
+
+
 def test_projection_table_order_matches_documented_release_files():
     assert STUDENT_TABLE_ORDER == (
         "clubs",

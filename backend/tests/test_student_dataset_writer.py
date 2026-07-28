@@ -961,7 +961,48 @@ def test_write_staged_release_parquet_contains_snapshot_transformed_values(
     club_memberships = pq.read_table(
         release_dir / "club_memberships.parquet"
     ).to_pylist()
-    assert club_memberships[0]["end_date"] is None
+    assert club_memberships[0]["joined_date"] == "2025-01-01"
+    assert club_memberships[0]["left_date"] is None
+
+
+def test_exported_raw_schema_uses_contract_column_names_and_string_dates(
+    session,
+    release_window,
+    tmp_path,
+):
+    seed_snapshot_query_data(session)
+    build_parameters = StudentDatasetBuildParameters(
+        generation_run_id=1,
+        initial_history_month_count=2,
+        subsequent_month_count=0,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+    )
+
+    result = write_staged_release_family(
+        session=session,
+        output_root=tmp_path,
+        release_name="napa_student_release",
+        release_windows=(release_window,),
+        build_parameters=build_parameters,
+    )
+    release_dir = result.releases[0].release_dir
+
+    club_membership_schema = pq.read_schema(release_dir / "club_memberships.parquet")
+    assert club_membership_schema.names == [
+        "id",
+        "player_id",
+        "club_id",
+        "membership_type",
+        "joined_date",
+        "left_date",
+        "is_primary",
+    ]
+    assert club_membership_schema.field("joined_date").type == pa.string()
+    assert club_membership_schema.field("left_date").type == pa.string()
+
+    teams_schema = pq.read_schema(release_dir / "teams.parquet")
+    assert teams_schema.field("dissolution_date").type == pa.string()
 
 
 def test_uuid_values_are_materialized_as_parquet_strings():

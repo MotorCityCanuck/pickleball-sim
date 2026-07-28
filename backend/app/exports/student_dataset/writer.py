@@ -2290,17 +2290,39 @@ def _infer_arrow_schema(
     columns: tuple[str, ...],
     table_name: str | None = None,
 ) -> pa.Schema:
+    projection_schema = _projection_arrow_schema(table_name) if table_name is not None else None
     return pa.schema(
         [
             pa.field(
                 column_name,
-                pa.string()
-                if _is_uuid_formatted_string_column(table_name, column_name)
-                else _infer_arrow_type(row.get(column_name) for row in row_dicts),
+                _inferred_or_projection_arrow_type(
+                    column_name=column_name,
+                    row_dicts=row_dicts,
+                    table_name=table_name,
+                    projection_schema=projection_schema,
+                ),
             )
             for column_name in columns
         ]
     )
+
+
+def _inferred_or_projection_arrow_type(
+    *,
+    column_name: str,
+    row_dicts: list[dict[str, Any]],
+    table_name: str | None,
+    projection_schema: pa.Schema | None,
+) -> pa.DataType:
+    if _is_uuid_formatted_string_column(table_name, column_name):
+        return pa.string()
+
+    inferred_type = _infer_arrow_type(row.get(column_name) for row in row_dicts)
+    if not pa.types.is_null(inferred_type):
+        return inferred_type
+    if projection_schema is not None and column_name in projection_schema.names:
+        return projection_schema.field(column_name).type
+    return inferred_type
 
 
 def _projection_arrow_schema(table_name: str) -> pa.Schema:

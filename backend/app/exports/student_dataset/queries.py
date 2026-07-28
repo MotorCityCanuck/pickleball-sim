@@ -377,10 +377,11 @@ def _clubs_query(context: StudentDatasetQueryContext) -> Select:
 def _club_memberships_query(context: StudentDatasetQueryContext) -> Select:
     projection = PROJECTION_BY_TABLE["club_memberships"]
     overrides = {
-        "end_date": case(
+        "joined_date": ClubMembership.start_date.label("joined_date"),
+        "left_date": case(
             (ClubMembership.end_date >= context.snapshot_end_exclusive, None),
             else_=ClubMembership.end_date,
-        ).label("end_date")
+        ).label("left_date"),
     }
     return (
         _select_projection(projection, overrides)

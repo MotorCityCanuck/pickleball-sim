@@ -550,7 +550,17 @@ def test_club_queries_apply_reachability_and_as_of_end_date(session, query_conte
 
     membership_rows = rows(session, "club_memberships", query_context)
     assert [row["id"] for row in membership_rows] == [1, 2]
-    assert membership_rows[0]["end_date"] is None
+    assert membership_rows[0]["joined_date"] == date(2025, 1, 1)
+    assert membership_rows[0]["left_date"] is None
+
+
+def test_teams_query_projects_dissolution_date_as_date_value(session, query_context):
+    seed_snapshot_query_data(session)
+
+    team_rows = rows(session, "teams", query_context)
+
+    assert team_rows[0]["dissolution_date"] is None
+    assert team_rows[1]["dissolution_date"] == date(2025, 1, 15)
 
 
 def test_regions_query_uses_referenced_regions_only(session, query_context):

@@ -255,8 +255,8 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
             "player_id",
             "club_id",
             "membership_type",
-            "start_date",
-            "end_date",
+            "joined_date",
+            "left_date",
             "is_primary",
         ),
         excluded_columns=("generation_run_id", "created_at", "updated_at"),
@@ -278,12 +278,12 @@ PROJECTIONS: tuple[StudentTableProjection, ...] = (
         temporal_validations=(
             TemporalValidation(
                 "club_memberships",
-                "start_date < snapshot_end_exclusive",
+                "joined_date < snapshot_end_exclusive",
                 "Club memberships must start before the release snapshot end.",
             ),
             TemporalValidation(
                 "club_memberships",
-                "end_date IS NULL OR end_date < snapshot_end_exclusive",
+                "left_date IS NULL OR left_date < snapshot_end_exclusive",
                 "Future club membership end dates must be suppressed.",
             ),
         ),

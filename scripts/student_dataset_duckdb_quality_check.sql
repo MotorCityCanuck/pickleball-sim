@@ -59,8 +59,8 @@ INSERT INTO expected_columns VALUES
     ('club_memberships', 2, 'player_id'),
     ('club_memberships', 3, 'club_id'),
     ('club_memberships', 4, 'membership_type'),
-    ('club_memberships', 5, 'start_date'),
-    ('club_memberships', 6, 'end_date'),
+    ('club_memberships', 5, 'joined_date'),
+    ('club_memberships', 6, 'left_date'),
     ('club_memberships', 7, 'is_primary'),
     ('match_games', 1, 'id'),
     ('match_games', 2, 'match_id'),
@@ -660,8 +660,8 @@ SELECT
     COUNT(*),
     'membership rows leaking future dates'
 FROM club_memberships
-WHERE start_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest)
-   OR (end_date IS NOT NULL AND end_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest));
+WHERE joined_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest)
+   OR (left_date IS NOT NULL AND left_date >= (SELECT CAST(snapshot_end_exclusive AS DATE) FROM manifest));
 
 INSERT INTO qc_results
 SELECT
