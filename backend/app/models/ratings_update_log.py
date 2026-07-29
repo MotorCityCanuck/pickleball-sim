@@ -58,6 +58,12 @@ class RatingsUpdateLog(Base, TimestampMixin):
     __table_args__ = (
         Index("idx_ratings_update_log_batch", "batch_id"),
         Index(
+            "idx_ratings_update_log_run_player_day",
+            "generation_run_id",
+            "player_id",
+            "match_date",
+        ),
+        Index(
             "idx_ratings_update_log_run_player_date",
             "generation_run_id",
             "player_id",

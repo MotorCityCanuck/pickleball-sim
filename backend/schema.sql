@@ -1165,6 +1165,7 @@ CREATE INDEX idx_players_status ON players (player_status);
 CREATE INDEX idx_rating_batch ON player_rating_history (batch_id);
 CREATE INDEX idx_rating_player_date ON player_rating_history (player_id, rating_date DESC);
 CREATE INDEX idx_ratings_update_log_batch ON ratings_update_log (batch_id);
+CREATE INDEX idx_ratings_update_log_run_player_day ON ratings_update_log (generation_run_id, player_id, match_date);
 CREATE INDEX idx_ratings_update_log_run_player_date ON ratings_update_log (generation_run_id, player_id, match_date, match_id);
 CREATE INDEX idx_raw_club_distributions_country_state ON raw_pickleball_club_distributions (country_code, state_province_code);
 CREATE INDEX idx_raw_club_distributions_load_run ON raw_pickleball_club_distributions (load_run_id);
