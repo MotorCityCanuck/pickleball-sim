@@ -86,6 +86,11 @@ ReleaseProgressCallback = Callable[[str, int, int], None]
 ReleaseActivityCallback = Callable[[str], None]
 logger = logging.getLogger("uvicorn.error")
 
+DERIVED_PROJECTION_ARROW_TYPES: Mapping[tuple[str, str], pa.DataType] = {
+    ("player_master", "country_code"): pa.string(),
+    ("player_master", "rating"): pa.decimal128(8, 3),
+}
+
 
 class StudentDatasetWriteError(RuntimeError):
     """Raised when staged student dataset files cannot be written."""
@@ -2335,6 +2340,7 @@ def _projection_arrow_schema(table_name: str) -> pa.Schema:
                 pa.string()
                 if _is_uuid_formatted_string_column(table_name, column_name)
                 else _arrow_type_for_projection_column(
+                    table_name=table_name,
                     column_name=column_name,
                     source_columns=source_columns,
                 ),
@@ -2346,9 +2352,13 @@ def _projection_arrow_schema(table_name: str) -> pa.Schema:
 
 def _arrow_type_for_projection_column(
     *,
+    table_name: str,
     column_name: str,
     source_columns,
 ) -> pa.DataType:
+    derived_type = DERIVED_PROJECTION_ARROW_TYPES.get((table_name, column_name))
+    if derived_type is not None:
+        return derived_type
     source_column = source_columns.get(column_name)
     if source_column is None and column_name == "player_id":
         source_column = source_columns.get("id")

@@ -1054,6 +1054,13 @@ def test_uuid_values_are_materialized_as_parquet_strings():
     assert table.to_pylist()[0]["external_player_key"] == str(player_uuid)
 
 
+def test_player_master_projection_schema_preserves_derived_rating_decimal_type():
+    schema = student_dataset_writer._projection_arrow_schema("player_master")
+
+    assert schema.field("country_code").type == pa.string()
+    assert schema.field("rating").type == pa.decimal128(8, 3)
+
+
 def test_clean_export_uuid_identifier_is_parquet_string(
     session,
     release_window,
