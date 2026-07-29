@@ -41,6 +41,14 @@ def test_missing_optional_values_do_not_target_required_match_format():
     assert "match_format" not in columns
 
 
+def test_rounding_variants_do_not_target_player_master_rating_alias_pair():
+    columns = eligible_columns("player_master", ISSUE_TYPE_ROUNDING_VARIANTS)
+
+    assert "rating" not in columns
+    assert "rating_value" not in columns
+    assert "confidence_score" in columns
+
+
 def test_issue_type_candidate_rows_accumulate_across_tables():
     config = build_default_data_quality_config(level="medium")
     state = _InjectionState(

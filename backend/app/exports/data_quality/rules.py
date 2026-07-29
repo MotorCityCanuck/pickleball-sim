@@ -189,7 +189,6 @@ ROUNDING_VARIANT_ELIGIBILITY: Mapping[str, tuple[str, ...]] = {
     "match_teams": ("average_team_rating",),
     "player_assessment_history": ("assessment_value", "confidence_score"),
     "player_master": (
-        "rating_value",
         "confidence_score",
         "volatility_score",
         "global_percentile",
