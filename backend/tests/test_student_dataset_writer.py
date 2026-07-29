@@ -2,6 +2,7 @@
 
 import json
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 import sys
 from uuid import UUID
@@ -897,7 +898,7 @@ def test_write_staged_release_manifest_reports_files_and_row_counts(
     assert manifest["release_month"] is None
     assert manifest["included_months"] == [1, 2]
     assert manifest["load_strategy"] == "full_load"
-    assert manifest["student_dataset_schema_version"] == "1.5"
+    assert manifest["student_dataset_schema_version"] == "1.6"
     assert manifest["included_batch_sequences"] == [1, 2]
     assert manifest["included_batch_months"] == ["2025-01-01", "2025-02-01"]
     assert manifest["snapshot_batch_sequences"] == [1, 2]
@@ -964,6 +965,10 @@ def test_write_staged_release_parquet_contains_snapshot_transformed_values(
     assert club_memberships[0]["joined_date"] == "2025-01-01"
     assert club_memberships[0]["left_date"] is None
 
+    player_master = pq.read_table(release_dir / "player_master.parquet").to_pylist()
+    assert player_master[0]["country_code"] == "US"
+    assert player_master[0]["rating"] == player_master[0]["rating_value"] == Decimal("1412.000")
+
 
 def test_exported_raw_schema_uses_contract_column_names_and_string_dates(
     session,
@@ -1003,6 +1008,31 @@ def test_exported_raw_schema_uses_contract_column_names_and_string_dates(
 
     teams_schema = pq.read_schema(release_dir / "teams.parquet")
     assert teams_schema.field("dissolution_date").type == pa.string()
+
+    player_master_schema = pq.read_schema(release_dir / "player_master.parquet")
+    assert player_master_schema.names == [
+        "player_id",
+        "external_player_key",
+        "first_name",
+        "last_name",
+        "gender",
+        "birth_date",
+        "dominant_hand",
+        "home_region_id",
+        "country_code",
+        "registration_date",
+        "player_status",
+        "rating",
+        "rating_value",
+        "confidence_score",
+        "volatility_score",
+        "global_percentile",
+        "match_count_used",
+        "rating_date",
+        "rating_batch_id",
+        "snapshot_month",
+    ]
+    assert player_master_schema.field("country_code").type == pa.string()
 
 
 def test_uuid_values_are_materialized_as_parquet_strings():

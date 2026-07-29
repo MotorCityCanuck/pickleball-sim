@@ -481,8 +481,10 @@ def test_players_query_uses_latest_snapshot_scope_rating(session, query_context)
     assert row["birth_date"] == date(1990, 1, 1)
     assert row["dominant_hand"] == "RIGHT"
     assert row["home_region_id"] == 1
+    assert row["country_code"] == "US"
     assert row["registration_date"] == date(2025, 1, 5)
     assert row["player_status"] == "ACTIVE"
+    assert float(row["rating"]) == 1412.0
     assert float(row["rating_value"]) == 1412.0
     assert float(row["confidence_score"]) == 0.2
     assert float(row["volatility_score"]) == 0.3
@@ -502,12 +504,57 @@ def test_players_query_returns_only_incremental_player_deltas(
     rows_out = rows(session, "player_master", incremental_query_context)
 
     assert [row["player_id"] for row in rows_out] == [1, 2]
+    assert rows_out[0]["country_code"] == "US"
+    assert float(rows_out[0]["rating"]) == 1412.0
     assert float(rows_out[0]["rating_value"]) == 1412.0
     assert rows_out[0]["rating_batch_id"] == 102
     assert rows_out[0]["snapshot_month"] == date(2025, 3, 1)
+    assert rows_out[1]["country_code"] == "US"
+    assert float(rows_out[1]["rating"]) == 1500.0
     assert float(rows_out[1]["rating_value"]) == 1500.0
     assert rows_out[1]["rating_batch_id"] == 103
     assert rows_out[1]["rating_date"] == date(2025, 3, 31)
+
+
+def test_players_query_does_not_invent_country_or_rating_values(session, query_context):
+    seed_snapshot_query_data(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO players (
+                id, external_player_key, first_name, last_name, gender,
+                birth_date, dominant_hand, home_region_id, registration_date,
+                initial_skill_seed, player_status, generation_run_id
+            )
+            VALUES (
+                4, '00000000-0000-0000-0000-000000000004', 'Dana', 'Drop', 'F',
+                '1993-01-01', 'RIGHT', NULL, '2025-01-10', 0.4000, 'ACTIVE', 1
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO player_registrations (
+                id, player_id, batch_id, registration_month, registration_source,
+                assigned_region_id, initial_rating_value, initial_confidence_score
+            )
+            VALUES (4, 4, 101, '2025-01-01', 'synthetic', NULL, NULL, NULL)
+            """
+        )
+    )
+    session.commit()
+
+    player_rows = rows(session, "player_master", query_context)
+    null_derived_row = next(row for row in player_rows if row["player_id"] == 4)
+
+    assert null_derived_row["home_region_id"] is None
+    assert null_derived_row["country_code"] is None
+    assert null_derived_row["rating"] is None
+    assert null_derived_row["rating_value"] is None
+    assert null_derived_row["rating_date"] is None
+    assert null_derived_row["rating_batch_id"] is None
 
 
 def test_player_and_match_participation_queries_do_not_export_future_players(

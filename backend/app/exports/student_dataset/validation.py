@@ -406,6 +406,8 @@ def _validate_player_master(
             (
                 rating_date IS NULL
                 AND (
+                    rating IS NOT NULL
+                    OR
                     rating_batch_id IS NOT NULL
                     OR rating_value IS NOT NULL
                     OR confidence_score IS NOT NULL
@@ -418,8 +420,14 @@ def _validate_player_master(
                 rating_date IS NOT NULL
                 AND (
                     rating_batch_id IS NULL
+                    OR rating IS NULL
                     OR rating_value IS NULL
                 )
+            )
+            OR (
+                rating IS NOT NULL
+                AND rating_value IS NOT NULL
+                AND rating <> rating_value
             )
         """,
     )

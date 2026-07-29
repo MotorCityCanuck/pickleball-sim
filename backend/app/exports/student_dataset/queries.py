@@ -193,8 +193,10 @@ def _player_master_snapshot_query(context: StudentDatasetQueryContext) -> Select
             Player.birth_date.label("birth_date"),
             Player.dominant_hand.label("dominant_hand"),
             Player.home_region_id.label("home_region_id"),
+            Region.country_code.label("country_code"),
             Player.registration_date.label("registration_date"),
             Player.player_status.label("player_status"),
+            latest_ratings.c.rating_value.label("rating"),
             latest_ratings.c.rating_value.label("rating_value"),
             latest_ratings.c.confidence_score.label("confidence_score"),
             latest_ratings.c.volatility_score.label("volatility_score"),
@@ -212,6 +214,7 @@ def _player_master_snapshot_query(context: StudentDatasetQueryContext) -> Select
                 latest_ratings.c.rating_rank == 1,
             ),
         )
+        .outerjoin(Region, Region.id == Player.home_region_id)
         .where(_included_player_predicate(context))
         .order_by(Player.id)
     )

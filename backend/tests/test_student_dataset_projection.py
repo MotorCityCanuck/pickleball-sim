@@ -24,7 +24,7 @@ from schema_expectations import EXPECTED_TABLES  # noqa: E402
 
 
 def test_student_dataset_schema_version_tracks_current_projection_contract():
-    assert STUDENT_DATASET_SCHEMA_VERSION == "1.5"
+    assert STUDENT_DATASET_SCHEMA_VERSION == "1.6"
 
 
 def test_club_memberships_projection_uses_raw_contract_column_names():

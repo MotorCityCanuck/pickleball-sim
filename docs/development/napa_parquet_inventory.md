@@ -9,7 +9,7 @@ student dataset export code in:
 - [backend/app/exports/student_dataset/queries.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/queries.py)
 - [backend/app/exports/student_dataset/writer.py](/home/brett/projects/pickleball-sim/backend/app/exports/student_dataset/writer.py)
 
-The active export contract is schema version `1.5`, with 13 student-facing
+The active export contract is schema version `1.6`, with 13 student-facing
 Parquet files per release folder.
 
 Record counts, physical paths, schemas, and example rows below were taken from
@@ -23,7 +23,7 @@ Release metadata for the analyzed artifact:
 - `release_type`: `historical_baseline`
 - `build_timestamp`: `2026-06-17T11:37:18Z`
 - `parquet_compression`: `snappy`
-- `student_dataset_schema_version`: `1.5`
+- `student_dataset_schema_version`: `1.6`
 
 ## Partitioning Strategy
 
@@ -286,8 +286,10 @@ The current code emits exactly these student-facing Parquet files per release:
   - `birth_date: string`
   - `dominant_hand: string`
   - `home_region_id: int64`
+  - `country_code: string`
   - `registration_date: string`
   - `player_status: string`
+  - `rating: decimal128(7, 3)`
   - `rating_value: decimal128(7, 3)`
   - `confidence_score: decimal128(3, 3)`
   - `volatility_score: decimal128(4, 3)`
@@ -299,7 +301,7 @@ The current code emits exactly these student-facing Parquet files per release:
 - Example record:
 
 ```json
-{"player_id":1,"external_player_key":"c30d5dbd-f1ac-45e9-a085-93c9f356df65","first_name":"Mohamed","last_name":"NARANJO","gender":"M","birth_date":"2001-05-07","dominant_hand":"RIGHT","home_region_id":3277,"registration_date":"2014-04-28","player_status":"ACTIVE","rating_value":"1531.906","confidence_score":"0.100","volatility_score":null,"global_percentile":null,"match_count_used":74,"rating_date":"2024-12-28","rating_batch_id":449,"snapshot_month":"2024-12-01"}
+{"player_id":1,"external_player_key":"c30d5dbd-f1ac-45e9-a085-93c9f356df65","first_name":"Mohamed","last_name":"NARANJO","gender":"M","birth_date":"2001-05-07","dominant_hand":"RIGHT","home_region_id":3277,"country_code":"US","registration_date":"2014-04-28","player_status":"ACTIVE","rating":"1531.906","rating_value":"1531.906","confidence_score":"0.100","volatility_score":null,"global_percentile":null,"match_count_used":74,"rating_date":"2024-12-28","rating_batch_id":449,"snapshot_month":"2024-12-01"}
 ```
 
 ### `player_registrations.parquet`

@@ -210,16 +210,22 @@ Published columns, in order:
 6. `birth_date`
 7. `dominant_hand`
 8. `home_region_id`
-9. `registration_date`
-10. `player_status`
-11. `rating_value`
-12. `confidence_score`
-13. `volatility_score`
-14. `global_percentile`
-15. `match_count_used`
-16. `rating_date`
-17. `rating_batch_id`
-18. `snapshot_month`
+9. `country_code`
+10. `registration_date`
+11. `player_status`
+12. `rating`
+13. `rating_value`
+14. `confidence_score`
+15. `volatility_score`
+16. `global_percentile`
+17. `match_count_used`
+18. `rating_date`
+19. `rating_batch_id`
+20. `snapshot_month`
+
+`country_code` is derived through `players.home_region_id -> regions.id ->
+regions.country_code`. `rating` is an export-time compatibility alias of the
+latest included `rating_value`.
 
 `player_master` replaces direct publication of `players` and
 `player_rating_history` in the student contract.
@@ -375,7 +381,7 @@ Partial final releases must not appear in the destination root.
 Current schema version:
 
 ```text
-student_dataset_schema_version = 1.5
+student_dataset_schema_version = 1.6
 ```
 
 Any change to exported tables, column names, column order, meanings, filter

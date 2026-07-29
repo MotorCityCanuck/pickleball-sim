@@ -2638,11 +2638,7 @@ def _student_release_package_summaries(
         file_counts=file_counts,
     )
     filesystem_packages = _package_variants_from_filesystem(release_rows=release_rows)
-    package_keys = list(filesystem_packages.keys() or db_packages.keys())
-    if filesystem_packages:
-        for package_key in db_packages.keys():
-            if package_key not in filesystem_packages:
-                package_keys.append(package_key)
+    package_keys = list(filesystem_packages.keys())
     package_summaries = [
         _merge_release_package_summary(
             package_key=package_key,

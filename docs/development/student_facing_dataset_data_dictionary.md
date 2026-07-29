@@ -12,7 +12,7 @@ It is aligned to:
 - `backend/app/exports/student_dataset/writer.py`
 - `docs/development/student_facing_dataset_build_specification.md`
 
-Current student dataset schema version: `1.5`.
+Current student dataset schema version: `1.6`.
 
 Older checked-in release artifacts may still contain `players.parquet` and
 `player_rating_history.parquet`. Those are legacy outputs. The current
@@ -424,7 +424,8 @@ the release snapshot.
 Grain: one row per exported player.
 
 Source composition: `players` plus the latest eligible row from
-`player_rating_history`.
+`player_rating_history`, with `country_code` derived from the player's home
+region.
 
 | Column | Type | Nullable | FK | Description |
 | --- | --- | --- | --- | --- |
@@ -436,8 +437,10 @@ Source composition: `players` plus the latest eligible row from
 | `birth_date` | STRING (ISO date) | no | none | Player birth date. |
 | `dominant_hand` | STRING | yes | none | Dominant hand. |
 | `home_region_id` | INT64 | yes | `regions.id` | Player home region. |
+| `country_code` | STRING | yes | none | Home-region country code resolved from `regions.country_code`. |
 | `registration_date` | STRING (ISO date) | no | none | Date the player entered the population. |
 | `player_status` | STRING | no | none | Player lifecycle status. |
+| `rating` | DECIMAL (scale 3) | yes | none | Compatibility alias of `rating_value` for ranking-oriented consumers. |
 | `rating_value` | DECIMAL (scale 3) | yes | none | Latest public rating before `snapshot_end_exclusive`. |
 | `confidence_score` | DECIMAL (scale 3) | yes | none | Latest rating confidence score. |
 | `volatility_score` | DECIMAL (scale 3) | yes | none | Latest rating volatility measure. |

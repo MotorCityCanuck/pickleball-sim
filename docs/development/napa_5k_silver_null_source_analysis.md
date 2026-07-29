@@ -154,7 +154,7 @@ Relevant code paths:
 - `backend/app/generators/matches.py`: ad hoc team creation omits country.
 - `backend/app/generators/team_identity.py`: stores provided `country_code` on
   `Team`.
-
+giv
 Recommended actions:
 
 1. Update `_ad_hoc_pair_candidate()` to pass a country code when creating ad hoc

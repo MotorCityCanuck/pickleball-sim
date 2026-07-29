@@ -803,9 +803,34 @@ def test_student_dataset_export_job_prefers_newer_completed_job_over_older_runni
     assert job.status == "succeeded"
 
 
-def test_student_dataset_export_summary_deduplicates_and_orders_release_catalog(session):
+def test_student_dataset_export_summary_uses_filesystem_packages_only(session, tmp_path):
     _seed_valid_config(session)
     _seed_ready_reference_data(session)
+    clean_root = tmp_path / "student_dataset_exports" / "run" / "clean"
+    tainted_root = tmp_path / "student_dataset_exports" / "run" / "tainted"
+    clean_root.mkdir(parents=True, exist_ok=True)
+    tainted_root.mkdir(parents=True, exist_ok=True)
+    for release_name, release_month in (
+        ("student_release_initial_history", None),
+        ("student_release_snapshot_2026_06", "2026-06-01"),
+        ("student_release_snapshot_2026_07", "2026-07-01"),
+    ):
+        for variant_root in (clean_root, tainted_root):
+            release_dir = variant_root / release_name
+            release_dir.mkdir(parents=True, exist_ok=True)
+            (release_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "release_name": release_name,
+                        "release_month": release_month,
+                        "snapshot_month": release_month or "2026-05-01",
+                        "build_timestamp": "2026-05-20T12:22:00",
+                        "output_files": [{"file_name": "clubs.parquet"}],
+                        "row_counts": {"clubs": 10},
+                    }
+                ),
+                encoding="utf-8",
+            )
     session.execute(
         text(
             """
@@ -825,28 +850,36 @@ def test_student_dataset_export_summary_deduplicates_and_orders_release_catalog(
                 output_path, status, created_at, updated_at, completed_at
             ) VALUES
                 (181, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 18, 'none',
-                 'data/student_dataset_exports/run/clean/student_release_initial_history', 'succeeded',
+                 :clean_initial_path, 'succeeded',
                  '2026-05-20 12:10:00', '2026-05-20 12:10:00', '2026-05-20 12:10:00'),
                 (182, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 18, 'none',
-                 'data/student_dataset_exports/run/clean/student_release_snapshot_2026_06', 'succeeded',
+                 :clean_june_path, 'succeeded',
                  '2026-05-20 12:11:00', '2026-05-20 12:11:00', '2026-05-20 12:11:00'),
                 (183, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'none',
-                 'data/student_dataset_exports/run/clean/student_release_snapshot_2026_07', 'succeeded',
+                 :clean_july_path, 'succeeded',
                  '2026-05-20 12:12:00', '2026-05-20 12:12:00', '2026-05-20 12:12:00'),
                 (184, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 18, 'medium',
-                 'data/student_dataset_exports/run/tainted/student_release_initial_history', 'succeeded',
+                 :tainted_initial_path, 'succeeded',
                  '2026-05-20 12:20:00', '2026-05-20 12:20:00', '2026-05-20 12:20:00'),
                 (185, 'student_release_snapshot_2026_06', 'monthly_incremental', '2026-06-01', 18, 'medium',
-                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_06', 'succeeded',
+                 :tainted_june_path, 'succeeded',
                  '2026-05-20 12:21:00', '2026-05-20 12:21:00', '2026-05-20 12:21:00'),
                 (186, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'medium',
-                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_07', 'succeeded',
+                 :tainted_july_path, 'succeeded',
                  '2026-05-20 12:22:00', '2026-05-20 12:22:00', '2026-05-20 12:22:00'),
                 (187, 'student_release_snapshot_2026_07', 'monthly_incremental', '2026-07-01', 18, 'medium',
-                 'data/student_dataset_exports/run/tainted/student_release_snapshot_2026_07', 'succeeded',
+                 :tainted_july_path, 'succeeded',
                  '2026-05-20 12:22:00', '2026-05-20 12:23:00', '2026-05-20 12:23:00')
             """
-        )
+        ),
+        {
+            "clean_initial_path": str(clean_root / "student_release_initial_history"),
+            "clean_june_path": str(clean_root / "student_release_snapshot_2026_06"),
+            "clean_july_path": str(clean_root / "student_release_snapshot_2026_07"),
+            "tainted_initial_path": str(tainted_root / "student_release_initial_history"),
+            "tainted_june_path": str(tainted_root / "student_release_snapshot_2026_06"),
+            "tainted_july_path": str(tainted_root / "student_release_snapshot_2026_07"),
+        },
     )
     session.commit()
 
@@ -882,11 +915,82 @@ def test_student_dataset_export_summary_deduplicates_and_orders_release_catalog(
     ]
     assert releases[-1].release_id == 187
     assert summary.current_release_package is not None
-    assert summary.current_release_package.package_root == "data/student_dataset_exports/run"
+    assert summary.current_release_package.package_root == str(tmp_path / "student_dataset_exports" / "run")
     assert summary.current_release_package.clean_variant is not None
     assert summary.current_release_package.clean_variant.release_count == 3
     assert summary.current_release_package.tainted_variant is not None
     assert summary.current_release_package.tainted_variant.release_count == 3
+    assert summary.historical_release_packages == ()
+
+
+def test_student_dataset_export_summary_omits_db_only_packages_without_manifests(
+    session,
+    tmp_path,
+):
+    package_root = tmp_path / "student_dataset_exports" / "run" / "clean"
+    package_root.mkdir(parents=True, exist_ok=True)
+    release_dir = package_root / "student_release_initial_history"
+    release_dir.mkdir(parents=True, exist_ok=True)
+    (release_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "release_name": "student_release_initial_history",
+                "release_month": None,
+                "snapshot_month": "2026-05-01",
+                "build_timestamp": "2026-05-20T12:10:00",
+                "output_files": [{"file_name": "clubs.parquet"}],
+                "row_counts": {"clubs": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO generation_runs (
+                id, generation_name, seed_value, simulation_version, status, completed_at, created_at, updated_at
+            ) VALUES (
+                28, 'Export filesystem authority run', 42, 'v1', 'succeeded', '2026-05-20 12:00:00', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO student_dataset_releases (
+                id, release_name, release_type, release_month, generation_run_id, data_quality_level,
+                output_path, status, created_at, updated_at, completed_at
+            ) VALUES
+                (281, 'student_release_initial_history', 'initial_snapshot', '2026-05-01', 28, 'none',
+                 :present_path, 'succeeded',
+                 '2026-05-20 12:10:00', '2026-05-20 12:10:00', '2026-05-20 12:10:00'),
+                (282, 'missing_release_initial_history', 'initial_snapshot', '2026-05-01', 28, 'none',
+                 :missing_path, 'succeeded',
+                 '2026-05-20 12:20:00', '2026-05-20 12:20:00', '2026-05-20 12:20:00')
+            """
+        ),
+        {
+            "present_path": str(release_dir),
+            "missing_path": str(
+                tmp_path
+                / "student_dataset_exports"
+                / "missing_run"
+                / "clean"
+                / "missing_release_initial_history"
+            ),
+        },
+    )
+    session.commit()
+
+    summary = ControlPanelQueries(
+        now_fn=lambda: datetime(2026, 5, 20, 12, 30, 0)
+    ).get_student_dataset_export_summary(session)
+
+    assert summary.current_release_package is not None
+    assert summary.current_release_package.package_root == str(
+        tmp_path / "student_dataset_exports" / "run"
+    )
     assert summary.historical_release_packages == ()
 
 

@@ -116,16 +116,18 @@ INSERT INTO expected_columns VALUES
     ('player_master', 6, 'birth_date'),
     ('player_master', 7, 'dominant_hand'),
     ('player_master', 8, 'home_region_id'),
-    ('player_master', 9, 'registration_date'),
-    ('player_master', 10, 'player_status'),
-    ('player_master', 11, 'rating_value'),
-    ('player_master', 12, 'confidence_score'),
-    ('player_master', 13, 'volatility_score'),
-    ('player_master', 14, 'global_percentile'),
-    ('player_master', 15, 'match_count_used'),
-    ('player_master', 16, 'rating_date'),
-    ('player_master', 17, 'rating_batch_id'),
-    ('player_master', 18, 'snapshot_month'),
+    ('player_master', 9, 'country_code'),
+    ('player_master', 10, 'registration_date'),
+    ('player_master', 11, 'player_status'),
+    ('player_master', 12, 'rating'),
+    ('player_master', 13, 'rating_value'),
+    ('player_master', 14, 'confidence_score'),
+    ('player_master', 15, 'volatility_score'),
+    ('player_master', 16, 'global_percentile'),
+    ('player_master', 17, 'match_count_used'),
+    ('player_master', 18, 'rating_date'),
+    ('player_master', 19, 'rating_batch_id'),
+    ('player_master', 20, 'snapshot_month'),
     ('player_registrations', 1, 'id'),
     ('player_registrations', 2, 'player_id'),
     ('player_registrations', 3, 'batch_id'),
@@ -318,9 +320,9 @@ WHERE table_name IN (
 INSERT INTO qc_results
 SELECT
     'manifest',
-    'schema_version_is_1_3',
-    CASE WHEN student_dataset_schema_version = '1.3' THEN 'passed' ELSE 'failed' END,
-    CASE WHEN student_dataset_schema_version = '1.3' THEN 0 ELSE 1 END,
+    'schema_version_is_1_6',
+    CASE WHEN student_dataset_schema_version = '1.6' THEN 'passed' ELSE 'failed' END,
+    CASE WHEN student_dataset_schema_version = '1.6' THEN 0 ELSE 1 END,
     COALESCE(student_dataset_schema_version, '')
 FROM manifest;
 
@@ -608,6 +610,8 @@ FROM player_master
 WHERE (
     rating_date IS NULL
     AND (
+        rating IS NOT NULL
+        OR
         rating_value IS NOT NULL
         OR rating_batch_id IS NOT NULL
         OR confidence_score IS NOT NULL
@@ -617,7 +621,12 @@ WHERE (
     )
 ) OR (
     rating_date IS NOT NULL
-    AND (rating_value IS NULL OR rating_batch_id IS NULL)
+    AND (rating IS NULL OR rating_value IS NULL OR rating_batch_id IS NULL)
+)
+OR (
+    rating IS NOT NULL
+    AND rating_value IS NOT NULL
+    AND rating <> rating_value
 );
 
 INSERT INTO qc_results
