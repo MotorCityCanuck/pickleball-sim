@@ -2,6 +2,11 @@
 /data/
 raw_data/
 
+# Local PostgreSQL backup artifacts. Do not commit classroom migration backups.
+/backups/
+*.dump
+*.backup
+
 # Python generated artifacts
 __pycache__/
 *.py[cod]
@@ -11,3 +16,4 @@ __pycache__/
 # Local environment
 .env
 backend/venv/
+*:Zone.Identifier

@@ -133,7 +133,8 @@ Start here for development:
 3. **[Database Design](docs/database/Pickleball_Simulation_Database_Design_v3.md)** - Schema specification
 4. **[Configuration Parameters](docs/generation_logic/configuration_parameters_specification.md)** - All parameters
 5. **[Configuration Payload Architecture](docs/architecture/configuration_payload_architecture.md)** - JSONB payload shape
-6. **[Design Review Summary](docs/docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
+6. **[Database Backup and Classroom Migration](docs/database_backup_restore.md)** - Freeze, transfer, restore, and validate PostgreSQL backups
+7. **[Design Review Summary](docs/docs_DESIGN_REVIEW_CORRECTIONS_SUMMARY.md)** - Recent changes
 
 ## Architecture
 
