@@ -7,3 +7,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+
+# Local environment
+.env
+backend/venv/
