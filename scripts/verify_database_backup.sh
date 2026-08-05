@@ -9,6 +9,7 @@ source "$ROOT_DIR/scripts/lib/napa_database_backup_common.sh"
 BACKUP_DIR=""
 EXPECTED_DATABASE=""
 CONTAINER="$NAPA_POSTGRES_CONTAINER"
+POSTGRES_USER_NAME="$NAPA_POSTGRES_USER"
 VERBOSE="false"
 DEEP="false"
 
@@ -25,8 +26,9 @@ Options:
                         match database_name in manifest.txt.
   --container <name>    PostgreSQL Docker container used for pg_restore --list.
                         Default: POSTGRES_CONTAINER or pickleball-postgres
-  --deep                Reserved for temporary restore validation. This will be
-                        implemented with the restore/validation phase.
+  --user <name>         PostgreSQL user. Default: POSTGRES_USER or postgres
+  --deep                Restore into a temporary validation database and compare
+                        row counts. The temporary database is always dropped.
   --verbose             Print extra progress details
   --help                Show this help text
 
@@ -56,6 +58,11 @@ while [[ $# -gt 0 ]]; do
             CONTAINER="$2"
             shift 2
             ;;
+        --user)
+            [[ $# -ge 2 ]] || napa_fail "--user requires a value."
+            POSTGRES_USER_NAME="$2"
+            shift 2
+            ;;
         --deep)
             DEEP="true"
             shift
@@ -75,13 +82,30 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$BACKUP_DIR" ]] || napa_fail "--backup-dir is required."
-[[ "$DEEP" != "true" ]] || napa_fail "--deep verification is not implemented until the restore/validation phase."
 
 BACKUP_FILE="$BACKUP_DIR/database.dump"
 GLOBALS_FILE="$BACKUP_DIR/postgres_globals.sql"
 MANIFEST_FILE="$BACKUP_DIR/manifest.txt"
 ROW_COUNTS_FILE="$BACKUP_DIR/row_counts.csv"
 CHECKSUMS_FILE="$BACKUP_DIR/SHA256SUMS"
+DEEP_DATABASE=""
+DEEP_DATABASE_CREATED="false"
+
+drop_deep_database() {
+    if [[ "$DEEP_DATABASE_CREATED" == "true" && -n "$DEEP_DATABASE" ]]; then
+        napa_log "Dropping temporary validation database '$DEEP_DATABASE'..."
+        napa_terminate_database_connections "$CONTAINER" "$DEEP_DATABASE" "$POSTGRES_USER_NAME" || true
+        napa_drop_database "$CONTAINER" "$DEEP_DATABASE" "$POSTGRES_USER_NAME" || true
+        DEEP_DATABASE_CREATED="false"
+    fi
+}
+
+cleanup_deep_database() {
+    local exit_code
+    exit_code=$?
+    drop_deep_database
+    exit "$exit_code"
+}
 
 manifest_value() {
     local key
@@ -160,7 +184,6 @@ verify_expected_database() {
 verify_archive_contains_row_count_tables() {
     local archive_list missing_count
     archive_list="$(mktemp)"
-    trap 'rm -f "$archive_list"' RETURN
 
     napa_pg_restore_list "$CONTAINER" < "$BACKUP_FILE" > "$archive_list"
 
@@ -183,11 +206,115 @@ verify_archive_contains_row_count_tables() {
             END { exit count > 0 ? 1 : 0 }
         ' "$ROW_COUNTS_FILE" || true
     )"
+    rm -f "$archive_list"
 
     if [[ -n "$missing_count" ]]; then
         printf '%s\n' "$missing_count" >&2
         napa_fail "Archive does not contain one or more tables listed in row_counts.csv."
     fi
+}
+
+deep_table_exists() {
+    local database schema_name table_name schema_literal table_literal
+    database="$1"
+    schema_name="$2"
+    table_name="$3"
+    schema_literal="$(napa_quote_sql_literal "$schema_name")"
+    table_literal="$(napa_quote_sql_literal "$table_name")"
+    [[ "$(napa_psql_quiet "$CONTAINER" "$database" "$POSTGRES_USER_NAME" -c "
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_type = 'BASE TABLE'
+          AND table_schema = ${schema_literal}
+          AND table_name = ${table_literal};
+    " | tr -d '[:space:]')" == "1" ]]
+}
+
+deep_table_row_count() {
+    local database schema_name table_name
+    database="$1"
+    schema_name="$2"
+    table_name="$3"
+    napa_psql_quiet "$CONTAINER" "$database" "$POSTGRES_USER_NAME" -c "
+        SELECT count(*)::text
+        FROM $(napa_quote_identifier "$schema_name").$(napa_quote_identifier "$table_name");
+    " | tr -d '[:space:]'
+}
+
+compare_deep_row_counts() {
+    local database schema_name table_name expected_count actual_count failures checked
+    database="$1"
+    failures=0
+    checked=0
+
+    while IFS=, read -r schema_name table_name expected_count; do
+        [[ "$schema_name" != "schema" ]] || continue
+        [[ -n "${schema_name:-}" && -n "${table_name:-}" && -n "${expected_count:-}" ]] || continue
+
+        if ! deep_table_exists "$database" "$schema_name" "$table_name"; then
+            printf 'FAIL %-40s source=%s restored=MISSING\n' "${schema_name}.${table_name}" "$expected_count"
+            failures=$((failures + 1))
+            continue
+        fi
+
+        actual_count="$(deep_table_row_count "$database" "$schema_name" "$table_name")"
+        if [[ "$actual_count" == "$expected_count" ]]; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                printf 'PASS %-40s source=%s restored=%s\n' "${schema_name}.${table_name}" "$expected_count" "$actual_count"
+            fi
+        else
+            printf 'FAIL %-40s source=%s restored=%s\n' "${schema_name}.${table_name}" "$expected_count" "$actual_count"
+            failures=$((failures + 1))
+        fi
+        checked=$((checked + 1))
+    done < "$ROW_COUNTS_FILE"
+
+    [[ "$checked" -gt 0 ]] || napa_fail "No row-count entries were checked in deep verification."
+    [[ "$failures" -eq 0 ]] || napa_fail "Deep row-count verification failed for $failures table(s)."
+    napa_log "Deep row-count comparison: PASS ($checked table(s))"
+}
+
+verify_deep_constraints() {
+    local database invalid_fk_count
+    database="$1"
+    invalid_fk_count="$(
+        napa_psql_quiet "$CONTAINER" "$database" "$POSTGRES_USER_NAME" -c "
+            SELECT count(*)::text
+            FROM pg_constraint
+            WHERE contype = 'f'
+              AND NOT convalidated;
+        " | tr -d '[:space:]'
+    )"
+    [[ "$invalid_fk_count" == "0" ]] || napa_fail "Deep verification database has $invalid_fk_count unvalidated foreign-key constraint(s)."
+    napa_log "Deep foreign-key constraint validation state: PASS"
+}
+
+run_deep_verification() {
+    DEEP_DATABASE="napa_backup_validation_$(date -u +"%Y%m%d%H%M%S")"
+
+    if napa_database_exists "$CONTAINER" "$DEEP_DATABASE" "$POSTGRES_USER_NAME"; then
+        napa_fail "Temporary validation database already exists: $DEEP_DATABASE"
+    fi
+
+    trap cleanup_deep_database EXIT INT TERM
+
+    napa_log "Creating temporary validation database '$DEEP_DATABASE'..."
+    napa_create_database "$CONTAINER" "$DEEP_DATABASE" "$POSTGRES_USER_NAME"
+    DEEP_DATABASE_CREATED="true"
+
+    napa_log "Restoring archive into temporary validation database..."
+    napa_pg_restore_database "$CONTAINER" "$DEEP_DATABASE" "$POSTGRES_USER_NAME" < "$BACKUP_FILE"
+
+    napa_log "Comparing row counts in temporary validation database..."
+    compare_deep_row_counts "$DEEP_DATABASE"
+
+    napa_log "Checking constraints in temporary validation database..."
+    verify_deep_constraints "$DEEP_DATABASE"
+
+    napa_log "Deep verification PASSED."
+
+    drop_deep_database
+    trap - EXIT INT TERM
 }
 
 napa_require_project_root
@@ -236,9 +363,15 @@ napa_verify_sha256sums "$CHECKSUMS_FILE" >/dev/null
 napa_log "Verifying archive readability..."
 napa_require_docker
 napa_require_running_container "$CONTAINER"
+napa_require_pg_ready "$CONTAINER" postgres "$POSTGRES_USER_NAME"
 napa_pg_restore_list "$CONTAINER" < "$BACKUP_FILE" >/dev/null
 
 napa_log "Checking archive table inventory..."
 verify_archive_contains_row_count_tables
+
+if [[ "$DEEP" == "true" ]]; then
+    napa_log "Running deep verification..."
+    run_deep_verification
+fi
 
 napa_log "Backup verification PASSED."
