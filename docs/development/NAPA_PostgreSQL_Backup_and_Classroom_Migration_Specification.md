@@ -21,6 +21,13 @@ This document defines the required scripts, controls, validation steps, and oper
 
 The primary requirement is preservation of the **exact database state** required for the instructor-run NAPA tournament simulation. The migration process must not regenerate, rebuild, normalize, reseed, or otherwise alter the source simulation data.
 
+Implementation note:
+
+The final classroom migration workflow preserves the application's existing
+configured database name on the classroom laptop. The supported classroom path
+is a protected same-name replacement workflow rather than restoring into
+`napa_250k_frozen` and changing `DATABASE_URL`.
+
 ---
 
 ## 2. Background and Design Context
@@ -162,6 +169,7 @@ An additional orchestration script is recommended:
 ```text
 scripts/
     freeze_database_release.sh
+    migrate_classroom_database.sh
 ```
 
 If a common shell utility framework already exists in the repository, the new scripts should reuse it rather than duplicate environment discovery, logging, or Docker helper logic.
@@ -390,7 +398,7 @@ It must:
 - verify Docker/PostgreSQL availability;
 - stop immediately if archive verification fails.
 
-Example:
+Example for alternate-database restore or local testing:
 
 ```bash
 ./scripts/restore_database.sh \
@@ -412,6 +420,11 @@ A force option may be implemented:
 ```
 
 but must never be assumed implicitly.
+
+For the normal classroom migration path, the protected workflow should instead
+verify the incoming package, create and verify a safety backup of the existing
+configured classroom database, replace that same configured database name, and
+then validate the restored result.
 
 ## 8.3 PostgreSQL Compatibility
 
@@ -562,24 +575,17 @@ If the repository already has separate export tooling for the student-facing Par
 
 # 11. Frozen Release Protection
 
-Once the 250K production database is frozen, the instructor must be able to distinguish it from active development databases.
-
-Recommended naming:
-
-```text
-napa_250k_frozen
-```
-
-or another project-standard name.
-
-The frozen backup package must be treated as immutable.
+Once the 250K production database is frozen, the backup package must be treated
+as immutable. On the classroom laptop, the application should continue using its
+existing configured operational database name, while the backup package and
+safety backup distinguish frozen and rollback states.
 
 Recommended operating practice:
 
 ```text
-development DB     -> may continue changing
-250K frozen DB     -> classroom/tournament source of truth
-backup archive     -> immutable recovery copy
+configured classroom DB  -> unchanged application database name
+backup archive           -> immutable frozen recovery copy
+safety backup            -> pre-replacement classroom rollback copy
 ```
 
 If the same PostgreSQL container hosts multiple databases, the scripts must operate only on the explicitly selected database.
@@ -739,9 +745,9 @@ The repository documentation must include the following operating sequence.
 3. Checkout the frozen application Git commit or release tag.
 4. Start the PostgreSQL container.
 5. Copy the backup package to the laptop.
-6. Run verify_database_backup.sh.
-7. Run restore_database.sh.
-8. Run validate_restored_database.sh.
+6. Run migrate_classroom_database.sh.
+7. Confirm restored validation succeeds.
+8. Preserve the generated safety backup.
 9. Start the NAPA application.
 10. Execute a non-destructive smoke test.
 ```
@@ -1069,20 +1075,26 @@ Certification:     PASSED
 Git commit:        <commit>
 ```
 
-### Restore on Classroom Laptop
+### Classroom Migration on Classroom Laptop
 
 ```bash
-./scripts/restore_database.sh \
-    --backup-dir /path/to/napa_250k_2026-08-05_131500 \
-    --target-db napa_250k_frozen
+./scripts/migrate_classroom_database.sh \
+    --backup-dir /path/to/napa_250k_2026-08-05_131500
 ```
 
-Then:
+The normal classroom path preserves the existing configured database name, does
+not require changing `DATABASE_URL`, and creates a verified safety backup before
+replacement.
+
+`restore_database.sh` remains useful for alternate-database restore testing.
+
+Then validate the same configured database name if a standalone validation rerun
+is needed:
 
 ```bash
 ./scripts/validate_restored_database.sh \
     --backup-dir /path/to/napa_250k_2026-08-05_131500 \
-    --database napa_250k_frozen
+    --database pickleball
 ```
 
 Result:
@@ -1090,7 +1102,7 @@ Result:
 ```text
 NAPA database migration validation PASSED.
 
-Database:          napa_250k_frozen
+Database:          pickleball
 Archive checksum:  PASS
 Required objects:  PASS
 Row counts:        PASS

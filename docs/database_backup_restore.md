@@ -35,6 +35,7 @@ The operational scripts live in `scripts/`:
 scripts/backup_database.sh
 scripts/verify_database_backup.sh
 scripts/restore_database.sh
+scripts/migrate_classroom_database.sh
 scripts/validate_restored_database.sh
 scripts/freeze_database_release.sh
 ```
@@ -214,7 +215,7 @@ After verification succeeds on the development machine:
 
 The scripts do not depend on the original filesystem path.
 
-## Restore on the classroom laptop
+## Classroom migration on the laptop
 
 Start PostgreSQL:
 
@@ -226,40 +227,76 @@ Verify the copied backup first:
 
 ```bash
 ./scripts/verify_database_backup.sh \
+  --backup-dir /path/to/copied/napa_pickleball_<timestamp>
+```
+
+The normal classroom workflow preserves the application's existing configured
+database name. Do not restore into `napa_250k_frozen` and do not change
+`DATABASE_URL` for the normal classroom path.
+
+Run the protected migration wrapper:
+
+```bash
+./scripts/migrate_classroom_database.sh \
+  --backup-dir /path/to/copied/napa_pickleball_<timestamp>
+```
+
+By default this targets the currently configured database name, typically
+`pickleball`. The wrapper enforces this sequence:
+
+1. verify the incoming backup package
+2. create a complete safety backup of the current classroom database
+3. verify that safety backup
+4. replace the existing classroom database with the incoming backup
+5. validate the restored classroom database
+
+The script leaves the application’s normal database name unchanged, so the
+existing `DATABASE_URL` continues to work.
+
+You can override the protected database name when needed:
+
+```bash
+./scripts/migrate_classroom_database.sh \
   --backup-dir /path/to/copied/napa_pickleball_<timestamp> \
   --database pickleball
 ```
 
-Restore into a fresh classroom database:
+Optional safety controls:
+
+```bash
+./scripts/migrate_classroom_database.sh \
+  --backup-dir /path/to/copied/napa_pickleball_<timestamp> \
+  --safety-output-dir /mnt/d/classroom_safety_backups \
+  --deep-verify-incoming
+```
+
+The generated safety backup is a normal verified PostgreSQL backup package and
+can be used to recover the classroom machine’s pre-migration state if needed.
+
+## Alternate restore path for testing
+
+`restore_database.sh` remains available for non-classroom cases such as:
+
+- restoring into a scratch database for testing
+- validating a backup in an alternate database name
+- local deep verification workflows
+
+Example:
 
 ```bash
 ./scripts/restore_database.sh \
   --backup-dir /path/to/copied/napa_pickleball_<timestamp> \
-  --target-db napa_250k_frozen
+  --target-db napa_restore_test
 ```
-
-The restore script refuses to overwrite an existing target database by default.
-
-To intentionally replace only the named target database:
-
-```bash
-./scripts/restore_database.sh \
-  --backup-dir /path/to/copied/napa_pickleball_<timestamp> \
-  --target-db napa_250k_frozen \
-  --replace-existing
-```
-
-Do not use `--replace-existing` unless replacing that specific target database
-is intended.
 
 ## Validate a restored database
 
-After restore:
+After a same-name classroom migration:
 
 ```bash
 ./scripts/validate_restored_database.sh \
   --backup-dir /path/to/copied/napa_pickleball_<timestamp> \
-  --database napa_250k_frozen
+  --database pickleball
 ```
 
 Validation checks:
@@ -275,15 +312,15 @@ Expected result:
 
 ```text
 [validate_restored_database] NAPA database migration validation PASSED.
-[validate_restored_database] Database is ready for classroom tournament use: napa_250k_frozen
+[validate_restored_database] Database is ready for classroom tournament use: pickleball
 ```
 
 ## Application startup against restored DB
 
-Set `DATABASE_URL` to point the app at the restored classroom DB:
+The normal classroom migration path does not require changing `DATABASE_URL`.
+Start the application with its existing configuration:
 
 ```bash
-export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/napa_250k_frozen
 ./scripts/start_control_panel.sh --no-browser
 ```
 
@@ -325,14 +362,17 @@ docker compose up -d postgres
 Symptom:
 
 ```text
-Database 'napa_250k_frozen' already exists. Restore aborted.
+Database 'pickleball' already exists. Restore aborted.
 ```
 
 Fix:
 
-- choose a new target database name, or
-- rerun with `--replace-existing` only if replacing that exact database is
-  intended
+- for classroom replacement, use `migrate_classroom_database.sh`, which creates
+  and verifies a safety backup before replacing the existing configured
+  database
+- for alternate-database testing, choose a different `--target-db`, or rerun
+  `restore_database.sh --replace-existing` only when that exact non-classroom
+  target is intended
 
 ### Checksum verification fails
 
@@ -358,12 +398,14 @@ Confirm:
 
 ## Recommended production naming
 
-Use a clear separation between active development and frozen classroom data:
+For the classroom laptop, keep the application’s configured operational database
+name unchanged and treat the incoming logical backup package as the frozen
+artifact:
 
 ```text
-pickleball          active development/default database
-napa_250k_frozen    classroom frozen database
-backup package      immutable recovery artifact
+pickleball      configured classroom application database
+backup package  immutable frozen recovery artifact
+safety backup   pre-replacement classroom rollback artifact
 ```
 
 No script assumes the PostgreSQL container contains only one database.
@@ -386,8 +428,8 @@ No script assumes the PostgreSQL container contains only one database.
 3. Checkout the frozen commit or tag from `FREEZE_MANIFEST.md`.
 4. Start PostgreSQL.
 5. Copy the backup package to the laptop.
-6. Run `verify_database_backup.sh`.
-7. Run `restore_database.sh`.
-8. Run `validate_restored_database.sh`.
+6. Run `migrate_classroom_database.sh`.
+7. Confirm restored validation succeeds.
+8. Preserve the generated safety backup.
 9. Start the application against the restored database.
 10. Execute a non-destructive smoke test.
