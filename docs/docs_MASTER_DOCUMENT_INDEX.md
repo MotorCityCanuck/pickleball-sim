@@ -26,6 +26,7 @@ context and may contain superseded implementation details.
 | 🔴 **CRITICAL** | Foundation | architecture.md, database design, configuration spec |
 | 🟠 **HIGH** | Generation Logic | Monthly batch, team formation, matchmaking |
 | 🟡 **MEDIUM** | Implementation | Module interfaces, generation sequence |
+| 🟡 **MEDIUM** | Operations | Database backup, restore, classroom migration |
 | 🟢 **REFERENCE** | Context | Student assignment, RFP, dev guides |
 
 ---
@@ -500,6 +501,7 @@ development/*.md (SUPPORTING SERVICES)
 
 ### Phase 6: Context (As Needed)
 22. `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md`
+23. `database_backup_restore.md` - Database freeze, transfer, restore, and validation operations
 
 ---
 
@@ -541,6 +543,7 @@ development/*.md (SUPPORTING SERVICES)
 | `development/student_facing_dataset_build_specification.md` | ✅ 📋 | 🟡 MEDIUM |
 | `development/student_facing_dataset_data_dictionary.md` | ✅ 📋 | 🟡 MEDIUM |
 | `development/web_control_panel_design.md` | ✅ | 🟡 MEDIUM |
+| `database_backup_restore.md` | ✅ 📋 | 🟡 MEDIUM |
 | `student_assignment/NAPA_Olympic_Analytics_Capstone_Rewritten.md` | ✅ | 🟢 REFERENCE |
 | `student_assignment/NAPA_Olympic_Analytics_RFP_Industry_Style_v2.md` | ✅ | 🟢 REFERENCE |
 | `architecture/Comprehensive_Instructor_AI_Dev_Guide_Windows_Dev_Environment_v3.md` | ✅ | 🟢 REFERENCE |
