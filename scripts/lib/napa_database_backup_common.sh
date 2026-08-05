@@ -72,6 +72,7 @@ napa_require_project_root() {
 
 napa_require_docker() {
     napa_require_command docker
+    docker version >/dev/null 2>&1 || napa_fail "Docker is not available. Start Docker Desktop and confirm WSL integration is enabled."
 }
 
 napa_container_is_running() {
@@ -155,7 +156,7 @@ napa_pg_dumpall_globals() {
 napa_pg_restore_list() {
     local container
     container="$1"
-    docker exec -i "$container" pg_restore --list -
+    docker exec -i "$container" pg_restore --list
 }
 
 napa_pg_restore_database() {
@@ -163,7 +164,7 @@ napa_pg_restore_database() {
     container="$1"
     database="$2"
     user="$3"
-    docker exec -i "$container" pg_restore -U "$user" -d "$database" --no-owner --role="$user" -
+    docker exec -i "$container" pg_restore -U "$user" -d "$database" --no-owner --role="$user"
 }
 
 napa_timestamp_utc() {
