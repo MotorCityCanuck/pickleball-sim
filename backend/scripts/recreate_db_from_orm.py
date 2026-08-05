@@ -14,6 +14,8 @@ from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.schema import CreateSchema
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -24,6 +26,23 @@ from app.models import Base  # noqa: E402
 
 
 DEFAULT_TARGET_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/pickleball"
+
+
+def _orm_schemas() -> list[str]:
+    return sorted(
+        {
+            table.schema
+            for table in Base.metadata.tables.values()
+            if table.schema is not None
+        }
+    )
+
+
+def _orm_table_count(inspector: Inspector, schemas: list[str]) -> int:
+    relevant_schemas = {inspector.default_schema_name, *schemas}
+    return sum(
+        len(inspector.get_table_names(schema=schema)) for schema in relevant_schemas
+    )
 
 
 def _database_name(database_url: str) -> str:
@@ -97,13 +116,16 @@ def recreate_database(database_url: str, admin_database_url: str, assume_yes: bo
         conn.execute(text(f'CREATE DATABASE "{database_name}"'))
 
     engine = create_engine(database_url)
+    orm_schemas = _orm_schemas()
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+        for schema in orm_schemas:
+            conn.execute(CreateSchema(schema, if_not_exists=True))
 
     Base.metadata.create_all(engine)
 
     inspector = inspect(engine)
-    table_count = len(inspector.get_table_names())
+    table_count = _orm_table_count(inspector, orm_schemas)
     explicit_index_count = sum(len(table.indexes) for table in Base.metadata.tables.values())
 
     print(f"recreated_database={database_name}")
