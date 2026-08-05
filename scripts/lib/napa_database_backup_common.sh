@@ -138,6 +138,38 @@ napa_require_database_exists() {
     napa_database_exists "$container" "$database" "$user" || napa_fail "Database '$database' does not exist in container '$container'."
 }
 
+napa_terminate_database_connections() {
+    local container database user database_literal
+    container="$1"
+    database="$2"
+    user="$3"
+    database_literal="$(napa_quote_sql_literal "$database")"
+    napa_psql "$container" postgres "$user" -c "
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = ${database_literal}
+          AND pid <> pg_backend_pid();
+    " >/dev/null
+}
+
+napa_create_database() {
+    local container database user database_identifier
+    container="$1"
+    database="$2"
+    user="$3"
+    database_identifier="$(napa_quote_identifier "$database")"
+    napa_psql "$container" postgres "$user" -c "CREATE DATABASE ${database_identifier};" >/dev/null
+}
+
+napa_drop_database() {
+    local container database user database_identifier
+    container="$1"
+    database="$2"
+    user="$3"
+    database_identifier="$(napa_quote_identifier "$database")"
+    napa_psql "$container" postgres "$user" -c "DROP DATABASE IF EXISTS ${database_identifier};" >/dev/null
+}
+
 napa_pg_dump() {
     local container database user
     container="$1"
@@ -165,6 +197,14 @@ napa_pg_restore_database() {
     database="$2"
     user="$3"
     docker exec -i "$container" pg_restore -U "$user" -d "$database" --no-owner --role="$user"
+}
+
+napa_analyze_database() {
+    local container database user
+    container="$1"
+    database="$2"
+    user="$3"
+    napa_psql "$container" "$database" "$user" -c "ANALYZE;" >/dev/null
 }
 
 napa_timestamp_utc() {
@@ -268,6 +308,13 @@ napa_database_size() {
     database="$2"
     user="$3"
     napa_psql_quiet "$container" "$database" "$user" -c "SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null || printf '%s\n' "UNKNOWN"
+}
+
+napa_manifest_value() {
+    local manifest_path key
+    manifest_path="$1"
+    key="$2"
+    awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; found=1; exit } END { if (!found) exit 1 }' "$manifest_path"
 }
 
 napa_quote_sql_literal() {
