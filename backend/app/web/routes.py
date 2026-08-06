@@ -28,6 +28,7 @@ from app.background_jobs import (
     BackgroundJobRunner,
     get_default_background_job_runner,
 )
+from app.database_migration import DatabaseMigrationService
 from app.core import (
     ConfigurationLifecycleService,
     build_config_editor_sections,
@@ -141,6 +142,11 @@ def get_tournament_service() -> TournamentService:
 def get_background_job_runner() -> BackgroundJobRunner:
     """Return the local background job runner."""
     return get_default_background_job_runner()
+
+
+def get_database_migration_service() -> DatabaseMigrationService:
+    """Return the database migration orchestration service."""
+    return DatabaseMigrationService()
 
 
 def build_control_panel_router() -> APIRouter:
@@ -401,6 +407,74 @@ def build_control_panel_router() -> APIRouter:
             request,
             "partials/control_orchestration_tab.html",
             _build_orchestration_template_context(snapshot),
+        )
+
+    @router.get("/control/partials/database-migration", response_class=HTMLResponse)
+    def control_panel_database_migration_partial(
+        request: Request,
+        migration_service: DatabaseMigrationService = Depends(get_database_migration_service),
+    ) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "partials/control_database_migration_tab.html",
+            _build_database_migration_template_context(migration_service),
+        )
+
+    @router.post("/control/database-migration/backup", response_class=HTMLResponse)
+    def control_panel_database_migration_backup(
+        request: Request,
+        backup_label: str = Form(""),
+        migration_service: DatabaseMigrationService = Depends(get_database_migration_service),
+    ) -> HTMLResponse:
+        launch_message = None
+        launch_error = None
+        try:
+            operation = migration_service.start_backup(
+                backup_label=backup_label.strip() or None,
+            )
+            launch_message = (
+                f"Migration backup operation {operation.operation_id} started."
+            )
+        except Exception as exc:
+            launch_error = str(exc)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_database_migration_tab.html",
+            _build_database_migration_template_context(
+                migration_service,
+                launch_message=launch_message,
+                launch_error=launch_error,
+            ),
+        )
+
+    @router.post("/control/database-migration/restore", response_class=HTMLResponse)
+    def control_panel_database_migration_restore(
+        request: Request,
+        backup_path: str = Form(""),
+        destructive_confirm: str | None = Form(None),
+        migration_service: DatabaseMigrationService = Depends(get_database_migration_service),
+    ) -> HTMLResponse:
+        launch_message = None
+        launch_error = None
+        try:
+            operation = migration_service.start_restore(
+                backup_path=backup_path,
+                confirm_destructive=destructive_confirm,
+            )
+            launch_message = (
+                f"Database restore operation {operation.operation_id} started. "
+                "The control panel may become temporarily unavailable during replacement."
+            )
+        except Exception as exc:
+            launch_error = str(exc)
+        return templates.TemplateResponse(
+            request,
+            "partials/control_database_migration_tab.html",
+            _build_database_migration_template_context(
+                migration_service,
+                launch_message=launch_message,
+                launch_error=launch_error,
+            ),
         )
 
     @router.get("/control/partials/tournament", response_class=HTMLResponse)
@@ -1921,6 +1995,32 @@ def _build_orchestration_template_context(
         "comparison_result": comparison_result,
         "compare_message": compare_message,
         "compare_error": compare_error,
+    }
+
+
+def _build_database_migration_template_context(
+    migration_service: DatabaseMigrationService,
+    *,
+    launch_message: str | None = None,
+    launch_error: str | None = None,
+) -> dict[str, object]:
+    state = migration_service.latest_status_view()
+    active_operation = state["active_operation"]
+    packages = state["packages"]
+    ready_packages = tuple(package for package in packages if package.is_restore_eligible)
+    blocked_packages = tuple(package for package in packages if not package.is_restore_eligible)
+    return {
+        "current_database": state["current_database"],
+        "packages": packages,
+        "ready_packages": ready_packages,
+        "blocked_packages": blocked_packages,
+        "operation": state["operation"],
+        "operation_log_tail": state["operation_log_tail"],
+        "active_operation": active_operation,
+        "restore_blockers": state["restore_blockers"],
+        "backup_root": state["backup_root"],
+        "launch_message": launch_message,
+        "launch_error": launch_error,
     }
 
 

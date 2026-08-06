@@ -1,0 +1,271 @@
+{% set migration_is_active = active_operation is not none %}
+{% set refresh_interval = '5s' if migration_is_active else '30s' %}
+
+<section
+    style="display:grid; gap:16px;"
+    hx-get="/control/partials/database-migration"
+    hx-trigger="every {{ refresh_interval }}"
+    hx-swap="outerHTML"
+    hx-target="this"
+>
+    <div style="display:grid; gap:8px;">
+        <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Operational Database Controls</div>
+        <div style="font-size:28px; color:#172033; font-weight:700;">Database Migration</div>
+        <div style="max-width:960px; color:#5a6477; line-height:1.5;">
+            Create verified migration backups and restore them into the application's existing configured PostgreSQL database name without reimplementing backup or restore logic in Python.
+        </div>
+    </div>
+
+    {% if launch_message %}
+        <div style="border:1px solid #b7dfc2; background:#edf8f0; color:#1f5f30; border-radius:8px; padding:10px 12px;">
+            {{ launch_message }}
+        </div>
+    {% endif %}
+    {% if launch_error %}
+        <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+            {{ launch_error }}
+        </div>
+    {% endif %}
+    {% if migration_is_active %}
+        <div style="border:1px solid #f0d39b; background:#fff8e8; color:#925f00; border-radius:8px; padding:10px 12px;">
+            Database migration in progress. The control panel may become temporarily unavailable while PostgreSQL is replaced.
+        </div>
+    {% endif %}
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+        <div class="info-card {% if current_database.connection_status == 'HEALTHY' %}state-card-ready{% else %}state-card-blocked{% endif %}">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Database</div>
+            <div style="margin-top:8px; font-size:22px;">{{ current_database.database_name }}</div>
+            <div style="margin-top:6px; color:#5a6477;">Connection {{ current_database.connection_status }}</div>
+            {% if current_database.connection_error %}
+                <div style="margin-top:6px; color:#8f1d18; font-size:13px;">{{ current_database.connection_error }}</div>
+            {% endif %}
+        </div>
+        <div class="info-card">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">PostgreSQL</div>
+            <div style="margin-top:8px; font-size:18px;">{{ current_database.postgres_version or "UNKNOWN" }}</div>
+            <div style="margin-top:6px; color:#5a6477;">Container {{ current_database.docker_container }}</div>
+            <div style="margin-top:6px; color:#5a6477;">Database size {{ current_database.database_size or "UNKNOWN" }}</div>
+        </div>
+        <div class="info-card">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Application Revision</div>
+            <div style="margin-top:8px; color:#1d2433;">Commit {{ current_database.git_commit or "UNKNOWN" }}</div>
+            <div style="margin-top:6px; color:#5a6477;">Branch {{ current_database.git_branch or "UNKNOWN" }}</div>
+        </div>
+        <div class="info-card">
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Latest Certification</div>
+            <div style="margin-top:8px; font-size:18px;">{{ current_database.certification_status or "UNKNOWN" }}</div>
+            <div style="margin-top:6px; color:#5a6477;">{{ current_database.certification_timestamp or "UNKNOWN" }}</div>
+        </div>
+    </div>
+
+    <form
+        class="panel-section {% if not migration_is_active %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        style="display:grid; gap:14px;"
+        hx-post="/control/database-migration/backup"
+        hx-target="#control-tab-content"
+        hx-swap="innerHTML"
+    >
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Create Migration Backup</div>
+                <div style="margin-top:6px; font-size:22px; color:#172033;">Back up the configured database</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    Source database {{ current_database.database_name }}. Output root {{ backup_root }}.
+                </div>
+            </div>
+            {% if migration_is_active %}
+                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                    Busy
+                </div>
+            {% else %}
+                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    Ready
+                </div>
+            {% endif %}
+        </div>
+        <div style="display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:end;">
+            <label style="display:grid; gap:6px;">
+                <span style="font-size:13px; color:#5a6477;">Optional label prefix</span>
+                <input
+                    type="text"
+                    name="backup_label"
+                    placeholder="NAPA_250K_Final"
+                    {% if migration_is_active %}disabled{% endif %}
+                    style="width:100%; border:1px solid #d6d9df; border-radius:10px; padding:11px 12px; background:#fbfcfe;"
+                >
+            </label>
+            <button
+                type="submit"
+                {% if migration_is_active %}disabled{% endif %}
+                style="border:1px solid #1857c2; background:#1857c2; color:white; border-radius:10px; padding:11px 14px; {% if migration_is_active %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+            >
+                Create Migration Backup
+            </button>
+        </div>
+    </form>
+
+    <form
+        class="panel-section {% if ready_packages and not migration_is_active and not restore_blockers %}state-card-ready{% else %}state-card-blocked{% endif %}"
+        style="display:grid; gap:14px;"
+        hx-post="/control/database-migration/restore"
+        hx-target="#control-tab-content"
+        hx-swap="innerHTML"
+    >
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Restore Migration Backup</div>
+                <div style="margin-top:6px; font-size:22px; color:#172033;">Protected same-name replacement</div>
+                <div style="margin-top:6px; color:#5a6477;">
+                    Incoming packages are restricted to {{ backup_root }} and will be re-verified before destructive restore begins.
+                </div>
+            </div>
+            {% if ready_packages and not migration_is_active and not restore_blockers %}
+                <div style="border:1px solid #b7dfc2; border-radius:999px; padding:6px 10px; font-size:12px; color:#1f5f30; background:#edf8f0;">
+                    Restore available
+                </div>
+            {% else %}
+                <div style="border:1px solid #d6d9df; border-radius:999px; padding:6px 10px; font-size:12px; color:#5a6477;">
+                    Restore blocked
+                </div>
+            {% endif %}
+        </div>
+
+        {% if restore_blockers %}
+            <ul style="margin:0 0 0 18px; padding:0; color:#5a6477;">
+                {% for blocker in restore_blockers %}
+                    <li>{{ blocker }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if ready_packages %}
+            <div style="display:grid; gap:10px;">
+                {% for package in ready_packages %}
+                    <label style="display:grid; gap:6px; border:1px solid #d6d9df; border-radius:12px; background:#fff; padding:14px;">
+                        <div style="display:flex; gap:10px; align-items:flex-start;">
+                            <input
+                                type="radio"
+                                name="backup_path"
+                                value="{{ package.path }}"
+                                {% if loop.first %}checked{% endif %}
+                                {% if migration_is_active or restore_blockers %}disabled{% endif %}
+                                style="margin-top:4px;"
+                            >
+                            <div style="min-width:0; width:100%;">
+                                <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                                    <div style="font-weight:700; color:#172033;">{{ package.slug }}</div>
+                                    <div style="font-size:12px; color:#5a6477;">{{ package.total_size_bytes }} bytes</div>
+                                </div>
+                                <div style="margin-top:6px; color:#5a6477;">
+                                    Database {{ package.database_name or "UNKNOWN" }} | PostgreSQL {{ package.postgres_version or "UNKNOWN" }} | Verification {{ package.verification_status or "UNKNOWN" }}
+                                </div>
+                                <div style="margin-top:6px; color:#5a6477;">
+                                    Created {{ package.backup_timestamp or "UNKNOWN" }} | Certification {{ package.certification_status or "UNKNOWN" }}
+                                </div>
+                                <div style="margin-top:6px; color:#5a6477; font-size:13px; word-break:break-word;">{{ package.relative_path }}</div>
+                            </div>
+                        </div>
+                    </label>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div style="border:1px solid #d6d9df; background:#fff; border-radius:12px; padding:14px; color:#5a6477;">
+                No restore-eligible migration packages were found under {{ backup_root }}.
+            </div>
+        {% endif %}
+
+        {% if blocked_packages %}
+            <details style="border:1px solid #d6d9df; background:#fff; border-radius:12px; padding:14px;">
+                <summary style="cursor:pointer; font-weight:700; color:#172033;">Packages blocked from restore</summary>
+                <div style="margin-top:12px; display:grid; gap:10px;">
+                    {% for package in blocked_packages %}
+                        <div style="border:1px solid #eef1f5; border-radius:10px; padding:12px;">
+                            <div style="font-weight:700; color:#172033;">{{ package.slug }}</div>
+                            <div style="margin-top:6px; color:#5a6477; font-size:13px;">{{ package.relative_path }}</div>
+                            <div style="margin-top:6px; color:#8f1d18;">{{ package.restore_blocker or "Package is not eligible for restore." }}</div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </details>
+        {% endif %}
+
+        <div style="display:grid; gap:8px; border:1px solid #f0d39b; background:#fff8e8; color:#925f00; border-radius:12px; padding:14px;">
+            <div style="font-weight:700;">Restore warning</div>
+            <div>You are about to replace the current NAPA database named {{ current_database.database_name }}.</div>
+            <div>A verified safety backup of the current classroom database will be created before replacement.</div>
+            <div>The application may be temporarily unavailable while the database is replaced and validated.</div>
+        </div>
+
+        <label style="display:flex; gap:8px; align-items:center; color:#5a6477;">
+            <input
+                type="checkbox"
+                name="destructive_confirm"
+                value="yes"
+                {% if migration_is_active or restore_blockers or not ready_packages %}disabled{% endif %}
+            >
+            Confirm backup current DB and restore the selected migration package
+        </label>
+
+        <button
+            type="submit"
+            {% if migration_is_active or restore_blockers or not ready_packages %}disabled{% endif %}
+            style="justify-self:start; border:1px solid #b42318; background:#b42318; color:white; border-radius:10px; padding:11px 14px; {% if migration_is_active or restore_blockers or not ready_packages %}opacity:0.45; cursor:not-allowed;{% else %}cursor:pointer;{% endif %}"
+        >
+            Backup Current DB and Restore
+        </button>
+    </form>
+
+    <section class="panel-section" style="display:grid; gap:14px;">
+        <div>
+            <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Migration Status</div>
+            <div style="margin-top:6px; font-size:22px; color:#172033;">Latest operation</div>
+        </div>
+        {% if operation %}
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                <div class="info-card {% if operation.status == 'succeeded' %}state-card-ready{% elif operation.status == 'failed' %}state-card-blocked{% endif %}">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Status</div>
+                    <div style="margin-top:8px; font-size:20px;">{{ operation.status }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">{{ operation.operation_type }} | {{ operation.operation_id }}</div>
+                </div>
+                <div class="info-card">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Step</div>
+                    <div style="margin-top:8px; font-size:18px;">{{ operation.current_step or "UNKNOWN" }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">{{ operation.message or "No status message recorded." }}</div>
+                </div>
+                <div class="info-card">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Timing</div>
+                    <div style="margin-top:8px; color:#1d2433;">Started {{ operation.started_at or "UNKNOWN" }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">Updated {{ operation.updated_at or "UNKNOWN" }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">Completed {{ operation.completed_at or "PENDING" }}</div>
+                </div>
+                <div class="info-card">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Artifacts</div>
+                    <div style="margin-top:8px; color:#1d2433;">Incoming {{ operation.incoming_backup or "n/a" }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">Created {{ operation.created_backup or "n/a" }}</div>
+                    <div style="margin-top:6px; color:#5a6477;">Safety {{ operation.safety_backup or "n/a" }}</div>
+                </div>
+            </div>
+            {% if operation.error %}
+                <div style="border:1px solid #f1b2ad; background:#fef3f2; color:#8f1d18; border-radius:8px; padding:10px 12px;">
+                    {{ operation.error }}
+                </div>
+            {% endif %}
+            {% if operation.requires_manual_rollback and operation.status == 'failed' %}
+                <div style="border:1px solid #f0d39b; background:#fff8e8; color:#925f00; border-radius:8px; padding:10px 12px;">
+                    Restore failed after destructive work began. Use the recorded safety backup to perform rollback.
+                </div>
+            {% endif %}
+            {% if operation_log_tail %}
+                <div style="display:grid; gap:8px;">
+                    <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Log Tail</div>
+                    <pre style="margin:0; border:1px solid #d6d9df; border-radius:12px; background:#172033; color:#edf3ff; padding:14px; overflow:auto; font-size:12px; line-height:1.5;">{{ operation_log_tail }}</pre>
+                </div>
+            {% endif %}
+        {% else %}
+            <div style="border:1px solid #d6d9df; background:#fff; border-radius:12px; padding:14px; color:#5a6477;">
+                No database migration operation has been recorded yet.
+            </div>
+        {% endif %}
+    </section>
+</section>
