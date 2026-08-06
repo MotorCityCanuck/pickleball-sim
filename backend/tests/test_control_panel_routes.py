@@ -19,6 +19,11 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import ConfigurationLifecycleService  # noqa: E402
+from app.database_migration import (  # noqa: E402
+    BackupPackageSummary,
+    CurrentDatabaseSummary,
+    MigrationOperationStatus,
+)
 from app.exports.student_dataset.service import StudentDatasetExportService  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.web.routes import get_configuration_lifecycle  # noqa: E402
@@ -940,6 +945,85 @@ class FakeGenerationRunService:
         return kwargs
 
 
+class FakeDatabaseMigrationService:
+    def __init__(self) -> None:
+        self.backup_labels: list[str | None] = []
+        self.restore_requests: list[tuple[str, str | None]] = []
+        self.raise_on_backup: str | None = None
+        self.raise_on_restore: str | None = None
+        self.package = BackupPackageSummary(
+            slug="napa_pickleball_2026-08-05_120000",
+            path="/tmp/backups/napa_pickleball_2026-08-05_120000",
+            relative_path="backups/napa_pickleball_2026-08-05_120000",
+            database_name="pickleball",
+            postgres_version="16.1",
+            backup_timestamp="20260805T120000Z",
+            verification_status="VERIFIED",
+            certification_status="PASS",
+            certification_timestamp="20260805T121000Z",
+            git_commit="abc123",
+            git_branch="main",
+            database_size="1 GB",
+            total_size_bytes=1024,
+            has_freeze_manifest=True,
+            is_safety_backup=False,
+            is_restore_eligible=True,
+            restore_blocker=None,
+        )
+        self.current_database = CurrentDatabaseSummary(
+            database_name="pickleball",
+            postgres_version="16.1",
+            docker_container="pickleball-postgres",
+            database_size="1 GB",
+            git_commit="abc123",
+            git_branch="feat/backup-ui-integration",
+            certification_status="PASS",
+            certification_timestamp="20260805T121000Z",
+            connection_status="HEALTHY",
+            connection_error=None,
+        )
+        self.operation = MigrationOperationStatus(
+            operation_id="20260805T121500Z",
+            operation_type="backup",
+            status="running",
+            current_step="create_archive",
+            message="Creating PostgreSQL archive.",
+            started_at="2026-08-05T12:15:00Z",
+            updated_at="2026-08-05T12:16:00Z",
+            completed_at=None,
+            incoming_backup=None,
+            created_backup=None,
+            safety_backup=None,
+            log_path="/tmp/logs/database_migration_20260805T121500Z.log",
+            error=None,
+            pid=1234,
+            requires_manual_rollback=False,
+        )
+
+    def latest_status_view(self) -> dict[str, object]:
+        return {
+            "current_database": self.current_database,
+            "packages": (self.package,),
+            "operation": self.operation,
+            "operation_log_tail": "[backup_database] Creating database.dump...",
+            "active_operation": self.operation,
+            "restore_blockers": (),
+            "backup_root": "/tmp/backups",
+        }
+
+    def start_backup(self, *, backup_label: str | None = None):
+        self.backup_labels.append(backup_label)
+        if self.raise_on_backup is not None:
+            raise ValueError(self.raise_on_backup)
+        return type("Operation", (), {"operation_id": "backup-op-1"})()
+
+    def start_restore(self, *, backup_path: str, confirm_destructive: str | None):
+        self.restore_requests.append((backup_path, confirm_destructive))
+        if self.raise_on_restore is not None:
+            raise ValueError(self.raise_on_restore)
+        return type("Operation", (), {"operation_id": "restore-op-1"})()
+
+
 class FakeSeedRefreshService:
     def __init__(self, *, error: str | None = None) -> None:
         self.error = error
@@ -1103,12 +1187,14 @@ def test_control_panel_shell_renders_tabs_and_initial_content(session_factory):
     assert "Player and Match Config" in body
     assert "Instrumentation" in body
     assert "Orchestration" in body
+    assert "Database Migration" in body
     assert "Tournament Config" in body
     assert "Tournament" in body
     assert 'data-tab-url="/control/partials/config/seed"' in body
     assert 'data-tab-url="/control/partials/config/player-match"' in body
     assert 'data-tab-url="/control/partials/config/instrumentation"' in body
     assert 'data-tab-url="/control/partials/orchestration"' in body
+    assert 'data-tab-url="/control/partials/database-migration"' in body
     assert 'data-tab-url="/control/partials/config/tournament"' in body
     assert 'data-tab-url="/control/partials/tournament"' in body
     assert "window.loadControlPanelTab" in body
@@ -1265,6 +1351,60 @@ def test_control_panel_partials_render_run_status_batch_table_and_progress(sessi
     assert "Instructor tournament workflow" in tournament.body.decode()
     assert "No completed generated history is available" in tournament.body.decode()
     assert "Open Orchestration" in tournament.body.decode()
+
+
+def test_database_migration_partial_renders_status_panel():
+    app = create_app()
+    routes = _route_map(app)
+    service = FakeDatabaseMigrationService()
+
+    response = routes["/control/partials/database-migration"](
+        request=_request("/control/partials/database-migration"),
+        migration_service=service,
+    )
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Database Migration" in body
+    assert "Create Migration Backup" in body
+    assert "Backup Current DB and Restore" in body
+    assert "Creating PostgreSQL archive." in body
+    assert "napa_pickleball_2026-08-05_120000" in body
+
+
+def test_database_migration_backup_route_starts_operation():
+    app = create_app()
+    routes = _route_map(app)
+    service = FakeDatabaseMigrationService()
+
+    response = routes["/control/database-migration/backup"](
+        request=_request("/control/database-migration/backup", method="POST"),
+        backup_label="NAPA_250K_Final",
+        migration_service=service,
+    )
+
+    assert response.status_code == 200
+    assert service.backup_labels == ["NAPA_250K_Final"]
+    assert "Migration backup operation backup-op-1 started." in response.body.decode()
+
+
+def test_database_migration_restore_route_surfaces_confirmation_error():
+    app = create_app()
+    routes = _route_map(app)
+    service = FakeDatabaseMigrationService()
+    service.raise_on_restore = "Explicit confirmation is required before replacing the current database."
+
+    response = routes["/control/database-migration/restore"](
+        request=_request("/control/database-migration/restore", method="POST"),
+        backup_path=service.package.path,
+        destructive_confirm=None,
+        migration_service=service,
+    )
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert service.restore_requests == [(service.package.path, None)]
+    assert "Explicit confirmation is required before replacing the current database." in body
 
 
 def test_control_panel_marks_export_completion_seen_only_on_close(session_factory):

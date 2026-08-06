@@ -46,6 +46,33 @@ Shared shell helpers live in:
 scripts/lib/napa_database_backup_common.sh
 ```
 
+## Control panel integration
+
+The instructor control panel now includes a `Database Migration` tab that:
+
+- shows current configured database identity and connection state
+- discovers backup packages from the repository `backups/` directory
+- launches detached backup operations through the existing shell scripts
+- launches detached same-name classroom restore operations through `scripts/migrate_classroom_database.sh`
+- renders persistent operation status and log output from filesystem state rather than relying on ORM progress rows during restore
+
+The UI orchestration layer does not reimplement `pg_dump` or `pg_restore`.
+
+Persistent control-panel migration state is stored under:
+
+```text
+runtime/database_migration/
+  latest_status.json
+  database_migration.lock
+  operations/<operation_id>.json
+```
+
+Operation logs are stored under:
+
+```text
+logs/database_migration_<operation_id>.log
+```
+
 ## Prerequisites
 
 On both the development machine and classroom laptop:
