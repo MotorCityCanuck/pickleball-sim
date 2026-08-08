@@ -101,6 +101,82 @@ def test_get_active_operation_clears_terminal_lock(tmp_path):
     assert not service.lock_file.exists()
 
 
+def test_load_latest_status_marks_stale_active_operation_failed(tmp_path):
+    service = DatabaseMigrationService(project_root=tmp_path)
+    service.runtime_root.mkdir(parents=True, exist_ok=True)
+    service.status_file.write_text(
+        """
+        {
+          "operation_id": "op-2",
+          "operation_type": "backup",
+          "status": "running",
+          "current_step": "create_archive",
+          "message": "Creating PostgreSQL archive.",
+          "pid": 999999,
+          "started_at": "2026-08-08T00:46:51Z",
+          "updated_at": "2026-08-08T00:47:14Z",
+          "completed_at": null
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    service.lock_file.write_text(
+        """
+        {
+          "operation_id": "op-2",
+          "pid": 999999
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    latest_status = service.load_latest_status()
+
+    assert latest_status is not None
+    assert latest_status.status == "failed"
+    assert latest_status.completed_at is not None
+    assert latest_status.message == (
+        "Operation is no longer running. The previous attempt likely exited unexpectedly."
+    )
+    assert not service.lock_file.exists()
+
+
+def test_load_latest_status_exposes_progress_summary(tmp_path):
+    service = DatabaseMigrationService(project_root=tmp_path)
+    service.runtime_root.mkdir(parents=True, exist_ok=True)
+    service.status_file.write_text(
+        """
+        {
+          "operation_id": "op-3",
+          "operation_type": "backup",
+          "status": "running",
+          "current_step": "create_archive",
+          "message": "Creating PostgreSQL archive.",
+          "pid": null
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    service.lock_file.write_text(
+        """
+        {
+          "operation_id": "op-3",
+          "pid": 1
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    latest_status = service.load_latest_status()
+
+    assert latest_status is not None
+    assert latest_status.script_name == "backup_database.sh"
+    assert latest_status.current_step_index == 3
+    assert latest_status.total_steps == 7
+    assert latest_status.completed_step_count == 2
+    assert latest_status.progress_summary == "backup_database.sh | 2 of 7 completed"
+
+
 def test_start_restore_records_pid_and_lock(tmp_path, monkeypatch):
     package_dir = _write_backup_package(tmp_path, "restore_me")
     service = DatabaseMigrationService(project_root=tmp_path)

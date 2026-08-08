@@ -33,6 +33,9 @@ DEFAULT_POSTGRES_CONTAINER = os.environ.get("POSTGRES_CONTAINER", "pickleball-po
 DEFAULT_POSTGRES_DB = os.environ.get("POSTGRES_DB", "pickleball")
 ACTIVE_OPERATION_STATUSES = frozenset({"queued", "running"})
 TERMINAL_OPERATION_STATUSES = frozenset({"succeeded", "failed"})
+STALE_OPERATION_MESSAGE = (
+    "Operation is no longer running. The previous attempt likely exited unexpectedly."
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,56 @@ class MigrationOperationStatus:
     @property
     def is_active(self) -> bool:
         return self.status in ACTIVE_OPERATION_STATUSES
+
+    @property
+    def script_name(self) -> str | None:
+        progress = _operation_progress_definition(self.operation_type)
+        if progress is None:
+            return None
+        return progress["script_name"]
+
+    @property
+    def total_steps(self) -> int:
+        progress = _operation_progress_definition(self.operation_type)
+        if progress is None:
+            return 0
+        return len(progress["steps"])
+
+    @property
+    def current_step_index(self) -> int | None:
+        progress = _operation_progress_definition(self.operation_type)
+        if progress is None:
+            return None
+        steps = progress["steps"]
+        if self.status == "succeeded":
+            return len(steps)
+        if not self.current_step:
+            return None
+        try:
+            return steps.index(self.current_step) + 1
+        except ValueError:
+            return None
+
+    @property
+    def completed_step_count(self) -> int:
+        progress = _operation_progress_definition(self.operation_type)
+        if progress is None:
+            return 0
+        steps = progress["steps"]
+        if self.status == "succeeded":
+            return len(steps)
+        current_index = self.current_step_index
+        if current_index is None:
+            return 0
+        return max(current_index - 1, 0)
+
+    @property
+    def progress_summary(self) -> str | None:
+        script_name = self.script_name
+        total_steps = self.total_steps
+        if script_name is None or total_steps == 0:
+            return None
+        return f"{script_name} | {self.completed_step_count} of {total_steps} completed"
 
 
 class DatabaseMigrationService:
@@ -206,6 +259,7 @@ class DatabaseMigrationService:
         payload = _read_json_file(self.status_file)
         if payload is None:
             return None
+        payload = self._reconcile_stale_operation_payload(payload)
         return _status_from_payload(payload)
 
     def load_log_tail(
@@ -272,15 +326,13 @@ class DatabaseMigrationService:
         lock_payload = _read_json_file(self.lock_file)
         status = self.load_latest_status()
         if lock_payload is None:
-            return status if status is not None and status.is_active else None
+            return None
 
         pid = _safe_int(lock_payload.get("pid"))
         if status is not None and status.status in TERMINAL_OPERATION_STATUSES:
             self._clear_lock()
             return None
         if pid is not None and _pid_is_running(pid):
-            return status
-        if pid is None and status is not None and status.is_active:
             return status
         self._clear_lock()
         return None
@@ -515,6 +567,32 @@ class DatabaseMigrationService:
         except FileNotFoundError:
             pass
 
+    def _reconcile_stale_operation_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        if payload.get("status") not in ACTIVE_OPERATION_STATUSES:
+            return payload
+
+        status_operation_id = _optional_str(payload.get("operation_id"))
+        lock_payload = _read_json_file(self.lock_file)
+        if lock_payload is not None:
+            lock_operation_id = _optional_str(lock_payload.get("operation_id"))
+            if lock_operation_id == status_operation_id:
+                pid = _safe_int(lock_payload.get("pid"))
+                if pid is not None and _pid_is_running(pid):
+                    return payload
+            self._clear_lock()
+
+        pid = _safe_int(payload.get("pid"))
+        if pid is not None and _pid_is_running(pid):
+            return payload
+
+        payload["status"] = "failed"
+        payload["error"] = payload.get("error") or STALE_OPERATION_MESSAGE
+        payload["message"] = STALE_OPERATION_MESSAGE
+        payload["completed_at"] = _optional_str(payload.get("completed_at")) or _utc_now_iso()
+        self._write_status(payload)
+        return payload
+
     def _ensure_paths(self) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self.operations_root.mkdir(parents=True, exist_ok=True)
@@ -679,6 +757,31 @@ RESTORE_PROGRESS_MAP = {
     "Validating restored classroom database": ("validate_restored_database", "Validating the restored classroom database."),
 }
 
+OPERATION_PROGRESS = {
+    "backup": {
+        "script_name": "backup_database.sh",
+        "steps": (
+            "check_database_connection",
+            "capture_row_counts",
+            "create_archive",
+            "capture_globals",
+            "write_manifest",
+            "verify_archive",
+            "generate_checksums",
+        ),
+    },
+    "restore": {
+        "script_name": "migrate_classroom_database.sh",
+        "steps": (
+            "verify_incoming_backup",
+            "create_safety_backup",
+            "verify_safety_backup",
+            "restore_database",
+            "validate_restored_database",
+        ),
+    },
+}
+
 
 def _apply_restore_progress(
     line: str,
@@ -715,6 +818,10 @@ def _apply_script_progress(
             status_payload["message"] = message
             service.record_operation_update(status_payload)
             return
+
+
+def _operation_progress_definition(operation_type: str) -> dict[str, Any] | None:
+    return OPERATION_PROGRESS.get(operation_type)
 
 
 def _run_script_command(

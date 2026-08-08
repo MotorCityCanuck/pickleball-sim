@@ -232,6 +232,12 @@
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Current Step</div>
                     <div style="margin-top:8px; font-size:18px;">{{ operation.current_step or "UNKNOWN" }}</div>
                     <div style="margin-top:6px; color:#5a6477;">{{ operation.message or "No status message recorded." }}</div>
+                    {% if operation.progress_summary %}
+                        <div style="margin-top:6px; color:#5a6477;">{{ operation.progress_summary }}</div>
+                    {% endif %}
+                    {% if operation.current_step_index and operation.total_steps %}
+                        <div style="margin-top:6px; color:#5a6477;">Step {{ operation.current_step_index }} of {{ operation.total_steps }}</div>
+                    {% endif %}
                 </div>
                 <div class="info-card">
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Timing</div>
