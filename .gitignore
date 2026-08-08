@@ -6,6 +6,10 @@ raw_data/
 /backups/
 *.dump
 *.backup
+/logs/database_migration_*.log
+/runtime/database_migration/latest_status.json
+/runtime/database_migration/database_migration.lock
+/runtime/database_migration/operations/
 
 # Python generated artifacts
 __pycache__/
