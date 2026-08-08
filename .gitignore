@@ -17,3 +17,6 @@ __pycache__/
 .env
 backend/venv/
 *:Zone.Identifier
+
+# Generation Run Snapshots
+scripts/data/realism_audit_snapshots/

@@ -1847,6 +1847,54 @@ def test_realism_audit_runner_executes_phase3_release_certification_queries(sess
     assert baseline_row["prior_run_count"] == 1
 
 
+def test_fatigue_effectiveness_uses_prior_days_without_counting_same_day_matches(session):
+    seed_audit_dataset(session)
+    session.execute(
+        text(
+            """
+            INSERT INTO ratings_update_log (
+                id, generation_run_id, batch_id, match_id, match_number, match_date, player_id,
+                match_team_id, team_number, rating_type, rating_before, rating_after, rating_delta,
+                expected_score_share, actual_score_share, expected_raw_points, actual_raw_points,
+                games_played, games_won, match_won, k_factor, confidence_before, confidence_after, calculation_version
+            ) VALUES
+                (4100, 1, 10, 2002, 3, '2026-01-10', 1, 3000, 1, 'match_update', 1264, 1276, 12, 0.50, 0.55, 11, 9, 1, 1, 1, 24, 0.24, 0.25, 'v1'),
+                (4101, 1, 10, 2002, 3, '2026-01-10', 3, 3001, 2, 'match_update', 1936, 1924, -12, 0.50, 0.45, 9, 11, 1, 0, 0, 24, 0.67, 0.66, 'v1'),
+                (4102, 1, 10, 2003, 4, '2026-01-20', 1, 3002, 1, 'match_update', 1276, 1284, 8, 0.50, 0.55, 11, 8, 1, 1, 1, 24, 0.25, 0.26, 'v1'),
+                (4103, 1, 10, 2003, 4, '2026-01-20', 3, 3003, 2, 'match_update', 1924, 1916, -8, 0.50, 0.45, 8, 11, 1, 0, 0, 24, 0.66, 0.65, 'v1')
+            """
+        )
+    )
+    session.commit()
+
+    runner = RealismAuditRunner(session)
+    result = runner.run(query_names=["fatigue_effectiveness"])[0]
+
+    assert result.rows == (
+        {
+            "workload_band": "0",
+            "player_update_count": 8,
+            "avg_recent_match_count": 0.0,
+            "avg_score_share_delta": 0.0,
+            "met_or_exceeded_expected_rate": 0.5,
+        },
+        {
+            "workload_band": "1",
+            "player_update_count": 2,
+            "avg_recent_match_count": 1.0,
+            "avg_score_share_delta": 0.0,
+            "met_or_exceeded_expected_rate": 0.5,
+        },
+        {
+            "workload_band": "2_plus",
+            "player_update_count": 2,
+            "avg_recent_match_count": 2.0,
+            "avg_score_share_delta": 0.0,
+            "met_or_exceeded_expected_rate": 0.5,
+        },
+    )
+
+
 def test_realism_audit_runner_executes_structural_integrity_queries(session):
     seed_audit_dataset(session)
     session.execute(
