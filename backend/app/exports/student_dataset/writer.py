@@ -1606,7 +1606,7 @@ def _write_chunk_locally_mutated_table_from_source_stream(
             sample_limit=sample_limit,
             rng=rng,
         )
-        candidates: list[dict[str, Any]] = []
+        candidates: list[tuple[int, str, object, Any]] = []
         with _measure_injection_phase(
             injection_observer,
             "issue_candidate_shuffle",
@@ -1627,11 +1627,12 @@ def _write_chunk_locally_mutated_table_from_source_stream(
                             continue
                         if ordinal in selected_ordinals:
                             candidates.append(
-                                {
-                                    "row_ordinal": row_ordinal,
-                                    "column_name": column_name,
-                                    "row": dict(row),
-                                }
+                                (
+                                    row_ordinal,
+                                    column_name,
+                                    row[primary_key],
+                                    row.get(column_name),
+                                )
                             )
                         ordinal += 1
                     row_ordinal += 1
@@ -1661,11 +1662,9 @@ def _write_chunk_locally_mutated_table_from_source_stream(
             metric["sampled_count"] = len(candidates)
             noop_count = 0
             skipped_row_limit_count = 0
-            for candidate in candidates:
+            for row_ordinal, column_name, pk_value, original_value in candidates:
                 if applied >= target_count:
                     break
-                row = candidate["row"]
-                pk_value = row[primary_key]
                 row_key = (table_name, pk_value)
                 if (
                     state.row_field_counts[row_key]
@@ -1673,20 +1672,21 @@ def _write_chunk_locally_mutated_table_from_source_stream(
                 ):
                     skipped_row_limit_count += 1
                     continue
-                column_name = str(candidate["column_name"])
-                original_value = row.get(column_name)
                 injected_value = _mutated_value(
                     issue_type=issue_type,
                     table_name=table_name,
                     column_name=column_name,
-                    row=row,
+                    row={
+                        primary_key: pk_value,
+                        column_name: original_value,
+                    },
                     original_value=original_value,
                     rng=rng,
                 )
                 if injected_value == original_value:
                     noop_count += 1
                     continue
-                mutation_plan.setdefault(int(candidate["row_ordinal"]), {})[column_name] = (
+                mutation_plan.setdefault(int(row_ordinal), {})[column_name] = (
                     pk_value,
                     original_value,
                     injected_value,
