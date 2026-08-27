@@ -96,7 +96,9 @@ TOURNAMENT_PORTFOLIO_SLOTS: tuple[PortfolioSlot, ...] = (
     PortfolioSlot(country_code="US", division="womens_doubles"),
     PortfolioSlot(country_code="US", division="mixed_doubles"),
 )
-TOURNAMENT_GROUP_COUNT = 6
+TOURNAMENT_MIN_GROUP_COUNT = 2
+TOURNAMENT_MAX_GROUP_COUNT = 6
+TOURNAMENT_GROUP_COUNT = TOURNAMENT_MAX_GROUP_COUNT
 
 
 def _utc_now_naive() -> datetime:
@@ -2938,6 +2940,27 @@ def _team_submissions_from_payload(payload: dict[str, Any]) -> tuple[TeamSubmiss
     )
 
 
+def _normalize_tournament_group_count(value: object) -> int:
+    try:
+        group_count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Group count must be a whole number between {TOURNAMENT_MIN_GROUP_COUNT} and {TOURNAMENT_MAX_GROUP_COUNT}."
+        ) from exc
+    if not TOURNAMENT_MIN_GROUP_COUNT <= group_count <= TOURNAMENT_MAX_GROUP_COUNT:
+        raise ValueError(
+            f"Group count must be between {TOURNAMENT_MIN_GROUP_COUNT} and {TOURNAMENT_MAX_GROUP_COUNT}."
+        )
+    return group_count
+
+
+def _tournament_group_count_for_display(value: object) -> int:
+    try:
+        return _normalize_tournament_group_count(value)
+    except ValueError:
+        return TOURNAMENT_MIN_GROUP_COUNT
+
+
 def _build_tournament_template_context(
     session: Session,
     *,
@@ -2975,7 +2998,10 @@ def _build_tournament_template_context(
     return {
         "snapshot": snapshot,
         "tournament_slots": TOURNAMENT_PORTFOLIO_SLOTS,
-        "tournament_group_indexes": tuple(range(1, TOURNAMENT_GROUP_COUNT + 1)),
+        "tournament_group_indexes": tuple(range(1, TOURNAMENT_MAX_GROUP_COUNT + 1)),
+        "tournament_group_count": _tournament_group_count_for_display(
+            resolved_form_state.get("group_count", TOURNAMENT_MIN_GROUP_COUNT)
+        ),
         "tournament_source_batch": source_batch,
         "tournament_event_summary": event_summary,
         "tournament_results_summary": results_summary,
@@ -3009,9 +3035,10 @@ def _default_tournament_form_state(
     return {
         "event_name": event_name,
         "tournament_date": tournament_date,
+        "group_count": TOURNAMENT_MIN_GROUP_COUNT,
         "group_names": {
             str(group_index): f"Group {group_index}"
-            for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
+            for group_index in range(1, TOURNAMENT_MAX_GROUP_COUNT + 1)
         },
         "team_ids": {},
     }
@@ -3073,6 +3100,9 @@ def _latest_tournament_form_state(
     return {
         "event_name": event.event_name,
         "tournament_date": event.tournament_date.isoformat(),
+        "group_count": _normalize_tournament_group_count(
+            len(group_rows) or default_state["group_count"]
+        ),
         "group_names": {
             **default_state["group_names"],
             **group_names,
@@ -3094,6 +3124,7 @@ def _tournament_form_state_from_json(
     return {
         "event_name": event_name,
         "tournament_date": tournament_date,
+        "group_count": payload.get("group_count", TOURNAMENT_MIN_GROUP_COUNT),
         "group_names": {
             str(key): str(value)
             for key, value in (payload.get("group_names") or {}).items()
@@ -3108,6 +3139,9 @@ def _tournament_form_state_from_json(
 def _tournament_form_payload_objects(
     form_state: dict[str, Any],
 ) -> tuple[tuple[StudentGroup, ...], tuple[TeamSubmission, ...]]:
+    group_count = _normalize_tournament_group_count(
+        form_state.get("group_count", TOURNAMENT_MIN_GROUP_COUNT)
+    )
     group_names = form_state.get("group_names") or {}
     team_ids = form_state.get("team_ids") or {}
     groups = tuple(
@@ -3115,10 +3149,10 @@ def _tournament_form_payload_objects(
             id=group_index,
             name=str(group_names.get(str(group_index)) or f"Group {group_index}"),
         )
-        for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1)
+        for group_index in range(1, group_count + 1)
     )
     submissions: list[TeamSubmission] = []
-    for group_index in range(1, TOURNAMENT_GROUP_COUNT + 1):
+    for group_index in range(1, group_count + 1):
         for slot in TOURNAMENT_PORTFOLIO_SLOTS:
             key = _tournament_team_field_key(group_index, slot)
             raw_team_id = str(team_ids.get(key) or "").strip()

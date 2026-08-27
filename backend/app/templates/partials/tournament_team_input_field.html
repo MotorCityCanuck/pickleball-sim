@@ -7,6 +7,7 @@
         data-tournament-team-id="{{ field_key }}"
         inputmode="numeric"
         value="{{ field_value }}"
+        {% if not group_enabled %}disabled{% endif %}
         hx-post="/control/tournaments/submissions/validate-field"
         hx-trigger="change delay:200ms"
         hx-target="closest .tournament-team-field"

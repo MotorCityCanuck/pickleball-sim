@@ -100,6 +100,19 @@
                         style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
                     >
                 </label>
+                <label style="display:grid; gap:6px; max-width:220px;">
+                    <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Groups</span>
+                    <input
+                        id="tournament-group-count"
+                        data-tournament-group-count="true"
+                        type="number"
+                        min="2"
+                        max="6"
+                        value="{{ tournament_group_count }}"
+                        style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
+                    >
+                    <span style="color:#5a6477; font-size:12px;">Enter between 2 and 6 groups.</span>
+                </label>
                 <div>
                     <div style="font-size:12px; color:#5a6477; text-transform:uppercase;">Source Batch</div>
                     <div style="margin-top:8px; color:#1d2433;">{{ tournament_source_batch.batch_month }} | Batch ID {{ tournament_source_batch.id }}</div>
@@ -119,12 +132,18 @@
                 "
             >
                 {% for group_index in tournament_group_indexes %}
-                    <section class="info-card state-card-ready" style="display:grid; gap:12px;">
+                    {% set group_enabled = group_index <= tournament_group_count %}
+                    <section
+                        class="info-card state-card-ready"
+                        data-tournament-group-card="{{ group_index }}"
+                        style="display:{{ 'grid' if group_enabled else 'none' }}; gap:12px;"
+                    >
                         <label style="display:grid; gap:6px; max-width:360px;">
                             <span style="font-size:12px; color:#5a6477; text-transform:uppercase;">Student Group {{ group_index }}</span>
                             <input
                                 data-tournament-group-name="{{ group_index }}"
                                 value="{{ tournament_form_state.group_names.get(group_index|string, 'Group ' ~ group_index) }}"
+                                {% if not group_enabled %}disabled{% endif %}
                                 style="border:1px solid #d6d9df; border-radius:8px; padding:9px 10px; font-size:14px;"
                             >
                         </label>
@@ -167,15 +186,24 @@
 
         <script>
             window.serializeTournamentSubmissionForm = function serializeTournamentSubmissionForm(form) {
+                const groupCountInput = form.querySelector("[data-tournament-group-count='true']");
                 const groupNames = {};
                 const teamIds = {};
+                const groupCount = groupCountInput ? Number.parseInt(groupCountInput.value, 10) : 2;
                 form.querySelectorAll("[data-tournament-group-name]").forEach((input) => {
+                    if (input.disabled) {
+                        return;
+                    }
                     groupNames[input.dataset.tournamentGroupName] = input.value;
                 });
                 form.querySelectorAll("[data-tournament-team-id]").forEach((input) => {
+                    if (input.disabled) {
+                        return;
+                    }
                     teamIds[input.dataset.tournamentTeamId] = input.value;
                 });
                 form.querySelector('input[name="tournament_payload_json"]').value = JSON.stringify({
+                    group_count: groupCount,
                     group_names: groupNames,
                     team_ids: teamIds,
                 });
@@ -192,7 +220,40 @@
                 const dirtyShell = document.getElementById("tournament-team-grid-shell");
                 const saveStatus = document.getElementById("tournament-save-status");
                 const saveButton = document.getElementById("tournament-save-button");
+                const groupCountInput = document.getElementById("tournament-group-count");
                 const defaultButtonLabel = saveButton ? saveButton.textContent : "";
+                const minGroupCount = 2;
+                const maxGroupCount = 6;
+
+                function parsedGroupCount() {
+                    if (!groupCountInput) {
+                        return minGroupCount;
+                    }
+                    const value = Number.parseInt(groupCountInput.value, 10);
+                    if (Number.isNaN(value)) {
+                        return minGroupCount;
+                    }
+                    return Math.min(maxGroupCount, Math.max(minGroupCount, value));
+                }
+
+                function applyGroupCount() {
+                    if (!groupCountInput) {
+                        return;
+                    }
+                    const groupCount = parsedGroupCount();
+                    groupCountInput.value = String(groupCount);
+                    form.querySelectorAll("[data-tournament-group-card]").forEach((card) => {
+                        const groupIndex = Number.parseInt(
+                            card.dataset.tournamentGroupCard || "",
+                            10,
+                        );
+                        const enabled = !Number.isNaN(groupIndex) && groupIndex <= groupCount;
+                        card.style.display = enabled ? "grid" : "none";
+                        card.querySelectorAll("input").forEach((input) => {
+                            input.disabled = !enabled;
+                        });
+                    });
+                }
 
                 function setDirtyState(isDirty) {
                     if (!dirtyShell) {
@@ -267,8 +328,15 @@
                     if (!(target instanceof HTMLElement)) {
                         return;
                     }
-                    if (!target.closest("[data-tournament-team-id]")) {
+                    if (
+                        !target.closest("[data-tournament-team-id]") &&
+                        !target.closest("[data-tournament-group-name]") &&
+                        target.id !== "tournament-group-count"
+                    ) {
                         return;
+                    }
+                    if (target.id === "tournament-group-count") {
+                        applyGroupCount();
                     }
                     setDirtyState(true);
                 }
@@ -288,6 +356,7 @@
 
                 form.addEventListener("input", markDirtyFromInput);
                 form.addEventListener("change", markDirtyFromInput);
+                applyGroupCount();
                 const initialSimulationBadge = document.getElementById("tournament-monte-carlo-badge");
                 if (initialSimulationBadge && !initialSimulationBadge.dataset.tournamentEventLabel) {
                     initialSimulationBadge.dataset.tournamentEventLabel = initialSimulationBadge.textContent;

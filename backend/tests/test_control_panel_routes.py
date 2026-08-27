@@ -918,7 +918,22 @@ def _request(path: str, *, method: str = "GET") -> Request:
 
 
 def _route_map(app):
-    return {route.path: route.endpoint for route in app.router.routes if hasattr(route, "path")}
+    route_map = {}
+
+    def collect(routes):
+        for route in routes:
+            path = getattr(route, "path", None)
+            endpoint = getattr(route, "endpoint", None)
+            if path is not None and endpoint is not None:
+                route_map[path] = endpoint
+                continue
+            original_router = getattr(route, "original_router", None)
+            nested_routes = getattr(original_router, "routes", None)
+            if nested_routes is not None:
+                collect(nested_routes)
+
+    collect(app.router.routes)
+    return route_map
 
 
 class FakeGenerationRunService:
@@ -1146,6 +1161,7 @@ def _full_tournament_payload_json() -> str:
             team_id += 1
     return json.dumps(
         {
+            "group_count": routes_module.TOURNAMENT_GROUP_COUNT,
             "group_names": {
                 str(index): f"Group {index}"
                 for index in range(1, routes_module.TOURNAMENT_GROUP_COUNT + 1)
@@ -1482,7 +1498,11 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert "Submission form" in body
     assert 'hx-post="/control/tournaments/submissions/save"' in body
     assert "Validate and Save Submissions" in body
-    assert "Student Group 6" in body
+    assert 'id="tournament-group-count"' in body
+    assert 'data-tournament-group-count="true"' in body
+    assert 'value="2"' in body
+    assert "Student Group 2" in body
+    assert "Student Group 3" in body
     assert 'data-tournament-team-id="group_1_CA_mens_doubles"' in body
     assert 'id="tournament-save-status"' in body
     assert 'id="tournament-team-grid-shell"' in body
@@ -1491,7 +1511,9 @@ def test_tournament_partial_renders_ready_state_for_completed_generation(session
     assert 'hx-include="closest .tournament-team-field, #tournament-submission-form [name=' in body
     assert "field_key,group_index,country_code,division" in body
     assert 'hx-sync="closest form:replace"' in body
+    assert 'data-tournament-group-card="3"' in body
     assert 'data-tournament-team-id="group_6_US_mixed_doubles"' in body
+    assert 'disabled' in body
     assert 'value="39134"' not in body
     assert 'value="34722"' not in body
     assert "serializeTournamentSubmissionForm" in body
@@ -1518,6 +1540,8 @@ def test_tournament_partial_renders_monte_carlo_controls_for_saved_event(session
     body = response.body.decode()
     assert response.status_code == 200
     assert "Saved Class Tournament" in body
+    assert 'id="tournament-group-count"' in body
+    assert 'value="2"' in body
     assert "Start Monte Carlo" in body
     assert 'id="tournament-monte-carlo-button"' in body
     assert 'hx-post="/control/tournaments/monte-carlo/start"' in body
@@ -1826,6 +1850,32 @@ def test_tournament_submission_save_persists_valid_event(session_factory, monkey
     assert 'data-tournament-dirty="false"' in body
     assert fake_service.created_event_name == "Class Tournament"
     assert fake_service.submission_count == 36
+
+
+def test_tournament_submission_save_rejects_group_count_below_minimum(session_factory):
+    _seed_completed_generation_state(session_factory)
+    app = create_app()
+    routes = _route_map(app)
+    payload = json.loads(_full_tournament_payload_json())
+    payload["group_count"] = 1
+    session = session_factory()
+    try:
+        response = routes["/control/tournaments/submissions/save"](
+            request=_request("/control/tournaments/submissions/save", method="POST"),
+            event_name="Class Tournament",
+            tournament_date="2026-02-01",
+            tournament_payload_json=json.dumps(payload),
+            session=session,
+            queries=ControlPanelQueries(),
+            tournament_service=_FakeTournamentService(),
+        )
+    finally:
+        session.close()
+
+    body = response.body.decode()
+    assert response.status_code == 200
+    assert "Group count must be between 2 and 6." in body
+    assert 'data-tournament-dirty="true"' in body
 
 
 def test_orchestration_partial_renders_raw_load_duration_column(session_factory):
