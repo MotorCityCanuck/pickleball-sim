@@ -10,7 +10,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.database_migration import DatabaseMigrationService  # noqa: E402
+from app import database_migration  # noqa: E402
+from app.database_migration import DatabaseMigrationService, ManagedProcess  # noqa: E402
 
 
 def _write_backup_package(
@@ -200,3 +201,128 @@ def test_start_restore_records_pid_and_lock(tmp_path, monkeypatch):
     assert latest_status is not None
     assert latest_status.incoming_backup == str(package_dir)
     assert latest_status.pid == 4321
+
+
+def test_capture_restore_managed_processes_filters_repo_server_and_worker(tmp_path, monkeypatch):
+    service = DatabaseMigrationService(project_root=tmp_path)
+    backend_dir = tmp_path / "backend"
+    worker_script = backend_dir / "scripts" / "run_background_worker.py"
+
+    monkeypatch.setattr(
+        database_migration,
+        "_iter_process_commands",
+        lambda: (
+            (101, ("python", str(worker_script), "--queues", "realism_audit")),
+            (202, ("python", "-m", "uvicorn", "app.main:app", "--app-dir", str(backend_dir), "--port", "8000")),
+            (303, ("python", "-m", "uvicorn", "other.main:app", "--app-dir", "/tmp/other")),
+        ),
+    )
+
+    managed = service.capture_restore_managed_processes()
+
+    assert [(process.pid, process.label) for process in managed] == [
+        (101, "durable background worker"),
+        (202, "control panel server"),
+    ]
+
+
+def test_run_restore_operation_stops_and_restarts_managed_processes(tmp_path, monkeypatch):
+    service = DatabaseMigrationService(project_root=tmp_path)
+    managed = (
+        ManagedProcess(
+            pid=101,
+            label="durable background worker",
+            command=("python", "backend/scripts/run_background_worker.py"),
+        ),
+        ManagedProcess(
+            pid=202,
+            label="control panel server",
+            command=("python", "-m", "uvicorn", "app.main:app"),
+        ),
+    )
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(service, "capture_restore_managed_processes", lambda: managed)
+    monkeypatch.setattr(
+        service,
+        "stop_managed_processes",
+        lambda processes: calls.append(("stop", processes)) or processes,
+    )
+    monkeypatch.setattr(
+        service,
+        "restart_managed_processes",
+        lambda processes: calls.append(("restart", processes)) or (1001, 1002),
+    )
+    monkeypatch.setattr(
+        database_migration,
+        "_run_script_command",
+        lambda command, parser=None: (
+            parser("[migrate_classroom_database] Safety backup: /tmp/safety")
+            if parser is not None
+            else None
+        )
+        or "[migrate_classroom_database] Safety backup: /tmp/safety\n",
+    )
+
+    status_payload = service._initial_status_payload(  # noqa: SLF001
+        operation_id="op-restore",
+        operation_type="restore",
+        incoming_backup=None,
+    )
+    database_migration._run_restore_operation(  # noqa: SLF001
+        service=service,
+        status_payload=status_payload,
+        backup_dir=str(tmp_path / "backups" / "restore_me"),
+    )
+
+    assert calls == [
+        ("stop", managed),
+        ("restart", managed),
+    ]
+    assert status_payload["safety_backup"] == "/tmp/safety"
+    assert status_payload["current_step"] == "restore_validated"
+
+
+def test_run_restore_operation_restarts_services_after_failure(tmp_path, monkeypatch):
+    service = DatabaseMigrationService(project_root=tmp_path)
+    managed = (
+        ManagedProcess(
+            pid=101,
+            label="durable background worker",
+            command=("python", "backend/scripts/run_background_worker.py"),
+        ),
+    )
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(service, "capture_restore_managed_processes", lambda: managed)
+    monkeypatch.setattr(service, "stop_managed_processes", lambda processes: processes)
+    monkeypatch.setattr(
+        service,
+        "restart_managed_processes",
+        lambda processes: calls.append(("restart", processes)) or (1001,),
+    )
+
+    def _raise_failure(command, parser=None):
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(database_migration, "_run_script_command", _raise_failure)
+
+    status_payload = service._initial_status_payload(  # noqa: SLF001
+        operation_id="op-restore-fail",
+        operation_type="restore",
+        incoming_backup=None,
+    )
+
+    try:
+        database_migration._run_restore_operation(  # noqa: SLF001
+            service=service,
+            status_payload=status_payload,
+            backup_dir=str(tmp_path / "backups" / "restore_me"),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "restore failed"
+    else:
+        raise AssertionError("Expected restore failure.")
+
+    assert calls == [("restart", managed)]
+    assert status_payload["current_step"] == "restart_application_services"

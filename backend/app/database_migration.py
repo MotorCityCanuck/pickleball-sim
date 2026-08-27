@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -36,6 +38,17 @@ TERMINAL_OPERATION_STATUSES = frozenset({"succeeded", "failed"})
 STALE_OPERATION_MESSAGE = (
     "Operation is no longer running. The previous attempt likely exited unexpectedly."
 )
+PROCESS_STOP_TIMEOUT_SECONDS = 10.0
+PROCESS_STOP_POLL_INTERVAL_SECONDS = 0.25
+
+
+@dataclass(frozen=True)
+class ManagedProcess:
+    """One app-side process that must be stopped during destructive restore."""
+
+    pid: int
+    label: str
+    command: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -599,6 +612,66 @@ class DatabaseMigrationService:
         self.log_root.mkdir(parents=True, exist_ok=True)
         self.backup_root.mkdir(parents=True, exist_ok=True)
 
+    def capture_restore_managed_processes(self) -> tuple[ManagedProcess, ...]:
+        """Capture local app processes that may reconnect during restore."""
+        managed: list[ManagedProcess] = []
+        worker_script = str(self.backend_dir / "scripts" / "run_background_worker.py")
+        for pid, command in _iter_process_commands():
+            if pid == os.getpid():
+                continue
+            if worker_script in command:
+                managed.append(
+                    ManagedProcess(
+                        pid=pid,
+                        label="durable background worker",
+                        command=tuple(command),
+                    )
+                )
+                continue
+            if "app.main:app" in command and str(self.backend_dir) in command:
+                managed.append(
+                    ManagedProcess(
+                        pid=pid,
+                        label="control panel server",
+                        command=tuple(command),
+                    )
+                )
+        managed.sort(key=lambda process: (0 if process.label == "durable background worker" else 1, process.pid))
+        return tuple(managed)
+
+    def stop_managed_processes(
+        self,
+        processes: tuple[ManagedProcess, ...],
+    ) -> tuple[ManagedProcess, ...]:
+        """Stop app processes before replacing the configured database."""
+        stopped: list[ManagedProcess] = []
+        for process in processes:
+            if not _pid_is_running(process.pid):
+                continue
+            _terminate_process(process.pid)
+            stopped.append(process)
+        return tuple(stopped)
+
+    def restart_managed_processes(
+        self,
+        processes: tuple[ManagedProcess, ...],
+    ) -> tuple[int, ...]:
+        """Restart previously stopped app processes with their original commands."""
+        restarted_pids: list[int] = []
+        for process in processes:
+            handle = subprocess.Popen(
+                list(process.command),
+                cwd=self.project_root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=False,
+                start_new_session=True,
+                close_fds=True,
+            )
+            restarted_pids.append(handle.pid)
+        return tuple(restarted_pids)
+
     def _resolve_backup_path(self, raw_path: str) -> Path:
         if not raw_path.strip():
             raise ValueError("A backup package path is required.")
@@ -718,19 +791,33 @@ def _run_restore_operation(
     status_payload["current_step"] = "verify_incoming_backup"
     status_payload["message"] = "Verifying selected migration package."
     service.record_operation_update(status_payload)
+    managed_processes = service.capture_restore_managed_processes()
+    stopped_processes: tuple[ManagedProcess, ...] = ()
+    if managed_processes:
+        status_payload["current_step"] = "prepare_restore_environment"
+        status_payload["message"] = "Stopping app services before destructive restore."
+        service.record_operation_update(status_payload)
+        stopped_processes = service.stop_managed_processes(managed_processes)
     command = [
         str(service.project_root / "scripts" / "migrate_classroom_database.sh"),
         "--backup-dir",
         backup_dir,
     ]
-    output = _run_script_command(
-        command,
-        parser=lambda line: _apply_restore_progress(
-            line,
-            status_payload=status_payload,
-            service=service,
-        ),
-    )
+    try:
+        output = _run_script_command(
+            command,
+            parser=lambda line: _apply_restore_progress(
+                line,
+                status_payload=status_payload,
+                service=service,
+            ),
+        )
+    finally:
+        if stopped_processes:
+            status_payload["current_step"] = "restart_application_services"
+            status_payload["message"] = "Restarting local control panel services."
+            service.record_operation_update(status_payload)
+            service.restart_managed_processes(stopped_processes)
     safety_backup = _extract_path_from_output(output, "Safety backup:")
     if safety_backup:
         status_payload["safety_backup"] = safety_backup
@@ -774,10 +861,12 @@ OPERATION_PROGRESS = {
         "script_name": "migrate_classroom_database.sh",
         "steps": (
             "verify_incoming_backup",
+            "prepare_restore_environment",
             "create_safety_backup",
             "verify_safety_backup",
             "restore_database",
             "validate_restored_database",
+            "restart_application_services",
         ),
     },
 }
@@ -970,6 +1059,48 @@ def _pid_is_running(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _iter_process_commands() -> tuple[tuple[int, tuple[str, ...]], ...]:
+    processes: list[tuple[int, tuple[str, ...]]] = []
+    for proc_dir in Path("/proc").iterdir():
+        if not proc_dir.name.isdigit():
+            continue
+        cmdline_path = proc_dir / "cmdline"
+        try:
+            raw = cmdline_path.read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        parts = tuple(part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part)
+        if parts:
+            processes.append((int(proc_dir.name), parts))
+    return tuple(processes)
+
+
+def _terminate_process(pid: int) -> None:
+    if not _pid_is_running(pid):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.monotonic() + PROCESS_STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            return
+        time.sleep(PROCESS_STOP_POLL_INTERVAL_SECONDS)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return
+    deadline = time.monotonic() + PROCESS_STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            return
+        time.sleep(PROCESS_STOP_POLL_INTERVAL_SECONDS)
+    raise RuntimeError(f"Could not stop process {pid} before restore.")
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
