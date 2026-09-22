@@ -11,6 +11,10 @@ raw_data/
 /runtime/database_migration/database_migration.lock
 /runtime/database_migration/operations/
 
+# Reconciliation runtime outputs. Keep generated reports and mismatch artifacts out of git.
+/reconciliation_output/
+/config/reconciliation_output/
+
 # Python generated artifacts
 __pycache__/
 *.py[cod]
