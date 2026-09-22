@@ -1,0 +1,47 @@
+release_name: napa_250k
+parquet_root: /home/brett/projects/pickleball-sim/data/student_dataset_exports/250k_12_months_final/20260818/124204Z/clean/250k_12_months_final_initial_history
+
+database:
+  type: postgresql
+  host: localhost
+  port: 5432
+  database: pickleball
+  schema: public
+  user: postgres
+  password_env_var: NAPA_DB_PASSWORD
+
+output_directory: ../reconciliation_output
+compute_file_sha256: true
+
+normalization:
+  decimal_scale: 6
+  float_tolerance: 0.000001
+  strip_trailing_whitespace: false
+
+mappings:
+  clubs.parquet: clubs
+  club_memberships.parquet:
+    table_name: club_memberships
+    column_mappings:
+      joined_date: start_date
+      left_date: end_date
+  match_games.parquet: match_games
+  match_team_players.parquet: match_team_players
+  match_teams.parquet:
+    table_name: match_teams
+    column_mappings:
+      team_id: source_team_id
+  matches.parquet: matches
+  player_assessment_history.parquet: player_assessment_history
+  player_master.parquet:
+    table_name: players
+    key_columns:
+      - player_id
+    column_mappings:
+      player_id: id
+  player_registrations.parquet: player_registrations
+  regions.parquet: regions
+  team_memberships.parquet: team_memberships
+  teams.parquet: teams
+
+waivers: []
